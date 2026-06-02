@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+  background: #0b0b0f;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hide scrollbars on Netflix-style horizontal rows */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Smooth scrolling for row carousels */
+.scroll-snap-x {
+  scroll-snap-type: x mandatory;
+}
+.scroll-snap-x > * {
+  scroll-snap-align: start;
+}
+
+/* Hero gradient overlay */
+.hero-fade {
+  background: linear-gradient(
+    to top,
+    #0b0b0f 0%,
+    rgba(11,11,15,0.85) 25%,
+    rgba(11,11,15,0.4) 60%,
+    rgba(11,11,15,0) 100%
+  );
+}
+
+/* Slide aspect for cards */
+.aspect-deck {
+  aspect-ratio: 16 / 10;
+}
+
+/* Subtle grid for slide backgrounds */
+.slide-grid {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0);
+  background-size: 28px 28px;
+}
+
+/* Reusable card hover */
+.card-tilt {
+  transition: transform 250ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 250ms;
+}
+.card-tilt:hover {
+  transform: translateY(-4px) scale(1.04);
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8);
+  z-index: 10;
+}
+
+/* Pulse the play button */
+.play-pulse:hover {
+  animation: playPulse 600ms ease-out;
+}
+@keyframes playPulse {
+  0% { box-shadow: 0 0 0 0 rgba(229,9,20,0.7); }
+  100% { box-shadow: 0 0 0 18px rgba(229,9,20,0); }
+}
+
+/* Custom scrollbar in player */
+.thin-scroll::-webkit-scrollbar { width: 8px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: #2a2a36; border-radius: 999px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
