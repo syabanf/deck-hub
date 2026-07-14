@@ -64,29 +64,28 @@ export default function TopTenRow({ title, subtitle, decks, onPlay, onDetails, o
       <div className="relative">
         <div
           ref={scrollerRef}
-          className="flex gap-4 px-8 md:px-12 pb-10 overflow-x-auto no-scrollbar scroll-snap-x"
+          className="flex gap-4 px-8 md:px-12 pt-4 pb-10 overflow-x-auto no-scrollbar scroll-snap-x"
         >
           {top.map((deck, i) => (
             <div
               key={deck.id}
-              className="relative flex items-end flex-shrink-0 cursor-pointer card-tilt"
+              className="group/ten relative flex items-end flex-shrink-0 cursor-pointer card-tilt"
               onClick={() => onDetails(deck)}
               style={{ width: 380 }}
             >
-              {/* Giant numeral on the left, outlined */}
+              {/* Giant rank numeral on the left, outlined. */}
               <div
-                className="select-none font-black leading-[0.78] text-deck-bg pointer-events-none"
+                className="select-none font-black leading-[0.75] text-deck-bg pointer-events-none transition-all duration-300 group-hover/ten:-translate-x-1"
                 style={{
-                  fontSize: 240,
-                  WebkitTextStroke: '4px #4a4a55',
-                  textShadow: '0 0 0 transparent',
-                  marginRight: -52,
+                  fontSize: 250,
+                  WebkitTextStroke: '3px #55555f',
+                  marginRight: -54,
                   zIndex: 0,
                 }}
               >
                 {i + 1}
               </div>
-              <div className="relative z-10 aspect-deck w-[220px] rounded-md overflow-hidden ring-1 ring-deck-border shadow-2xl">
+              <div className="relative z-10 aspect-deck w-[220px] rounded-md overflow-hidden ring-1 ring-deck-border shadow-2xl transition-shadow duration-300 group-hover/ten:ring-white/30">
                 <Cover deck={deck} sizeClass="text-xs" onCategoryClick={onCategoryClick} />
               </div>
             </div>
@@ -96,19 +95,23 @@ export default function TopTenRow({ title, subtitle, decks, onPlay, onDetails, o
         {canPrev && (
           <button
             onClick={() => scrollBy(-1)}
-            className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-10 h-20 items-center justify-center bg-black/60 hover:bg-black/80 rounded-r-md opacity-0 group-hover/row:opacity-100 transition-opacity"
+            className="hidden md:flex absolute left-0 top-4 bottom-10 w-14 items-center justify-start pl-2 row-arrow-fade-left opacity-0 group-hover/row:opacity-100 transition-opacity z-20"
             aria-label="Scroll left"
           >
-            <ChevronLeft size={24} />
+            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 hover:bg-black/90 hover:scale-110 transition-all">
+              <ChevronLeft size={22} />
+            </span>
           </button>
         )}
         {canNext && (
           <button
             onClick={() => scrollBy(1)}
-            className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-10 h-20 items-center justify-center bg-black/60 hover:bg-black/80 rounded-l-md opacity-0 group-hover/row:opacity-100 transition-opacity"
+            className="hidden md:flex absolute right-0 top-4 bottom-10 w-14 items-center justify-end pr-2 row-arrow-fade opacity-0 group-hover/row:opacity-100 transition-opacity z-20"
             aria-label="Scroll right"
           >
-            <ChevronRight size={24} />
+            <span className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 hover:bg-black/90 hover:scale-110 transition-all">
+              <ChevronRight size={22} />
+            </span>
           </button>
         )}
       </div>

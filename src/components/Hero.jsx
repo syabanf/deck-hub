@@ -23,18 +23,31 @@ export default function Hero({ deck, onPlay, onDetails, onCategoryNav }) {
   const [imgFailed, setImgFailed] = useState(false)
   if (!deck) return null
 
+  const slideCount = deck.slides?.length || deck.slidesCount
+  const srcType = deck.source?.type
+  const srcLabel =
+    srcType === 'video'
+      ? deck.source?.platform || 'Video'
+      : srcType === 'pdf'
+        ? 'PDF'
+        : srcType === 'url'
+          ? 'Linked deck'
+          : null
+
   return (
     <section className="relative h-[72vh] min-h-[500px] w-full overflow-hidden">
-      {/* Backdrop photo (or gradient fallback) */}
+      {/* Backdrop photo (or gradient fallback), with a slow cinematic drift */}
       {!imgFailed ? (
         <img
           src={heroImage(deck)}
           alt=""
           onError={() => setImgFailed(true)}
-          className="absolute inset-0 w-full h-full object-cover"
+          className="ken-burns absolute inset-0 w-full h-full object-cover"
         />
       ) : (
-        <SlideBackground gradient={deck.gradient} pattern={deck.pattern} />
+        <div className="ken-burns absolute inset-0">
+          <SlideBackground gradient={deck.gradient} pattern={deck.pattern} />
+        </div>
       )}
 
       {/* Accent wash from the deck's gradient — gives identity even over a photo */}
@@ -48,7 +61,9 @@ export default function Hero({ deck, onPlay, onDetails, onCategoryNav }) {
       {/* Bottom fade into page */}
       <div className="absolute inset-0 hero-fade pointer-events-none" />
       {/* Left fade for legibility */}
-      <div className="absolute inset-0 bg-gradient-to-r from-deck-bg/95 via-deck-bg/60 to-transparent pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-deck-bg/95 via-deck-bg/55 to-transparent pointer-events-none" />
+      {/* Corner vignette for a cinematic frame */}
+      <div className="absolute inset-0 hero-vignette pointer-events-none" />
 
       <div className="relative z-10 h-full flex items-end pb-16 px-8 md:px-14 max-w-5xl">
         <div className="space-y-4">
@@ -83,14 +98,14 @@ export default function Hero({ deck, onPlay, onDetails, onCategoryNav }) {
             <span className="text-emerald-400 font-bold">{deck.year}</span>
             <span className="text-white/40">·</span>
             <span>{deck.author}</span>
-            <span className="text-white/40">·</span>
-            <span>{deck.slides?.length || deck.slidesCount || '—'} slides</span>
+            {(slideCount || srcLabel) && <span className="text-white/40">·</span>}
+            {slideCount ? <span>{slideCount} slides</span> : srcLabel ? <span>{srcLabel}</span> : null}
             <span className="text-white/40">·</span>
             <button
               onClick={() => onDetails(deck)}
               className="text-white/85 hover:text-white underline-offset-2 hover:underline"
             >
-              Slide list ›
+              More info ›
             </button>
           </div>
 
@@ -101,14 +116,14 @@ export default function Hero({ deck, onPlay, onDetails, onCategoryNav }) {
           <div className="flex gap-3 pt-2">
             <button
               onClick={() => onPlay(deck)}
-              className="flex items-center gap-2 px-7 py-3 bg-white text-black font-semibold rounded hover:bg-white/90 transition-colors play-pulse"
+              className="flex items-center gap-2 px-7 py-3 bg-white text-black font-bold rounded-md hover:bg-white/90 hover:-translate-y-0.5 active:translate-y-0 transition-all shadow-xl shadow-black/30 play-pulse"
             >
               <PlayIcon size={22} />
               Open Deck
             </button>
             <button
               onClick={() => onDetails(deck)}
-              className="flex items-center gap-2 px-7 py-3 bg-white/25 text-white font-semibold rounded backdrop-blur hover:bg-white/35 transition-colors"
+              className="flex items-center gap-2 px-7 py-3 bg-white/20 text-white font-bold rounded-md backdrop-blur border border-white/15 hover:bg-white/30 hover:-translate-y-0.5 active:translate-y-0 transition-all"
             >
               <InfoIcon size={20} />
               More Info

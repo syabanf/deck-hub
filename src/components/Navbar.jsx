@@ -22,6 +22,7 @@ const NAV_ITEMS = [
 
 export default function Navbar({
   user,
+  canEdit = false,
   onLogout,
   onAddClick,
   onSearchClick,
@@ -130,15 +131,17 @@ export default function Navbar({
             </span>
           </button>
 
-          <button
-            onClick={onAddClick}
-            className="group hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-full bg-deck-accent hover:bg-deck-accentDim text-sm font-bold transition-all whitespace-nowrap shadow-lg shadow-deck-accent/30 hover:shadow-deck-accent/60 hover:-translate-y-px"
-          >
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/15 group-hover:rotate-90 transition-transform duration-300">
-              <PlusIcon size={14} />
-            </span>
-            Add deck
-          </button>
+          {canEdit && (
+            <button
+              onClick={onAddClick}
+              className="group hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-full bg-deck-accent hover:bg-deck-accentDim text-sm font-bold transition-all whitespace-nowrap shadow-lg shadow-deck-accent/30 hover:shadow-deck-accent/60 hover:-translate-y-px"
+            >
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/15 group-hover:rotate-90 transition-transform duration-300">
+                <PlusIcon size={14} />
+              </span>
+              Add deck
+            </button>
+          )}
 
           <AccountMenu user={user} onLogout={onLogout} onNavigate={onCategoryChange} />
         </div>

@@ -84,13 +84,17 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
               ) : (
                 <span>{deck.author}</span>
               )}
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <ClockIcon size={14} />
-                {estMinutes} min read
-              </span>
-              <span>·</span>
-              <span>{totalSlides} slides</span>
+              {totalSlides > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="flex items-center gap-1">
+                    <ClockIcon size={14} />
+                    {estMinutes} min read
+                  </span>
+                  <span>·</span>
+                  <span>{totalSlides} slides</span>
+                </>
+              )}
               {onCategoryNav && deck.category && deck.category !== 'mine' && (
                 <>
                   <span>·</span>
@@ -138,7 +142,7 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
                 className="mt-2 inline-flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
               >
                 <TrashIcon size={14} />
-                Remove from your library
+                Remove deck
               </button>
             )}
           </div>

@@ -61,6 +61,79 @@ body {
   z-index: 10;
 }
 
+/* ─────────── Netflix-style hover-expand card ─────────── */
+/* The card scales up in place, lifts above neighbors, and its poster art
+   zooms slightly. Kept as a transform so the row's scroll isn't disturbed. */
+.hover-card {
+  transition: transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+              box-shadow 260ms ease;
+  will-change: transform;
+}
+.hover-card.is-hovered {
+  transform: scale(1.28);
+  box-shadow: 0 30px 60px -18px rgba(0, 0, 0, 0.9),
+              0 0 0 1px rgba(255, 255, 255, 0.08);
+  z-index: 30;
+}
+/* Edge cards expand inward so they don't clip against the row's edges. */
+.deck-row > *:first-child .hover-card { transform-origin: left center; }
+.deck-row > *:last-child .hover-card { transform-origin: right center; }
+/* Poster art breathes in as the card expands. */
+.poster-zoom {
+  transition: transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform: scale(1.001);
+}
+.hover-card.is-hovered .poster-zoom {
+  transform: scale(1.1);
+}
+/* The action + metadata panel that fades up over the lower poster on hover. */
+.hover-panel {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 200ms ease, transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.hover-card.is-hovered .hover-panel {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* The resting caption yields to the richer hover panel on expand. */
+.cover-caption {
+  transition: opacity 160ms ease;
+}
+.hover-card.is-hovered .cover-caption {
+  opacity: 0;
+}
+
+/* ─────────── Cinematic hero ─────────── */
+/* Slow Ken-Burns drift on the billboard backdrop. */
+.ken-burns {
+  animation: kenBurns 26s ease-in-out infinite alternate;
+  transform-origin: 62% 38%;
+}
+@keyframes kenBurns {
+  0%   { transform: scale(1.06) translate3d(0, 0, 0); }
+  100% { transform: scale(1.2) translate3d(-1.5%, -2.2%, 0); }
+}
+/* Vignette that grounds the billboard on all four edges. */
+.hero-vignette {
+  background:
+    radial-gradient(120% 90% at 30% 30%, transparent 40%, rgba(11,11,15,0.5) 100%),
+    linear-gradient(to top, rgba(11,11,15,0.35), transparent 30%);
+}
+
+/* ─────────── Row pagination (Netflix segmented indicator) ─────────── */
+.row-arrow-fade {
+  background: linear-gradient(to right, rgba(11,11,15,0) 0%, rgba(11,11,15,0.75) 100%);
+}
+.row-arrow-fade-left {
+  background: linear-gradient(to left, rgba(11,11,15,0) 0%, rgba(11,11,15,0.75) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ken-burns { animation: none; }
+  .hover-card, .poster-zoom, .hover-panel { transition: none; }
+}
+
 /* Pulse the play button */
 .play-pulse:hover {
   animation: playPulse 600ms ease-out;

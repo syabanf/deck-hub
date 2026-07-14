@@ -20,6 +20,7 @@ export default function SettingsPage({
   manageProps,
   users,
   currentEmail,
+  canManageUsers = false,
   onAddUser,
   onUpdateUser,
   onRemoveUser,
@@ -55,6 +56,7 @@ export default function SettingsPage({
           <UsersManager
             users={users}
             currentEmail={currentEmail}
+            canManage={canManageUsers}
             onAdd={onAddUser}
             onUpdate={onUpdateUser}
             onRemove={onRemoveUser}
@@ -105,9 +107,9 @@ function Badge({ meta }) {
   )
 }
 
-const blankUser = { name: '', email: '', role: 'viewer', status: 'invited' }
+const blankUser = { name: '', email: '', password: '', role: 'viewer', status: 'invited' }
 
-function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
+function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemove }) {
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -139,16 +141,16 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
   const submitDraft = () => {
     if (!draft.name.trim()) return setError('Name is required.')
     if (!EMAIL_RE.test(draft.email.trim())) return setError('Enter a valid email.')
+    if (draft.password.length < 8) return setError('Password must be at least 8 characters.')
     if (users.some((u) => u.email.toLowerCase() === draft.email.trim().toLowerCase())) {
       return setError('A user with that email already exists.')
     }
     onAdd({
-      id: `usr-${Date.now()}`,
       name: draft.name.trim(),
       email: draft.email.trim().toLowerCase(),
+      password: draft.password,
       role: draft.role,
       status: draft.status,
-      createdAt: new Date().toISOString().slice(0, 10),
     })
     setDraft(blankUser)
     setError('')
@@ -193,19 +195,21 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
             <option key={s} value={s}>{STATUS_META[s].label}</option>
           ))}
         </select>
-        <button
-          onClick={() => { setAdding((a) => !a); setError('') }}
-          className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-deck-accent hover:bg-deck-accentDim text-sm font-bold shadow-lg shadow-deck-accent/30"
-        >
-          {adding ? <CloseIcon size={14} /> : <PlusIcon size={14} />}
-          {adding ? 'Cancel' : 'Add user'}
-        </button>
+        {canManage && (
+          <button
+            onClick={() => { setAdding((a) => !a); setError('') }}
+            className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-deck-accent hover:bg-deck-accentDim text-sm font-bold shadow-lg shadow-deck-accent/30"
+          >
+            {adding ? <CloseIcon size={14} /> : <PlusIcon size={14} />}
+            {adding ? 'Cancel' : 'Add user'}
+          </button>
+        )}
       </div>
 
       {/* Add form */}
-      {adding && (
+      {adding && canManage && (
         <div className="rounded-xl border border-deck-border bg-deck-card/60 p-4 mb-4 animate-fade-in">
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto_auto_auto] gap-3 items-center">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto_auto_auto] gap-3 items-center">
             <input
               autoFocus
               value={draft.name}
@@ -217,6 +221,14 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
               value={draft.email}
               onChange={(e) => setDraft({ ...draft, email: e.target.value })}
               placeholder="email@wit.id"
+              className="px-3 py-2 rounded-lg bg-deck-bg border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40"
+            />
+            <input
+              type="password"
+              value={draft.password}
+              onChange={(e) => setDraft({ ...draft, password: e.target.value })}
+              placeholder="Temp password"
+              autoComplete="new-password"
               className="px-3 py-2 rounded-lg bg-deck-bg border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40"
             />
             <select
@@ -297,8 +309,9 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
                   <td className="px-3 py-2">
                     <select
                       value={u.role}
+                      disabled={!canManage}
                       onChange={(e) => onUpdate(u.id, { role: e.target.value })}
-                      className="bg-transparent border border-deck-border rounded px-1.5 py-1 text-xs focus:outline-none focus:border-white/40"
+                      className="bg-transparent border border-deck-border rounded px-1.5 py-1 text-xs focus:outline-none focus:border-white/40 disabled:opacity-70 disabled:cursor-not-allowed"
                       style={{ color: ROLE_META[u.role]?.color }}
                     >
                       {ROLES.map((r) => (
@@ -311,8 +324,9 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
                   <td className="px-3 py-2">
                     <select
                       value={u.status}
+                      disabled={!canManage}
                       onChange={(e) => onUpdate(u.id, { status: e.target.value })}
-                      className="bg-transparent border border-deck-border rounded px-1.5 py-1 text-xs focus:outline-none focus:border-white/40"
+                      className="bg-transparent border border-deck-border rounded px-1.5 py-1 text-xs focus:outline-none focus:border-white/40 disabled:opacity-70 disabled:cursor-not-allowed"
                       style={{ color: STATUS_META[u.status]?.color }}
                     >
                       {USER_STATUSES.map((s) => (
@@ -327,12 +341,12 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
                   </td>
                   <td className="px-3 py-2 text-right">
                     <button
-                      disabled={isSelf}
+                      disabled={isSelf || !canManage}
                       onClick={() => {
                         if (confirm(`Remove ${u.name} (${u.email})?`)) onRemove(u.id)
                       }}
                       className="w-7 h-7 rounded inline-flex items-center justify-center bg-white/5 hover:bg-red-500/30 text-white/70 hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5 disabled:hover:text-white/70"
-                      title={isSelf ? "You can't remove yourself" : 'Remove user'}
+                      title={isSelf ? "You can't remove yourself" : !canManage ? 'Admin only' : 'Remove user'}
                     >
                       <TrashIcon size={13} />
                     </button>
@@ -346,7 +360,9 @@ function UsersManager({ users, currentEmail, onAdd, onUpdate, onRemove }) {
 
       <div className="mt-4 text-xs text-deck-muted flex items-center gap-2">
         <UserIcon size={13} />
-        Roles and status changes save instantly. This directory is backed by the Go/PostgreSQL service in production.
+        {canManage
+          ? 'Changes save to the Go/PostgreSQL backend instantly.'
+          : 'This directory is read-only — sign in as an admin to manage users.'}
       </div>
     </div>
   )

@@ -1,0 +1,168 @@
+// API client for the WIT Go/Postgres backend.
+//
+// Backend-primary: the catalog, users, and view counts all come from here.
+// This module owns the fetch wrapper, the typed endpoints, and the mapping
+// between the backend deck shape ({source:{type,value}, viewCount, …}) and the
+// richer shape the React UI renders (gradient, pattern, embeddable source, …).
+
+import { loadAuth } from './storage.js'
+import { detectVideo } from './video.js'
+
+const BASE = import.meta.env?.VITE_API_URL || 'http://localhost:8080'
+
+export class ApiError extends Error {
+  constructor(code, message, status) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+    this.status = status
+  }
+}
+
+async function request(path, { method = 'GET', body, auth = false } = {}) {
+  const headers = {}
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (auth) {
+    const token = loadAuth()?.token
+    if (token) headers.Authorization = `Bearer ${token}`
+  }
+
+  let res
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    throw new ApiError(
+      'network',
+      `Can't reach the WIT server at ${BASE}. Make sure the API is running.`,
+    )
+  }
+
+  if (res.status === 204) return null
+
+  const text = await res.text()
+  let data = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+  }
+
+  if (!res.ok) {
+    const code = data?.error?.code || 'error'
+    const message = data?.error?.message || `Request failed (${res.status}).`
+    throw new ApiError(code, message, res.status)
+  }
+  return data
+}
+
+// ─────────────── Endpoints ───────────────
+
+export const api = {
+  login: (email, password) =>
+    request('/auth/login', { method: 'POST', body: { email, password } }),
+
+  listDecks: () => request('/decks'),
+  createDeck: (deck) => request('/decks', { method: 'POST', body: deck, auth: true }),
+  updateDeck: (id, patch) => request(`/decks/${id}`, { method: 'PUT', body: patch, auth: true }),
+  deleteDeck: (id) => request(`/decks/${id}`, { method: 'DELETE', auth: true }),
+  incrementViews: (id) => request(`/decks/${id}/views`, { method: 'POST' }),
+
+  listUsers: () => request('/users'),
+  createUser: (user) => request('/users', { method: 'POST', body: user, auth: true }),
+  updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
+  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
+}
+
+// ─────────────── Deck shape mapping ───────────────
+
+// Deterministic cover styling so backend decks (which store no gradient/pattern)
+// still render as designed, and the same deck always looks the same.
+const GRADIENTS = [
+  { from: '#ff5f6d', to: '#ffc371', text: '#1a0d00' },
+  { from: '#2b5876', to: '#4e4376', text: '#ffffff' },
+  { from: '#0f9b8e', to: '#0b4d3f', text: '#ffffff' },
+  { from: '#ff0844', to: '#ffb199', text: '#1a0008' },
+  { from: '#7f00ff', to: '#e100ff', text: '#ffffff' },
+  { from: '#f7971e', to: '#ffd200', text: '#1a0d00' },
+  { from: '#00c6fb', to: '#005bea', text: '#ffffff' },
+  { from: '#11998e', to: '#38ef7d', text: '#001a0d' },
+  { from: '#232526', to: '#414345', text: '#ffffff' },
+  { from: '#cb2d3e', to: '#ef473a', text: '#ffffff' },
+  { from: '#0f2027', to: '#2c5364', text: '#ffffff' },
+  { from: '#fa709a', to: '#fee140', text: '#1a0008' },
+  { from: '#134e5e', to: '#71b280', text: '#ffffff' },
+  { from: '#1f1c2c', to: '#928dab', text: '#ffffff' },
+]
+const PATTERNS = ['orbs', 'grid', 'wave', 'rays']
+
+const hashString = (s) => {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return h
+}
+
+// Map the backend {type,value} source to something the DeckPlayer/Cover can
+// render. Backend types: gslides, embed, pdf, url, video.
+const normalizeSource = (src) => {
+  const type = (src?.type || '').toLowerCase()
+  const value = src?.value || ''
+
+  if (type === 'video') {
+    const info = detectVideo(value)
+    if (info) return { type: 'video', value: info.embedUrl, kind: info.kind, platform: info.platform }
+    return { type: 'video', value, kind: 'iframe' }
+  }
+  if (type === 'pdf') {
+    // Uploaded PDFs store base64 (native pdf.js render); seeded remote PDFs
+    // store a URL — iframe those instead.
+    if (/^https?:\/\//i.test(value)) return { type: 'url', value }
+    return { type: 'pdf', value }
+  }
+  // gslides / embed / url (and anything else) → iframe; UrlStage's toEmbedUrl
+  // handles the Google-Slides conversion.
+  return { type: 'url', value }
+}
+
+export const normalizeDeck = (d) => {
+  const key = d.id || d.title || ''
+  const h = hashString(key)
+  return {
+    ...d,
+    tags: Array.isArray(d.tags) ? d.tags : [],
+    gradient: GRADIENTS[h % GRADIENTS.length],
+    pattern: PATTERNS[(h >> 4) % PATTERNS.length],
+    source: normalizeSource(d.source),
+  }
+}
+
+export const normalizeDecks = (list) => (Array.isArray(list) ? list.map(normalizeDeck) : [])
+
+// Map an AddDeckModal deck (rich, client-side) → the backend createDeck body.
+// Presentation-only fields (gradient, pattern, attachments, slidesCount) are
+// dropped — the backend doesn't store them; they're re-derived on read.
+export const toCreateRequest = (deck) => ({
+  title: deck.title || '',
+  subtitle: deck.subtitle || '',
+  author: deck.author || '',
+  year: Number(deck.year) || new Date().getFullYear(),
+  category: deck.category || 'mine',
+  industry: deck.industry || '',
+  tags: Array.isArray(deck.tags) ? deck.tags : [],
+  source: { type: deck.source?.type || 'url', value: deck.source?.value || '' },
+  description: deck.description || '',
+  featured: !!deck.featured,
+})
+
+// Backend user createdAt is a full ISO timestamp; the UI shows a date.
+export const normalizeUser = (u) => ({
+  ...u,
+  createdAt: typeof u.createdAt === 'string' ? u.createdAt.slice(0, 10) : u.createdAt,
+})
+
+export const normalizeUsers = (list) => (Array.isArray(list) ? list.map(normalizeUser) : [])

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { MOCK_DECKS } from '../data/decks.js'
+import { api } from '../lib/api.js'
 import {
   MailIcon,
   LockIcon,
@@ -18,14 +19,6 @@ const imageSrc = (deck, w = 400, h = 250) => {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-const nameFromEmail = (email) => {
-  const local = email.split('@')[0] || 'You'
-  return local
-    .replace(/[._-]+/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .trim()
-}
 
 export default function LoginPage({ onLogin }) {
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
@@ -54,23 +47,28 @@ export default function LoginPage({ onLogin }) {
     setTimeout(() => setShake(false), 500)
   }
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
     if (submitting) return
-    if (mode === 'signup' && !name.trim()) return fail('Please enter your name.')
+
+    // The backend has no public registration — accounts are provisioned by an
+    // admin. Guide the user to sign in instead.
+    if (mode === 'signup') {
+      return fail('New accounts are created by an admin. Ask your admin to add you, then sign in.')
+    }
+
     if (!EMAIL_RE.test(email.trim())) return fail('Enter a valid email address.')
-    if (password.length < 4) return fail('Password must be at least 4 characters.')
+    if (!password) return fail('Enter your password.')
 
     setError('')
     setSubmitting(true)
-    const profile = {
-      name: (mode === 'signup' ? name.trim() : nameFromEmail(email.trim())),
-      email: email.trim().toLowerCase(),
-      remember,
-      since: Date.now(),
+    try {
+      const { token, user } = await api.login(email.trim().toLowerCase(), password)
+      onLogin({ ...user, token, remember, since: Date.now() })
+    } catch (err) {
+      setSubmitting(false)
+      fail(err.code === 'unauthorized' ? 'Incorrect email or password.' : err.message)
     }
-    // Tiny delay so the button's loading state reads as a real sign-in.
-    setTimeout(() => onLogin(profile), 650)
   }
 
   const continueAsGuest = () => {
@@ -78,8 +76,14 @@ export default function LoginPage({ onLogin }) {
     setSubmitting(true)
     setTimeout(
       () => onLogin({ name: 'Guest', email: null, guest: true, since: Date.now() }),
-      350,
+      250,
     )
+  }
+
+  const useDemoAdmin = () => {
+    setEmail('admin@wit.id')
+    setPassword('admin1234')
+    setError('')
   }
 
   const switchMode = (next) => {
@@ -214,10 +218,10 @@ export default function LoginPage({ onLogin }) {
               </button>
               <button
                 type="button"
-                onClick={() => fail('This is a demo — any email and password will work.')}
+                onClick={useDemoAdmin}
                 className="text-white/50 hover:text-white transition-colors"
               >
-                Need help?
+                Use demo admin
               </button>
             </div>
 
@@ -283,7 +287,9 @@ export default function LoginPage({ onLogin }) {
 
       {/* Footer note */}
       <div className="relative z-10 text-center text-xs text-white/35 pb-6 px-4">
-        Demo app · no real authentication — credentials are stored locally in your browser.
+        Signs in against the WIT API · demo admin{' '}
+        <span className="text-white/60">admin@wit.id</span> /{' '}
+        <span className="text-white/60">admin1234</span>
       </div>
     </div>
   )

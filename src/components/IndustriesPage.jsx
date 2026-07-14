@@ -1,16 +1,16 @@
 import { useMemo } from 'react'
-import { MOCK_DECKS, INDUSTRIES } from '../data/decks.js'
+import { INDUSTRIES } from '../data/decks.js'
 
-export default function IndustriesPage({ onPickIndustry }) {
+export default function IndustriesPage({ onPickIndustry, decks = [] }) {
   const counts = useMemo(() => {
     const map = Object.fromEntries(INDUSTRIES.map((i) => [i.id, 0]))
-    for (const d of MOCK_DECKS) {
+    for (const d of decks) {
       if (d.industry && map[d.industry] !== undefined) map[d.industry]++
     }
     return map
-  }, [])
+  }, [decks])
 
-  const total = MOCK_DECKS.filter((d) => d.industry).length
+  const total = decks.filter((d) => d.industry).length
 
   return (
     <div className="px-6 md:px-12 pt-28 pb-16 min-h-screen">

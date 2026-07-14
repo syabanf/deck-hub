@@ -52,6 +52,16 @@ export const ChevronRight = (p) => (
     <path d="M9 6l6 6-6 6" />
   </Icon>
 )
+export const ChevronDown = (p) => (
+  <Icon {...p}>
+    <path d="M6 9l6 6 6-6" />
+  </Icon>
+)
+export const ThumbsUpIcon = (p) => (
+  <Icon {...p}>
+    <path d="M7 11v9H4a1 1 0 01-1-1v-7a1 1 0 011-1h3zm0 0l4-8a2.5 2.5 0 012.4 3.2L12.6 9H19a2 2 0 012 2.3l-1.1 6.5A2 2 0 0117.9 20H7" />
+  </Icon>
+)
 export const FullscreenIcon = (p) => (
   <Icon {...p}>
     <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />

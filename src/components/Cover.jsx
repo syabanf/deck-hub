@@ -32,9 +32,10 @@ export default function Cover({
   const isLinked = deck.source?.type === 'url'
   const isPdf = deck.source?.type === 'pdf'
   const isVideo = deck.source?.type === 'video'
+  const slideCount = deck.slides?.length || deck.slidesCount
 
   const bottomBlock = !minimal ? (
-    <div className="absolute inset-x-0 bottom-0 p-3 z-10 max-h-[58%] flex flex-col justify-end">
+    <div className="cover-caption absolute inset-x-0 bottom-0 p-3 z-10 max-h-[58%] flex flex-col justify-end">
       <div
         className="font-black leading-[1.1] tracking-tight text-white drop-shadow-lg overflow-hidden"
         style={{
@@ -53,10 +54,12 @@ export default function Cover({
       )}
       <div className="flex items-center gap-1.5 mt-1.5 text-white/70" style={{ fontSize: '0.68em' }}>
         <span className="truncate flex-1">{deck.author}</span>
-        <span>·</span>
-        <span className="font-semibold whitespace-nowrap">
-          {deck.slides?.length || deck.slidesCount || '—'} slides
-        </span>
+        {slideCount ? (
+          <>
+            <span>·</span>
+            <span className="font-semibold whitespace-nowrap">{slideCount} slides</span>
+          </>
+        ) : null}
         {(isLinked || isPdf || isVideo) && (
           <>
             <span>·</span>
@@ -87,10 +90,14 @@ export default function Cover({
           alt=""
           onError={() => setImgFailed(true)}
           loading="lazy"
-          className="absolute inset-0 w-full h-full object-cover"
+          className="poster-zoom absolute inset-0 w-full h-full object-cover"
         />
       )}
-      {imgFailed && <SlideBackground gradient={deck.gradient} pattern={deck.pattern} />}
+      {imgFailed && (
+        <div className="poster-zoom absolute inset-0">
+          <SlideBackground gradient={deck.gradient} pattern={deck.pattern} />
+        </div>
+      )}
 
       {/* Color wash so text is legible no matter the photo */}
       <div
