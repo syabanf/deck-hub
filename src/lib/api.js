@@ -61,6 +61,52 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
   return data
 }
 
+// Uploaded files come back as a server-relative path ("/uploads/<name>"); the
+// browser needs it absolute against the API origin.
+export const absoluteUrl = (p) => {
+  if (!p) return p
+  if (/^(https?:|data:|blob:)/i.test(p)) return p
+  return `${BASE}${p.startsWith('/') ? '' : '/'}${p}`
+}
+
+// uploadFile POSTs a File to /uploads (multipart). Content-Type is left unset
+// so the browser supplies the multipart boundary.
+export async function uploadFile(file) {
+  const form = new FormData()
+  form.append('file', file)
+
+  const headers = {}
+  const token = loadAuth()?.token
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  let res
+  try {
+    res = await fetch(`${BASE}/uploads`, { method: 'POST', headers, body: form })
+  } catch {
+    throw new ApiError('network', `Can't reach the WIT server at ${BASE}.`)
+  }
+
+  const text = await res.text()
+  let data = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+  }
+  if (!res.ok) {
+    throw new ApiError(
+      data?.error?.code || 'error',
+      data?.error?.message || `Upload failed (${res.status}).`,
+      res.status,
+    )
+  }
+  // `path` is what gets persisted on the deck (origin-independent); `url` is
+  // the absolute form for immediate use in the browser.
+  return { ...data, path: data.url, url: absoluteUrl(data.url) }
+}
+
 // ─────────────── Endpoints ───────────────
 
 export const api = {
@@ -111,22 +157,25 @@ const hashString = (s) => {
 // render. Backend types: gslides, embed, pdf, url, video.
 const normalizeSource = (src) => {
   const type = (src?.type || '').toLowerCase()
-  const value = src?.value || ''
+  const raw = src?.value || ''
 
   if (type === 'video') {
-    const info = detectVideo(value)
+    // Uploaded videos are a relative /uploads path; make it absolute first so
+    // detectVideo can recognise it as a direct file.
+    const url = absoluteUrl(raw)
+    const info = detectVideo(url)
     if (info) return { type: 'video', value: info.embedUrl, kind: info.kind, platform: info.platform }
-    return { type: 'video', value, kind: 'iframe' }
+    return { type: 'video', value: url, kind: 'iframe' }
   }
   if (type === 'pdf') {
-    // Uploaded PDFs store base64 (native pdf.js render); seeded remote PDFs
-    // store a URL — iframe those instead.
-    if (/^https?:\/\//i.test(value)) return { type: 'url', value }
-    return { type: 'pdf', value }
+    // Uploaded/remote PDFs are fetched by pdf.js from their URL; legacy decks
+    // may still carry inline base64.
+    if (/^(https?:|\/)/i.test(raw)) return { type: 'pdf', value: absoluteUrl(raw), remote: true }
+    return { type: 'pdf', value: raw }
   }
   // gslides / embed / url (and anything else) → iframe; UrlStage's toEmbedUrl
   // handles the Google-Slides conversion.
-  return { type: 'url', value }
+  return { type: 'url', value: absoluteUrl(raw) }
 }
 
 export const normalizeDeck = (d) => {

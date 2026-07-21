@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import Cover from './Cover.jsx'
 import { CloseIcon, UploadIcon, LinkIcon } from '../lib/icons.jsx'
-import {
-  loadPdfDocument,
-  fileToArrayBuffer,
-  arrayBufferToBase64,
-} from '../lib/pdf.js'
-import { detectVideo, isVideoFile, fileToDataUrl, formatBytes as formatVideoBytes } from '../lib/video.js'
+import { loadPdfDocument, fileToArrayBuffer } from '../lib/pdf.js'
+import { uploadFile } from '../lib/api.js'
+import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
 import { detectAttachment } from '../lib/attachments.js'
+import { useClosable } from '../lib/useClosable.js'
 import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
 
 const PALETTES = [
@@ -85,9 +83,11 @@ const FieldLabel = ({ children, hint }) => (
 )
 
 export default function AddDeckModal({ onClose, onAdd }) {
+  const { closing, requestClose } = useClosable(onClose)
   const [tab, setTab] = useState('upload')
   const [dragOver, setDragOver] = useState(false)
   const [working, setWorking] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
 
@@ -119,14 +119,14 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const [successDeck, setSuccessDeck] = useState(null)
 
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const onKey = (e) => e.key === 'Escape' && requestClose()
     document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [onClose])
+  }, [requestClose])
 
   useEffect(() => {
     if (!error) return
@@ -181,21 +181,14 @@ export default function AddDeckModal({ onClose, onAdd }) {
       return
     }
     if (file.size > 25 * 1024 * 1024) {
-      setError('Video files must be under 25MB to fit in browser storage')
+      setError('Video files must be under 25MB')
       return
     }
     setError(null)
-    setWorking(true)
-    try {
-      const dataUrl = await fileToDataUrl(file)
-      setVideoFile({ name: file.name, size: file.size, dataUrl })
-      setVideoUrl('') // clear URL since we now have a file
-      if (!title) setTitle(file.name.replace(/\.[^.]+$/, ''))
-    } catch (e) {
-      setError(e.message || 'Failed to read video file')
-    } finally {
-      setWorking(false)
-    }
+    // The file is uploaded on submit, not now — just hold onto it.
+    setVideoFile({ name: file.name, size: file.size, file })
+    setVideoUrl('') // clear URL since we now have a file
+    if (!title) setTitle(file.name.replace(/\.[^.]+$/, ''))
   }
 
   const addAttachment = () => {
@@ -229,17 +222,18 @@ export default function AddDeckModal({ onClose, onAdd }) {
       setError('Please drop a .pdf file')
       return
     }
-    if (file.size > 20 * 1024 * 1024) {
-      setError('PDFs must be under 20MB')
+    if (file.size > 25 * 1024 * 1024) {
+      setError('PDFs must be under 25MB')
       return
     }
     setError(null)
     setWorking(true)
     try {
+      // Read locally only to discover the page count for the preview; the file
+      // itself is uploaded to the server on submit.
       const buf = await fileToArrayBuffer(file)
       const doc = await loadPdfDocument(buf.slice(0))
-      const base64 = arrayBufferToBase64(buf)
-      setPdfFile({ name: file.name, size: file.size, pages: doc.numPages, base64 })
+      setPdfFile({ name: file.name, size: file.size, pages: doc.numPages, file })
       if (!title) setTitle(file.name.replace(/\.pdf$/i, ''))
     } catch (e) {
       setError(e.message || 'Failed to read PDF')
@@ -253,7 +247,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
     (tab === 'url' && url.trim()) ||
     (tab === 'video' && (videoUrl.trim() || videoFile))
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) {
       setError(
         tab === 'upload'
@@ -282,19 +276,27 @@ export default function AddDeckModal({ onClose, onAdd }) {
       gradient: { from: palette.from, to: palette.to, text: palette.text },
       pattern,
     }
-    let deck
-    if (tab === 'upload') {
-      deck = { ...base, slidesCount: pdfFile.pages, source: { type: 'pdf', value: pdfFile.base64 } }
-    } else if (tab === 'url') {
+    if (tab === 'url') {
       try { new URL(url) } catch { setError("That doesn't look like a valid URL"); return }
-      deck = { ...base, slidesCount: 1, source: { type: 'url', value: url.trim() } }
-    } else {
-      // Video tab — file beats URL when both somehow set
-      if (videoFile) {
+    }
+
+    setError(null)
+    setUploading(true)
+    try {
+      let deck
+      if (tab === 'upload') {
+        // Store the server-relative path; the client absolutises it on read.
+        const up = await uploadFile(pdfFile.file)
+        deck = { ...base, slidesCount: pdfFile.pages, source: { type: 'pdf', value: up.path } }
+      } else if (tab === 'url') {
+        deck = { ...base, slidesCount: 1, source: { type: 'url', value: url.trim() } }
+      } else if (videoFile) {
+        // Video tab — an uploaded file beats a pasted URL.
+        const up = await uploadFile(videoFile.file)
         deck = {
           ...base,
           slidesCount: 1,
-          source: { type: 'video', kind: 'native', value: videoFile.dataUrl, platform: 'Uploaded video' },
+          source: { type: 'video', kind: 'native', value: up.path, platform: 'Uploaded video' },
         }
       } else {
         deck = {
@@ -303,21 +305,27 @@ export default function AddDeckModal({ onClose, onAdd }) {
           source: { type: 'video', value: videoInfo.embedUrl, kind: videoInfo.kind, platform: videoInfo.platform },
         }
       }
+      if (attachments.length > 0) {
+        deck.attachments = attachments
+      }
+      setSuccessDeck(deck)
+      setTimeout(() => onAdd(deck), 900)
+    } catch (e) {
+      setError(e.message || 'Upload failed')
+    } finally {
+      setUploading(false)
     }
-    if (attachments.length > 0) {
-      deck.attachments = attachments
-    }
-    setSuccessDeck(deck)
-    setTimeout(() => onAdd(deck), 900)
   }
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 backdrop-blur-sm animate-fade-in py-8 px-4 overflow-y-auto"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-start justify-center bg-black/80 backdrop-blur-sm animate-fade-in py-8 px-4 overflow-y-auto ${
+        closing ? 'is-closing' : ''
+      }`}
+      onClick={requestClose}
     >
       <div
-        className="relative w-full max-w-3xl bg-deck-surface rounded-2xl overflow-hidden ring-1 ring-deck-border shadow-2xl animate-scale-in my-auto"
+        className="modal-panel relative w-full max-w-3xl bg-deck-surface rounded-2xl overflow-hidden ring-1 ring-deck-border shadow-2xl animate-scale-in my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {successDeck ? (
@@ -325,7 +333,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
         ) : (
           <>
             <button
-              onClick={onClose}
+              onClick={requestClose}
               className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center z-20 transition-colors"
               aria-label="Close"
             >
@@ -543,19 +551,19 @@ export default function AddDeckModal({ onClose, onAdd }) {
                 </div>
                 <button
                   onClick={handleSubmit}
-                  disabled={!canSubmit || working}
+                  disabled={!canSubmit || working || uploading}
                   className={`w-full py-3 rounded-lg font-bold text-sm transition-all ${
-                    canSubmit && !working
+                    canSubmit && !working && !uploading
                       ? 'bg-deck-accent hover:bg-deck-accentDim text-white shadow-lg shadow-deck-accent/30 hover:shadow-deck-accent/50 hover:-translate-y-px'
                       : 'bg-white/10 text-white/40 cursor-not-allowed'
                   }`}
                 >
-                  {working ? 'Reading PDF…' : 'Add to library'}
+                  {uploading ? 'Uploading…' : working ? 'Reading PDF…' : 'Add to library'}
                 </button>
                 <div className="text-[11px] text-deck-muted leading-snug">
-                  {tab === 'upload' && 'PDFs stay in browser storage. Up to 20MB.'}
+                  {tab === 'upload' && 'PDFs are uploaded to the WIT server. Up to 25MB.'}
                   {tab === 'url' && 'Best with Google Slides & Canva publish-to-web links.'}
-                  {tab === 'video' && 'Supports YouTube, Vimeo, Loom, and direct .mp4 / .webm URLs.'}
+                  {tab === 'video' && 'Upload a file (up to 25MB), or link YouTube, Vimeo, or Loom.'}
                 </div>
               </div>
             </div>

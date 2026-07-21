@@ -13,7 +13,7 @@ export default function IndustriesPage({ onPickIndustry, decks = [] }) {
   const total = decks.filter((d) => d.industry).length
 
   return (
-    <div className="px-6 md:px-12 pt-28 pb-16 min-h-screen">
+    <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">
       {/* Header */}
       <div className="mb-8">
         <div className="text-xs uppercase tracking-[0.3em] font-bold text-deck-muted mb-2">

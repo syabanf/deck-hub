@@ -191,6 +191,8 @@ Error responses use a consistent envelope:
 | POST   | `/decks`              | **admin or editor**      | Create a deck              |
 | PUT    | `/decks/{id}`         | **admin or editor**      | Update a deck              |
 | DELETE | `/decks/{id}`         | **admin or editor**      | Delete a deck              |
+| POST   | `/uploads`            | **admin or editor**      | Upload a file (multipart)  |
+| GET    | `/uploads/{name}`     | public                   | Download an uploaded file  |
 
 Query filters:
 
@@ -271,15 +273,115 @@ curl -s -X DELETE localhost:8080/decks/<deck-id> -H "Authorization: Bearer $TOKE
 
 ---
 
+## File uploads
+
+Uploads are stored on the **local filesystem** for now. The handler depends on
+the `domain.FileStorage` interface, so swapping in S3/GCS later means adding one
+implementation — nothing above it changes.
+
+| Variable        | Default     | Notes                                   |
+| --------------- | ----------- | --------------------------------------- |
+| `UPLOAD_DIR`    | `./uploads` | Where files are written and served from |
+| `MAX_UPLOAD_MB` | `25`        | Max size of a single upload             |
+
+Files are saved under a generated `<uuid><ext>` name — the client's filename is
+never used for the path — and only these extensions are accepted: `.pdf`,
+`.mp4`, `.webm`, `.mov`, `.m4v`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`.
+
+```bash
+# Upload (returns a server-relative path)
+curl -s -X POST localhost:8080/uploads \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@deck.pdf"
+# {"url":"/uploads/3d2e107d-….pdf","name":"3d2e107d-….pdf","size":193,"contentType":"application/pdf"}
+
+# Then reference it from a deck
+curl -s -X POST localhost:8080/decks -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"My Deck","category":"mine","source":{"type":"pdf","value":"/uploads/3d2e107d-….pdf"}}'
+```
+
+The frontend stores the **relative** path and resolves it against the API origin
+at render time, so the same rows work across environments.
+
+---
+
 ## Development
 
 ```bash
 make tidy     # go mod tidy
 make vet      # go vet ./...
 make build    # build bin/api
-make test     # go test ./...
+make test     # unit tests
+make test-e2e # end-to-end tests (see below)
 make hash PASS=secret   # print a bcrypt hash
 ```
+
+### End-to-end tests
+
+`test/e2e` drives the **real HTTP API against a real PostgreSQL database** — no
+mocks. It wires the same dependency graph as `cmd/api/main.go`, serves it over
+`httptest`, and exercises auth, the deck and user lifecycles, role guards,
+validation, and uploads (including that a stored file is downloadable
+byte-for-byte and that path traversal is blocked).
+
+The suite is opt-in via `E2E_DATABASE_URL`, so a plain `go test ./...` skips it:
+
+```bash
+# One-time: a database the suite is allowed to wipe on every run.
+createdb wit_test && psql -d wit_test -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+
+make test-e2e            # uses $(DB_NAME)_test
+# or point it anywhere:
+E2E_DATABASE_URL="postgres://wit:wit@localhost:5432/wit_test?sslmode=disable" \
+  go test ./test/e2e/... -count=1 -v
+```
+
+> The suite **drops and recreates** the schema from `migrations/000001_*` on
+> every run — never point it at a database you care about.
+
+### Stress / load tests
+
+`test/stress` drives the same real stack under concurrent load and reports
+throughput plus latency percentiles per scenario. It is also a regression
+guard: any scenario whose error rate exceeds 1% fails the test, so pool
+exhaustion, deadlocks, or timeouts surface as a red build.
+
+```bash
+make stress                                    # 50 workers, 3s/scenario, 300 decks
+make stress CONCURRENCY=200 DURATION=10s DECKS=5000
+```
+
+Phases run read-only first and mutations last, so baseline numbers aren't
+skewed by rows an earlier phase inserted. Indicative results on an M-series
+laptop (10 cores, local Postgres, 50 workers):
+
+| Scenario                  |     RPS | p50    | p99    |
+| ------------------------- | ------: | ------ | ------ |
+| `GET /healthz`            | 110,000 | 0.3 ms | 1.7 ms |
+| `GET /decks/{id}`         |  41,700 | 1.1 ms | 2.3 ms |
+| `GET /decks?category=`    |  17,500 | 2.8 ms | 5.3 ms |
+| `GET /decks` (304 decks)  |   4,970 | 9.3 ms | 23 ms  |
+| mixed browse (80/15/5)    |   6,000 | 7.9 ms | 15 ms  |
+| `POST /decks/{id}/views`  |  11,800 | 3.7 ms | 13 ms  |
+| `POST /decks`             |  25,900 | 1.7 ms | 6.5 ms |
+| `POST /auth/login`        |     155 | 62 ms  | 88 ms  |
+
+`/auth/login` is intentionally ~400× slower than a read — that's bcrypt doing
+its job. Budget for it (and cache the JWT client-side) rather than "fixing" it.
+
+**Known scaling limit.** `GET /decks` applies `LIMIT` only when `?limit` is
+passed, so by default it serialises the whole table. The `5-large-table` phase
+quantifies this at ~78k decks:
+
+| Request              |  RPS | p50    | Payload    |
+| -------------------- | ---: | ------ | ---------- |
+| `GET /decks`         |   27 | 1.66 s | 26.8 MB    |
+| `GET /decks?limit=50`|  941 | 50 ms  | 0.017 MB   |
+
+That's a **35× throughput difference**. Fine at today's catalog size (the
+frontend fetches once and filters client-side), but a default page size — plus
+frontend pagination — is required before the catalog grows large.
 
 The CORS handler allows the Vite dev origin `http://localhost:5173`, so the
 existing React frontend can call this API directly.

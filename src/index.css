@@ -4,11 +4,43 @@
 
 :root {
   color-scheme: dark;
+
+  /* Motion system — one set of tuned curves so everything decelerates alike.
+     Expo/quint ease-outs feel "settled" rather than linear; the soft in-out is
+     for things that both start and stop on screen. */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-smooth: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Entering should be a touch slower than leaving — a fast exit keeps the UI
+     feeling responsive instead of sluggish. */
+  --dur-in: 320ms;
+  --dur-out: 200ms;
 }
 
 html, body, #root {
   height: 100%;
   background: #0b0b0f;
+}
+
+/* Installed-PWA behaviour: no rubber-band past the app shell, and don't let a
+   double-tap zoom the UI like a document. */
+body {
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
+}
+
+/* Safe areas for notched phones (viewport-fit=cover is set in index.html). */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+/* Clears the fixed bottom tab bar (its own height + the home indicator). */
+.pb-mobile-nav {
+  padding-bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
 }
 
 body {
@@ -20,9 +52,16 @@ body {
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* Smooth scrolling for row carousels */
+/* Row carousels.
+   `proximity` rather than `mandatory`: mandatory snapping fights the eased
+   programmatic scroll (the browser yanks the track mid-animation), which was
+   the main source of jerky row paging. Proximity keeps cards tidily aligned
+   without hijacking motion. */
 .scroll-snap-x {
-  scroll-snap-type: x mandatory;
+  scroll-snap-type: x proximity;
+  scroll-padding-left: 3rem;
+  /* Keep the compositor in charge of the scrolling layer. */
+  -webkit-overflow-scrolling: touch;
 }
 .scroll-snap-x > * {
   scroll-snap-align: start;
@@ -53,66 +92,146 @@ body {
 
 /* Reusable card hover */
 .card-tilt {
-  transition: transform 250ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 250ms;
+  transition: transform var(--dur-out) var(--ease-out-quint),
+              box-shadow var(--dur-out) var(--ease-out-quint);
+  backface-visibility: hidden;
 }
 .card-tilt:hover {
-  transform: translateY(-4px) scale(1.04);
+  transform: translate3d(0, -4px, 0) scale(1.04);
   box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8);
   z-index: 10;
+  transition-duration: var(--dur-in);
 }
 
 /* ─────────── Netflix-style hover-expand card ─────────── */
 /* The card scales up in place, lifts above neighbors, and its poster art
    zooms slightly. Kept as a transform so the row's scroll isn't disturbed. */
 .hover-card {
-  transition: transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
-              box-shadow 260ms ease;
-  will-change: transform;
+  /* Leaving is quicker than entering so the row feels light under a fast skim. */
+  transition: transform var(--dur-out) var(--ease-out-quint),
+              box-shadow var(--dur-out) var(--ease-out-quint);
+  transform: translateZ(0) scale(1);
+  backface-visibility: hidden;
+  /* Promote only while it can actually animate (see .is-hovered) — a permanent
+     will-change on 69 cards would pin far too many layers. */
 }
-.hover-card.is-hovered {
-  transform: scale(1.28);
-  box-shadow: 0 30px 60px -18px rgba(0, 0, 0, 0.9),
-              0 0 0 1px rgba(255, 255, 255, 0.08);
-  z-index: 30;
+/* Only expand where there's a real pointer. On touch, a tap would latch the
+   hover state and leave a card stuck open with no way to dismiss it. */
+@media (hover: hover) and (pointer: fine) {
+  .hover-card.is-hovered {
+    transform: translateZ(0) scale(1.28);
+    box-shadow: 0 30px 60px -18px rgba(0, 0, 0, 0.9),
+                0 0 0 1px rgba(255, 255, 255, 0.08);
+    z-index: 30;
+    will-change: transform;
+    transition: transform var(--dur-in) var(--ease-smooth),
+                box-shadow var(--dur-in) var(--ease-smooth);
+  }
 }
 /* Edge cards expand inward so they don't clip against the row's edges. */
 .deck-row > *:first-child .hover-card { transform-origin: left center; }
 .deck-row > *:last-child .hover-card { transform-origin: right center; }
 /* Poster art breathes in as the card expands. */
 .poster-zoom {
-  transition: transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
-  transform: scale(1.001);
+  transition: transform 700ms var(--ease-out-expo);
+  transform: translateZ(0) scale(1.001);
+  backface-visibility: hidden;
 }
 .hover-card.is-hovered .poster-zoom {
-  transform: scale(1.1);
+  transform: translateZ(0) scale(1.1);
 }
-/* The action + metadata panel that fades up over the lower poster on hover. */
+/* The action + metadata panel that fades up over the lower poster on hover.
+   Delayed slightly so it arrives after the card has begun expanding. */
 .hover-panel {
   opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 200ms ease, transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform: translate3d(0, 10px, 0);
+  transition: opacity var(--dur-out) var(--ease-out-quint),
+              transform var(--dur-out) var(--ease-out-quint);
 }
 .hover-card.is-hovered .hover-panel {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate3d(0, 0, 0);
+  transition: opacity 260ms var(--ease-out-quint) 60ms,
+              transform 320ms var(--ease-out-expo) 60ms;
 }
 /* The resting caption yields to the richer hover panel on expand. */
 .cover-caption {
-  transition: opacity 160ms ease;
+  transition: opacity var(--dur-out) var(--ease-out-quint);
 }
 .hover-card.is-hovered .cover-caption {
   opacity: 0;
+  transition-duration: 140ms;
 }
 
 /* ─────────── Cinematic hero ─────────── */
 /* Slow Ken-Burns drift on the billboard backdrop. */
 .ken-burns {
-  animation: kenBurns 26s ease-in-out infinite alternate;
+  animation: kenBurns 26s var(--ease-in-out-soft) infinite alternate;
   transform-origin: 62% 38%;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 @keyframes kenBurns {
-  0%   { transform: scale(1.06) translate3d(0, 0, 0); }
-  100% { transform: scale(1.2) translate3d(-1.5%, -2.2%, 0); }
+  0%   { transform: translate3d(0, 0, 0) scale(1.06); }
+  100% { transform: translate3d(-1.5%, -2.2%, 0) scale(1.2); }
+}
+
+/* ─────────── View transitions (page → page) ─────────── */
+/* Only the content region animates; the navbar stays put, which reads as a
+   real app navigating rather than the whole page blinking. */
+.view-content {
+  view-transition-name: wit-content;
+}
+::view-transition-old(wit-content),
+::view-transition-new(wit-content) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-out-quint);
+  /* Snapshots overlap; blending them avoids a bright flash mid-swap. */
+  mix-blend-mode: normal;
+}
+::view-transition-old(wit-content) {
+  animation-name: viewOut;
+}
+::view-transition-new(wit-content) {
+  animation-name: viewIn;
+}
+@keyframes viewOut {
+  to { opacity: 0; transform: translate3d(0, -8px, 0); }
+}
+@keyframes viewIn {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+}
+
+/* ─────────── Overlay enter / exit ─────────── */
+/* Modals used to unmount instantly — the exit is what actually reads as jank. */
+@keyframes overlayOut {
+  to { opacity: 0; }
+}
+@keyframes panelOut {
+  to { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.97); }
+}
+.is-closing {
+  animation: overlayOut var(--dur-out) var(--ease-out-quint) forwards;
+}
+.is-closing .modal-panel {
+  animation: panelOut var(--dur-out) var(--ease-out-quint) forwards;
+}
+
+/* Grid/list content settles in when a filter changes. */
+@keyframes contentIn {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+}
+.content-in {
+  animation: contentIn 260ms var(--ease-out-quint) both;
+}
+
+/* Images fade in when they decode instead of popping. */
+.img-fade {
+  opacity: 0;
+  transition: opacity 500ms var(--ease-out-quint);
+}
+.img-fade.is-loaded {
+  opacity: 1;
 }
 /* Vignette that grounds the billboard on all four edges. */
 .hero-vignette {
@@ -129,9 +248,25 @@ body {
   background: linear-gradient(to left, rgba(11,11,15,0) 0%, rgba(11,11,15,0.75) 100%);
 }
 
+/* Respect users who ask for less motion: keep opacity cues, drop movement. */
 @media (prefers-reduced-motion: reduce) {
-  .ken-burns { animation: none; }
-  .hover-card, .poster-zoom, .hover-panel { transition: none; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ken-burns { animation: none; transform: none; }
+  .hover-card.is-hovered { transform: translateZ(0) scale(1.06); }
+  .card-tilt:hover { transform: none; }
+  .img-fade { opacity: 1; }
+  /* Pseudo-elements aren't matched by the `*` rule above. */
+  ::view-transition-old(wit-content),
+  ::view-transition-new(wit-content) {
+    animation: none;
+  }
 }
 
 /* Pulse the play button */

@@ -9,7 +9,9 @@ import {
   toCreateRequest,
 } from './lib/api.js'
 import { loadHistory, loadAuth, saveAuth, clearAuth } from './lib/storage.js'
+import { withViewTransition } from './lib/viewTransition.js'
 import Navbar from './components/Navbar.jsx'
+import MobileNav from './components/MobileNav.jsx'
 import Hero from './components/Hero.jsx'
 import Row from './components/Row.jsx'
 import TopTenRow from './components/TopTenRow.jsx'
@@ -18,6 +20,7 @@ import DetailsModal from './components/DetailsModal.jsx'
 import DeckPlayer from './components/DeckPlayer.jsx'
 import AddDeckModal from './components/AddDeckModal.jsx'
 import Cover from './components/Cover.jsx'
+import DeckFilters, { useDeckFilters } from './components/DeckFilters.jsx'
 import Toast from './components/Toast.jsx'
 import SearchModal from './components/SearchModal.jsx'
 import IndustriesPage from './components/IndustriesPage.jsx'
@@ -210,6 +213,9 @@ export default function App() {
     }
   }
 
+  // Every navigation goes through the View Transitions cross-fade.
+  const goTo = (update) => withViewTransition(update)
+
   const isSearching = !!query.trim() || !!activeIndustry
   const isHome = activeCategory === 'home' && !isSearching
   const isSettings = activeCategory === 'settings'
@@ -233,7 +239,9 @@ export default function App() {
       />
     )
   } else if (isIndustries) {
-    body = <IndustriesPage decks={decks} onPickIndustry={(id) => setActiveIndustry(id)} />
+    body = (
+      <IndustriesPage decks={decks} onPickIndustry={(id) => goTo(() => setActiveIndustry(id))} />
+    )
   } else if (isSettings) {
     body = (
       <SettingsPage
@@ -263,7 +271,7 @@ export default function App() {
         onDetails={handleDetails}
         onRemove={canEdit ? handleRemove : undefined}
         onAddClick={() => setAddOpen(true)}
-        onCategoryClick={setActiveCategory}
+        onCategoryClick={(id) => goTo(() => setActiveCategory(id))}
         canEdit={canEdit}
       />
     )
@@ -278,14 +286,14 @@ export default function App() {
         onDetails={handleDetails}
         onRemove={canEdit ? handleRemove : undefined}
         onAddClick={() => setAddOpen(true)}
-        onCategoryNav={setActiveCategory}
+        onCategoryNav={(id) => goTo(() => setActiveCategory(id))}
         canEdit={canEdit}
       />
     )
   }
 
   return (
-    <div className="min-h-screen text-white pb-20">
+    <div className="min-h-screen text-white pb-mobile-nav lg:pb-20">
       <Navbar
         user={user}
         canEdit={canEdit}
@@ -293,22 +301,26 @@ export default function App() {
         onAddClick={() => setAddOpen(true)}
         onSearchClick={() => setSearchModalOpen(true)}
         activeCategory={activeCategory}
-        onCategoryChange={(id) => {
+        onCategoryChange={(id) => goTo(() => {
           setActiveCategory(id)
           if (query) setQuery('')
-        }}
+        })}
       />
 
-      {isHome && featuredDeck && (
-        <Hero
-          deck={featuredDeck}
-          onPlay={handlePlay}
-          onDetails={handleDetails}
-          onCategoryNav={setActiveCategory}
-        />
-      )}
+      {/* Named region for the View Transitions cross-fade — the navbar sits
+          outside it so it stays anchored while the content swaps. */}
+      <div className="view-content">
+        {isHome && featuredDeck && (
+          <Hero
+            deck={featuredDeck}
+            onPlay={handlePlay}
+            onDetails={handleDetails}
+            onCategoryNav={(id) => goTo(() => setActiveCategory(id))}
+          />
+        )}
 
-      <div className={isHome ? 'relative z-10 pt-8' : ''}>{body}</div>
+        <div className={isHome ? 'relative z-10 pt-8' : ''}>{body}</div>
+      </div>
 
       {detailsDeck && (
         <DetailsModal
@@ -320,10 +332,10 @@ export default function App() {
             setActiveCategory('home')
             setQuery(q)
           }}
-          onCategoryNav={(id) => {
+          onCategoryNav={(id) => goTo(() => {
             setQuery('')
             setActiveCategory(id)
-          }}
+          })}
         />
       )}
 
@@ -353,6 +365,17 @@ export default function App() {
           }}
         />
       )}
+
+      <MobileNav
+        activeCategory={activeCategory}
+        searching={isSearching}
+        onSearchClick={() => setSearchModalOpen(true)}
+        onCategoryChange={(id) => goTo(() => {
+          setActiveCategory(id)
+          setQuery('')
+          setActiveIndustry(null)
+        })}
+      />
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
@@ -508,8 +531,11 @@ function SearchResults({
   onClearIndustry,
   onClearQuery,
 }) {
+  // Industry is owned by the page (chip above), so it's hidden here.
+  const { filtered, controls } = useDeckFilters(decks)
+
   return (
-    <div className="px-8 md:px-12 pt-28">
+    <div className="px-8 md:px-12 pt-32 lg:pt-28">
       <div className="mb-6">
         <div className="text-xs uppercase tracking-widest text-deck-muted">
           {industryLabel && !query ? 'Industry filter' : 'Results for'}
@@ -545,8 +571,10 @@ function SearchResults({
           No decks match that. Try another query, or add your own deck.
         </div>
       ) : (
+        <>
+        <DeckFilters {...controls} hide={['industry']} />
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-          {decks.map((deck) => (
+          {filtered.map((deck) => (
             <div
               key={deck.id}
               className="cursor-pointer"
@@ -562,6 +590,7 @@ function SearchResults({
             </div>
           ))}
         </div>
+        </>
       )}
     </div>
   )

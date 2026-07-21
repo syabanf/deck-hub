@@ -66,7 +66,7 @@ export default function ManagePage({
   }, [decks])
 
   return (
-    <div className={embedded ? '' : 'px-6 md:px-12 pt-28 pb-16 min-h-screen'}>
+    <div className={embedded ? '' : 'px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen'}>
       {/* Header */}
       <div className="mb-6">
         {!embedded && (

@@ -12,10 +12,19 @@ import (
 // RouterDeps bundles everything the router needs to wire its routes. Handlers
 // depend on narrow usecase interfaces, not concrete types or repositories.
 type RouterDeps struct {
-	Auth   *AuthHandler
-	Users  *UserHandler
-	Decks  *DeckHandler
-	Tokens *TokenManager
+	Auth    *AuthHandler
+	Users   *UserHandler
+	Decks   *DeckHandler
+	Uploads *UploadHandler
+	Tokens  *TokenManager
+
+	// UploadDir is the directory uploaded files are served from. When empty,
+	// the static /uploads/* route is not mounted.
+	UploadDir string
+
+	// CORSOrigins are the browser origins allowed to call the API. Empty falls
+	// back to the Vite dev origin.
+	CORSOrigins []string
 }
 
 // NewRouter builds the chi router with middleware and all mounted routes.
@@ -29,9 +38,13 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 
-	// CORS for the Vite dev frontend.
+	// CORS for the browser frontend (dev server, preview, or deployed PWA).
+	origins := d.CORSOrigins
+	if len(origins) == 0 {
+		origins = []string{"http://localhost:5173"}
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173"},
+		AllowedOrigins:   origins,
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
 		ExposedHeaders:   []string{"X-Request-Id"},
@@ -78,6 +91,20 @@ func NewRouter(d RouterDeps) http.Handler {
 			r.Delete("/{id}", d.Decks.Delete)
 		})
 	})
+
+	// Uploads: writing requires an authenticated admin/editor; the stored files
+	// themselves are served publicly so decks can reference them.
+	if d.Uploads != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Use(RequireRole("admin", "editor"))
+			r.Post("/uploads", d.Uploads.Upload)
+		})
+	}
+	if d.UploadDir != "" {
+		fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir(d.UploadDir)))
+		r.Get("/uploads/*", fileServer.ServeHTTP)
+	}
 
 	return r
 }

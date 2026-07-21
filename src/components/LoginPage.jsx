@@ -20,6 +20,32 @@ const imageSrc = (deck, w = 400, h = 250) => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+// One-click demo sign-in, one account per role, so the role gating is
+// immediately visible. Seeded by migrations 000001 + 000003.
+const DEMO_ACCOUNTS = [
+  {
+    role: 'Admin',
+    email: 'admin@wit.id',
+    password: 'admin1234',
+    can: 'Decks + users',
+    color: '#fb7185',
+  },
+  {
+    role: 'Editor',
+    email: 'editor@wit.id',
+    password: 'editor1234',
+    can: 'Add & remove decks',
+    color: '#60a5fa',
+  },
+  {
+    role: 'Viewer',
+    email: 'viewer@wit.id',
+    password: 'viewer1234',
+    can: 'Browse only',
+    color: '#8a8a99',
+  },
+]
+
 export default function LoginPage({ onLogin }) {
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
   const [name, setName] = useState('')
@@ -30,6 +56,7 @@ export default function LoginPage({ onLogin }) {
   const [error, setError] = useState('')
   const [shake, setShake] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [demoPending, setDemoPending] = useState(null)
 
   // A blurred "wall of decks" backdrop, like a streaming-service splash screen.
   const backdrop = useMemo(() => {
@@ -47,6 +74,20 @@ export default function LoginPage({ onLogin }) {
     setTimeout(() => setShake(false), 500)
   }
 
+  // Single sign-in path shared by the form and the demo-account buttons.
+  const doLogin = async (emailValue, passwordValue) => {
+    setError('')
+    setSubmitting(true)
+    try {
+      const { token, user } = await api.login(emailValue.trim().toLowerCase(), passwordValue)
+      onLogin({ ...user, token, remember, since: Date.now() })
+    } catch (err) {
+      setSubmitting(false)
+      setDemoPending(null)
+      fail(err.code === 'unauthorized' ? 'Incorrect email or password.' : err.message)
+    }
+  }
+
   const submit = async (e) => {
     e.preventDefault()
     if (submitting) return
@@ -60,15 +101,16 @@ export default function LoginPage({ onLogin }) {
     if (!EMAIL_RE.test(email.trim())) return fail('Enter a valid email address.')
     if (!password) return fail('Enter your password.')
 
-    setError('')
-    setSubmitting(true)
-    try {
-      const { token, user } = await api.login(email.trim().toLowerCase(), password)
-      onLogin({ ...user, token, remember, since: Date.now() })
-    } catch (err) {
-      setSubmitting(false)
-      fail(err.code === 'unauthorized' ? 'Incorrect email or password.' : err.message)
-    }
+    await doLogin(email, password)
+  }
+
+  const signInAsDemo = async (account) => {
+    if (submitting) return
+    // Mirror the credentials into the form so it's clear what was used.
+    setEmail(account.email)
+    setPassword(account.password)
+    setDemoPending(account.role)
+    await doLogin(account.email, account.password)
   }
 
   const continueAsGuest = () => {
@@ -80,11 +122,6 @@ export default function LoginPage({ onLogin }) {
     )
   }
 
-  const useDemoAdmin = () => {
-    setEmail('admin@wit.id')
-    setPassword('admin1234')
-    setError('')
-  }
 
   const switchMode = (next) => {
     setMode(next)
@@ -216,13 +253,9 @@ export default function LoginPage({ onLogin }) {
                 </span>
                 Remember me
               </button>
-              <button
-                type="button"
-                onClick={useDemoAdmin}
-                className="text-white/50 hover:text-white transition-colors"
-              >
-                Use demo admin
-              </button>
+              <span className="text-white/35 text-xs">
+                Accounts are provisioned by an admin
+              </span>
             </div>
 
             <button
@@ -244,7 +277,43 @@ export default function LoginPage({ onLogin }) {
             </button>
           </form>
 
-          {/* Divider */}
+          {/* Demo accounts — one click per role, no typing required. */}
+          <div className="flex items-center gap-3 my-5">
+            <span className="flex-1 h-px bg-white/10" />
+            <span className="text-[10px] uppercase tracking-widest text-white/40 whitespace-nowrap">
+              or try a demo account
+            </span>
+            <span className="flex-1 h-px bg-white/10" />
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            {DEMO_ACCOUNTS.map((account) => (
+              <button
+                key={account.role}
+                type="button"
+                onClick={() => signInAsDemo(account)}
+                disabled={submitting}
+                title={`${account.email} · ${account.password}`}
+                className="flex flex-col items-center justify-center gap-1 px-2 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="flex items-center gap-1.5 text-sm font-bold">
+                  {demoPending === account.role ? (
+                    <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ background: account.color }}
+                    />
+                  )}
+                  {account.role}
+                </span>
+                <span className="text-[10px] text-white/45 leading-tight text-center">
+                  {account.can}
+                </span>
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-center gap-3 my-5">
             <span className="flex-1 h-px bg-white/10" />
             <span className="text-xs uppercase tracking-widest text-white/40">or</span>
@@ -287,9 +356,10 @@ export default function LoginPage({ onLogin }) {
 
       {/* Footer note */}
       <div className="relative z-10 text-center text-xs text-white/35 pb-6 px-4">
-        Signs in against the WIT API · demo admin{' '}
-        <span className="text-white/60">admin@wit.id</span> /{' '}
-        <span className="text-white/60">admin1234</span>
+        Signs in against the WIT API · demo passwords are{' '}
+        <span className="text-white/60">admin1234</span> /{' '}
+        <span className="text-white/60">editor1234</span> /{' '}
+        <span className="text-white/60">viewer1234</span>
       </div>
     </div>
   )

@@ -16,7 +16,7 @@ function CircleBtn({ children, onClick, title, filled = false, active = false })
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`flex items-center justify-center rounded-full transition-all duration-150 hover:scale-110 active:scale-95 ${
+      className={`flex items-center justify-center rounded-full transition-[transform,background-color,border-color] duration-150 ease-out hover:scale-110 active:scale-95 ${
         filled
           ? 'w-9 h-9 bg-white text-black hover:bg-white/90 shadow-lg'
           : `w-8 h-8 border text-white backdrop-blur ${
@@ -57,7 +57,7 @@ export default function Card({ deck, onPlay, onDetails, onRemove, onCategoryClic
 
   return (
     <div
-      className="relative w-[280px] flex-shrink-0"
+      className="relative w-[172px] sm:w-[220px] md:w-[280px] flex-shrink-0"
       onMouseEnter={enter}
       onMouseLeave={leave}
     >
@@ -66,7 +66,12 @@ export default function Card({ deck, onPlay, onDetails, onRemove, onCategoryClic
         onClick={() => onDetails(deck)}
       >
         <div className="aspect-deck rounded-md overflow-hidden ring-1 ring-deck-border shadow-lg">
-          <Cover deck={deck} onCategoryClick={onCategoryClick} />
+          {/* Caption scales with the card so small phone cards don't clip. */}
+          <Cover
+            deck={deck}
+            sizeClass="text-[9px] sm:text-[11px] md:text-xs"
+            onCategoryClick={onCategoryClick}
+          />
         </div>
 
         {/* Expanded hover panel: action cluster + rich metadata, over the

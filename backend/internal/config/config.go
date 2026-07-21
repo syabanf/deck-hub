@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -21,7 +23,17 @@ type Config struct {
 	HTTPPort  string
 	JWTSecret string
 	JWTTTL    time.Duration
+
+	// UploadDir is where uploaded files are written (local storage backend).
+	UploadDir string
+	// MaxUploadMB caps the size of a single upload request.
+	MaxUploadMB int
+	// CORSOrigins lists the browser origins allowed to call the API.
+	CORSOrigins []string
 }
+
+// MaxUploadBytes returns the upload cap in bytes.
+func (c *Config) MaxUploadBytes() int64 { return int64(c.MaxUploadMB) << 20 }
 
 // Load reads configuration from the environment. It first attempts to load a
 // .env file (ignored if absent), then reads each variable, applying sensible
@@ -39,7 +51,23 @@ func Load() (*Config, error) {
 		DBSSLMode:  getEnv("DB_SSLMODE", "disable"),
 		HTTPPort:   getEnv("HTTP_PORT", "8080"),
 		JWTSecret:  getEnv("JWT_SECRET", ""),
+		UploadDir:  getEnv("UPLOAD_DIR", "./uploads"),
 	}
+
+	// Comma-separated browser origins. Defaults cover the Vite dev server and
+	// the production-preview server; set explicitly when deploying the PWA.
+	for _, o := range strings.Split(getEnv("CORS_ORIGINS", "http://localhost:5173,http://localhost:4173"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			cfg.CORSOrigins = append(cfg.CORSOrigins, o)
+		}
+	}
+
+	maxMBRaw := getEnv("MAX_UPLOAD_MB", "25")
+	maxMB, err := strconv.Atoi(maxMBRaw)
+	if err != nil || maxMB <= 0 {
+		return nil, fmt.Errorf("invalid MAX_UPLOAD_MB %q: must be a positive integer", maxMBRaw)
+	}
+	cfg.MaxUploadMB = maxMB
 
 	ttlRaw := getEnv("JWT_TTL", "24h")
 	ttl, err := time.ParseDuration(ttlRaw)

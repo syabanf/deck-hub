@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import SlideBackground from './SlideBackground.jsx'
 
 const CATEGORY_LABEL = {
@@ -28,6 +28,14 @@ export default function Cover({
   onCategoryClick,
 }) {
   const [imgFailed, setImgFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const imgRef = useRef(null)
+
+  // A cached image can finish decoding before onLoad is wired up, which would
+  // otherwise leave it stuck at opacity 0.
+  useEffect(() => {
+    if (imgRef.current?.complete) setLoaded(true)
+  }, [])
   const categoryLabel = CATEGORY_LABEL[deck.category] || ''
   const isLinked = deck.source?.type === 'url'
   const isPdf = deck.source?.type === 'pdf'
@@ -88,9 +96,13 @@ export default function Cover({
         <img
           src={imageSrc(deck, large ? 1600 : 800, large ? 900 : 500)}
           alt=""
+          ref={imgRef}
           onError={() => setImgFailed(true)}
+          onLoad={() => setLoaded(true)}
           loading="lazy"
-          className="poster-zoom absolute inset-0 w-full h-full object-cover"
+          className={`poster-zoom img-fade absolute inset-0 w-full h-full object-cover ${
+            loaded ? 'is-loaded' : ''
+          }`}
         />
       )}
       {imgFailed && (

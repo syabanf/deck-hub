@@ -1,4 +1,5 @@
 import Cover from './Cover.jsx'
+import DeckFilters, { useDeckFilters } from './DeckFilters.jsx'
 import { PlayIcon, ChevronDown, TrashIcon } from '../lib/icons.jsx'
 
 const HEADERS = {
@@ -34,7 +35,7 @@ const HEADERS = {
   },
   mine: {
     title: 'My Library',
-    description: 'Decks you\'ve uploaded or linked. Stored locally in your browser.',
+    description: 'Decks uploaded or linked by the team, served by the WIT API.',
     accent: '#11998e',
   },
 }
@@ -55,7 +56,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
               e.stopPropagation()
               onPlay(deck)
             }}
-            className="flex items-center justify-center w-9 h-9 rounded-full bg-white text-black hover:bg-white/90 hover:scale-110 transition-all shadow-lg"
+            className="flex items-center justify-center w-9 h-9 rounded-full bg-white text-black hover:bg-white/90 hover:scale-110 transition-[transform,background-color] duration-200 ease-out shadow-lg"
             title="Open deck"
           >
             <PlayIcon size={15} />
@@ -65,7 +66,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
               e.stopPropagation()
               onDetails(deck)
             }}
-            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 backdrop-blur hover:scale-110 transition-all"
+            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
             title="More info"
           >
             <ChevronDown size={15} />
@@ -76,7 +77,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
                 e.stopPropagation()
                 onRemove(deck)
               }}
-              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 backdrop-blur hover:scale-110 transition-all"
+              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
               title="Remove"
             >
               <TrashIcon size={14} />
@@ -113,9 +114,10 @@ export default function CategoryView({
 }) {
   const meta = HEADERS[categoryId] || { title: 'Decks', description: '' }
   const isEmpty = decks.length === 0
+  const { filtered, controls } = useDeckFilters(decks)
 
   return (
-    <div className="px-6 md:px-12 pt-28 pb-16 min-h-screen">
+    <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">
       <div className="relative mb-8 pb-6 border-b border-deck-border">
         <div
           className="absolute -top-2 left-0 w-16 h-1 rounded-full"
@@ -126,16 +128,18 @@ export default function CategoryView({
         </div>
         <h1 className="text-4xl md:text-5xl font-black tracking-tight">{meta.title}</h1>
         <p className="text-deck-muted mt-2 max-w-2xl">{meta.description}</p>
-        <div className="mt-3 text-sm text-white/60">
-          {decks.length} {decks.length === 1 ? 'deck' : 'decks'}
-        </div>
       </div>
 
       {isEmpty ? (
         <EmptyState categoryId={categoryId} onAddClick={onAddClick} canEdit={canEdit} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-          {decks.map((deck) => (
+        <>
+        <DeckFilters {...controls} />
+        <div
+          key={`${controls.industry}-${controls.year}-${controls.source}-${controls.sort}`}
+          className="content-in grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5"
+        >
+          {filtered.map((deck) => (
             <GridCard
               key={deck.id}
               deck={deck}
@@ -146,6 +150,7 @@ export default function CategoryView({
             />
           ))}
         </div>
+        </>
       )}
     </div>
   )
