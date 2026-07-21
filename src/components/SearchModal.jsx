@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Cover from './Cover.jsx'
+import { useClosable } from '../lib/useClosable.js'
 import { SearchIcon, CloseIcon } from '../lib/icons.jsx'
 
 const SUGGESTIONS = ['Airbnb', 'Tesla', 'Transformer', 'Atomic Design', 'OpenAI', 'Lean Startup']
@@ -29,6 +30,7 @@ export default function SearchModal({
 }) {
   const inputRef = useRef(null)
   const [highlight, setHighlight] = useState(0)
+  const { closing, requestClose } = useClosable(onClose)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -53,7 +55,7 @@ export default function SearchModal({
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
-        onClose()
+        requestClose()
         return
       }
       if (!results.length) return
@@ -73,17 +75,19 @@ export default function SearchModal({
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [results, highlight, onClose, onPickDeck])
+  }, [results, highlight, requestClose, onPickDeck])
 
   const hasQuery = !!query.trim()
 
   return (
     <div
-      className="fixed inset-0 z-[55] flex items-start justify-center bg-black/80 backdrop-blur-sm animate-fade-in pt-20 px-4 overflow-y-auto"
-      onClick={onClose}
+      className={`fixed inset-0 z-[55] flex items-start justify-center bg-black/80 backdrop-blur-sm animate-fade-in pt-20 px-4 overflow-y-auto ${
+        closing ? 'is-closing' : ''
+      }`}
+      onClick={requestClose}
     >
       <div
-        className="relative w-full max-w-2xl animate-scale-in"
+        className="modal-panel relative w-full max-w-2xl animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -118,7 +122,7 @@ export default function SearchModal({
             </button>
           ) : (
             <button
-              onClick={onClose}
+              onClick={requestClose}
               className="text-white/60 hover:text-white"
               title="Close (Esc)"
             >

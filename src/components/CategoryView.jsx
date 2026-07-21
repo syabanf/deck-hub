@@ -1,5 +1,6 @@
 import Cover from './Cover.jsx'
-import { PlayIcon, InfoIcon, TrashIcon } from '../lib/icons.jsx'
+import DeckFilters, { useDeckFilters } from './DeckFilters.jsx'
+import { PlayIcon, ChevronDown, TrashIcon } from '../lib/icons.jsx'
 
 const HEADERS = {
   'company-profile': {
@@ -34,7 +35,7 @@ const HEADERS = {
   },
   mine: {
     title: 'My Library',
-    description: 'Decks you\'ve uploaded or linked. Stored locally in your browser.',
+    description: 'Decks uploaded or linked by the team, served by the WIT API.',
     accent: '#11998e',
   },
 }
@@ -45,30 +46,30 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
       className="group relative cursor-pointer"
       onClick={() => onDetails(deck)}
     >
-      <div className="aspect-deck relative rounded-md overflow-hidden ring-1 ring-deck-border bg-deck-card shadow-lg card-tilt">
+      <div className="aspect-deck relative rounded-md overflow-hidden ring-1 ring-deck-border bg-deck-card shadow-lg card-tilt group-hover:ring-white/20">
         <Cover deck={deck} sizeClass="text-sm" minimal onCategoryClick={onCategoryClick} />
 
-        {/* Hover action bar overlaid on the cover */}
-        <div className="absolute inset-x-0 bottom-0 p-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Hover action cluster over a scrim — matches the home-row cards. */}
+        <div className="absolute inset-x-0 bottom-0 p-3 pt-10 flex items-center gap-1.5 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
               e.stopPropagation()
               onPlay(deck)
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white text-black text-xs font-bold hover:bg-white/90 shadow-lg"
+            className="flex items-center justify-center w-9 h-9 rounded-full bg-white text-black hover:bg-white/90 hover:scale-110 transition-[transform,background-color] duration-200 ease-out shadow-lg"
+            title="Open deck"
           >
-            <PlayIcon size={12} />
-            Open
+            <PlayIcon size={15} />
           </button>
           <button
             onClick={(e) => {
               e.stopPropagation()
               onDetails(deck)
             }}
-            className="flex items-center justify-center w-7 h-7 rounded-full bg-black/70 hover:bg-black/90 border border-white/30 shadow-lg"
-            title="Details"
+            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
+            title="More info"
           >
-            <InfoIcon size={12} />
+            <ChevronDown size={15} />
           </button>
           {onRemove && (
             <button
@@ -76,10 +77,10 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
                 e.stopPropagation()
                 onRemove(deck)
               }}
-              className="ml-auto flex items-center justify-center w-7 h-7 rounded-full bg-black/70 hover:bg-red-600/80 border border-white/30 shadow-lg"
+              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
               title="Remove"
             >
-              <TrashIcon size={12} />
+              <TrashIcon size={14} />
             </button>
           )}
         </div>
@@ -109,12 +110,14 @@ export default function CategoryView({
   onRemove,
   onAddClick,
   onCategoryClick,
+  canEdit = false,
 }) {
   const meta = HEADERS[categoryId] || { title: 'Decks', description: '' }
   const isEmpty = decks.length === 0
+  const { filtered, controls } = useDeckFilters(decks)
 
   return (
-    <div className="px-6 md:px-12 pt-28 pb-16 min-h-screen">
+    <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">
       <div className="relative mb-8 pb-6 border-b border-deck-border">
         <div
           className="absolute -top-2 left-0 w-16 h-1 rounded-full"
@@ -125,51 +128,55 @@ export default function CategoryView({
         </div>
         <h1 className="text-4xl md:text-5xl font-black tracking-tight">{meta.title}</h1>
         <p className="text-deck-muted mt-2 max-w-2xl">{meta.description}</p>
-        <div className="mt-3 text-sm text-white/60">
-          {decks.length} {decks.length === 1 ? 'deck' : 'decks'}
-        </div>
       </div>
 
       {isEmpty ? (
-        <EmptyState categoryId={categoryId} onAddClick={onAddClick} />
+        <EmptyState categoryId={categoryId} onAddClick={onAddClick} canEdit={canEdit} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-          {decks.map((deck) => (
+        <>
+        <DeckFilters {...controls} />
+        <div
+          key={`${controls.industry}-${controls.year}-${controls.source}-${controls.sort}`}
+          className="content-in grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5"
+        >
+          {filtered.map((deck) => (
             <GridCard
               key={deck.id}
               deck={deck}
               onPlay={onPlay}
               onDetails={onDetails}
-              onRemove={
-                deck.id.startsWith('user-') ? onRemove : undefined
-              }
+              onRemove={onRemove}
               onCategoryClick={onCategoryClick}
             />
           ))}
         </div>
+        </>
       )}
     </div>
   )
 }
 
-function EmptyState({ categoryId, onAddClick }) {
+function EmptyState({ categoryId, onAddClick, canEdit }) {
   if (categoryId === 'mine') {
     return (
       <div className="text-center py-20 max-w-md mx-auto">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-deck-card flex items-center justify-center text-white/60 text-2xl font-black">
           +
         </div>
-        <h3 className="text-xl font-bold mb-2">Your library is empty</h3>
+        <h3 className="text-xl font-bold mb-2">Nothing in My Library yet</h3>
         <p className="text-deck-muted text-sm mb-6">
-          Upload a PDF or paste a link to a hosted presentation. Everything stays
-          private to your browser.
+          {canEdit
+            ? 'Upload a PDF or paste a link to a hosted presentation. It joins the shared catalog under “My Library”.'
+            : 'Decks you add appear here. Ask an editor or admin to contribute decks to the catalog.'}
         </p>
-        <button
-          onClick={onAddClick}
-          className="px-5 py-2.5 rounded bg-deck-accent hover:bg-deck-accentDim font-semibold text-sm"
-        >
-          Add your first deck
-        </button>
+        {canEdit && (
+          <button
+            onClick={onAddClick}
+            className="px-5 py-2.5 rounded bg-deck-accent hover:bg-deck-accentDim font-semibold text-sm"
+          >
+            Add your first deck
+          </button>
+        )}
       </div>
     )
   }

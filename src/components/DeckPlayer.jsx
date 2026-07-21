@@ -3,10 +3,12 @@ import Slide from './Slide.jsx'
 import { toEmbedUrl } from '../lib/embed.js'
 import {
   loadPdfDocument,
+  loadPdfDocumentFromUrl,
   renderPdfPageToCanvas,
   base64ToArrayBuffer,
 } from '../lib/pdf.js'
 import { recordView } from '../lib/storage.js'
+import { useClosable } from '../lib/useClosable.js'
 import {
   CloseIcon,
   ChevronLeft,
@@ -14,6 +16,13 @@ import {
   FullscreenIcon,
   ExitFullscreenIcon,
 } from '../lib/icons.jsx'
+
+// A deck's PDF is either an uploaded file served over HTTP (source.remote) or
+// legacy inline base64.
+const openPdf = (source) =>
+  source.remote
+    ? loadPdfDocumentFromUrl(source.value)
+    : loadPdfDocument(base64ToArrayBuffer(source.value))
 
 const MockSlideStage = ({ deck, index }) => (
   <div className="aspect-[16/9] w-full max-w-[1600px] mx-auto rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10">
@@ -34,8 +43,7 @@ const PdfSlideStage = ({ deck, index }) => {
     setError(null)
     ;(async () => {
       try {
-        const buf = base64ToArrayBuffer(deck.source.value)
-        const d = await loadPdfDocument(buf)
+        const d = await openPdf(deck.source)
         if (!cancelled) setDoc(d)
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load PDF')
@@ -126,6 +134,7 @@ const VideoStage = ({ deck }) => {
 }
 
 export default function DeckPlayer({ deck, startIndex = 0, onClose }) {
+  const { closing, requestClose } = useClosable(onClose)
   const [index, setIndex] = useState(startIndex)
   const [isFull, setIsFull] = useState(false)
   const [pdfPageCount, setPdfPageCount] = useState(null)
@@ -139,8 +148,7 @@ export default function DeckPlayer({ deck, startIndex = 0, onClose }) {
     let cancelled = false
     ;(async () => {
       try {
-        const buf = base64ToArrayBuffer(deck.source.value)
-        const d = await loadPdfDocument(buf)
+        const d = await openPdf(deck.source)
         if (!cancelled) setPdfPageCount(d.numPages)
       } catch {
         if (!cancelled) setPdfPageCount(1)
@@ -162,7 +170,7 @@ export default function DeckPlayer({ deck, startIndex = 0, onClose }) {
 
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') requestClose()
       if (!canNavigate) return
       if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'l' || e.key === 'j') {
         e.preventDefault()
@@ -182,7 +190,7 @@ export default function DeckPlayer({ deck, startIndex = 0, onClose }) {
       document.removeEventListener('keydown', handler)
       document.body.style.overflow = ''
     }
-  }, [onClose, totalSlides, canNavigate])
+  }, [requestClose, totalSlides, canNavigate])
 
   useEffect(() => {
     recordView(deck.id, index, totalSlides)
@@ -208,7 +216,7 @@ export default function DeckPlayer({ deck, startIndex = 0, onClose }) {
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-50 bg-black flex flex-col animate-fade-in"
+      className={`fixed inset-0 z-50 bg-black flex flex-col animate-fade-in ${closing ? 'is-closing' : ''}`}
     >
       {/* Top progress bar */}
       <div className="absolute top-0 inset-x-0 h-1 bg-white/10 z-20">
@@ -233,7 +241,7 @@ export default function DeckPlayer({ deck, startIndex = 0, onClose }) {
             {isFull ? <ExitFullscreenIcon size={18} /> : <FullscreenIcon size={18} />}
           </button>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center"
             title="Close (Esc)"
           >

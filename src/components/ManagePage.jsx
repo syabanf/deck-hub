@@ -1,14 +1,13 @@
 import { useMemo, useState } from 'react'
-import { MOCK_DECKS, CATEGORIES, INDUSTRIES } from '../data/decks.js'
-import { getEffectiveViews } from '../lib/storage.js'
+import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
 import { TrashIcon, PlusIcon } from '../lib/icons.jsx'
 
 const SOURCE_LABELS = {
-  mock: { label: 'Catalog', color: '#8a8a99' },
   pdf: { label: 'PDF', color: '#60a5fa' },
   url: { label: 'Linked', color: '#34d399' },
   video: { label: 'Video', color: '#fb7185' },
 }
+const sourceMeta = (type) => SOURCE_LABELS[type] || { label: type || 'Linked', color: '#8a8a99' }
 
 function StatCard({ label, value, accent }) {
   return (
@@ -21,18 +20,17 @@ function StatCard({ label, value, accent }) {
   )
 }
 
+// Backend-primary catalog admin table. Operates on the live catalog fetched
+// from the API; edits flow back through onRemove → DELETE /decks.
 export default function ManagePage({
-  userDecks,
+  decks = [],
+  canEdit = false,
   onAddClick,
   onPlay,
   onDetails,
   onRemove,
-  onExport,
-  onImport,
   embedded = false,
 }) {
-  const allDecks = useMemo(() => [...userDecks, ...MOCK_DECKS], [userDecks])
-
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('all')
   const [filterIndustry, setFilterIndustry] = useState('all')
@@ -40,10 +38,10 @@ export default function ManagePage({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return allDecks.filter((d) => {
+    return decks.filter((d) => {
       if (filterCategory !== 'all' && d.category !== filterCategory) return false
       if (filterIndustry !== 'all' && d.industry !== filterIndustry) return false
-      const src = d.source?.type || 'mock'
+      const src = d.source?.type || 'url'
       if (filterSource !== 'all' && src !== filterSource) return false
       if (!q) return true
       return (
@@ -53,41 +51,22 @@ export default function ManagePage({
         (d.tags || []).some((t) => t.toLowerCase().includes(q))
       )
     })
-  }, [allDecks, search, filterCategory, filterIndustry, filterSource])
+  }, [decks, search, filterCategory, filterIndustry, filterSource])
 
   const stats = useMemo(() => {
-    const total = allDecks.length
-    const userCount = userDecks.length
-    const catalogCount = MOCK_DECKS.length
+    const total = decks.length
+    const mine = decks.filter((d) => d.category === 'mine').length
+    const featured = decks.filter((d) => d.featured).length
+    const totalViews = decks.reduce((sum, d) => sum + (d.viewCount || 0), 0)
     const byCategory = CATEGORIES.reduce((acc, c) => {
-      acc[c.id] = MOCK_DECKS.filter((d) => d.category === c.id).length
+      acc[c.id] = decks.filter((d) => d.category === c.id).length
       return acc
     }, {})
-    const totalViews = MOCK_DECKS.reduce((sum, d) => sum + getEffectiveViews(d.id), 0)
-    return { total, userCount, catalogCount, byCategory, totalViews }
-  }, [userDecks, allDecks])
-
-  const handleImportClick = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'application/json,.json'
-    input.onchange = async (e) => {
-      const file = e.target.files?.[0]
-      if (!file) return
-      try {
-        const text = await file.text()
-        const parsed = JSON.parse(text)
-        if (!Array.isArray(parsed)) throw new Error('JSON must be an array')
-        onImport(parsed)
-      } catch (err) {
-        alert('Failed to import: ' + err.message)
-      }
-    }
-    input.click()
-  }
+    return { total, mine, featured, byCategory, totalViews }
+  }, [decks])
 
   return (
-    <div className={embedded ? '' : 'px-6 md:px-12 pt-28 pb-16 min-h-screen'}>
+    <div className={embedded ? '' : 'px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen'}>
       {/* Header */}
       <div className="mb-6">
         {!embedded && (
@@ -98,26 +77,13 @@ export default function ManagePage({
         <div className={`flex flex-wrap items-end gap-4 ${embedded ? 'justify-end' : 'justify-between'}`}>
           {!embedded && (
             <div>
-              <h1 className="text-4xl md:text-5xl font-black tracking-tight">Manage master data</h1>
+              <h1 className="text-4xl md:text-5xl font-black tracking-tight">Manage catalog</h1>
               <p className="text-deck-muted mt-1">
-                Catalog overview, user library, exports, and stats.
+                The live deck catalog served by the WIT API.
               </p>
             </div>
           )}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleImportClick}
-              className="px-3 py-2 rounded-lg bg-white/5 border border-deck-border hover:bg-white/10 text-sm font-semibold"
-            >
-              Import JSON
-            </button>
-            <button
-              onClick={onExport}
-              disabled={userDecks.length === 0}
-              className="px-3 py-2 rounded-lg bg-white/5 border border-deck-border hover:bg-white/10 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Export Library
-            </button>
+          {canEdit && (
             <button
               onClick={onAddClick}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-deck-accent hover:bg-deck-accentDim text-sm font-bold shadow-lg shadow-deck-accent/30"
@@ -125,15 +91,15 @@ export default function ManagePage({
               <PlusIcon size={14} />
               New deck
             </button>
-          </div>
+          )}
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
         <StatCard label="Total decks" value={stats.total} />
-        <StatCard label="Catalog decks" value={stats.catalogCount} accent="#a78bfa" />
-        <StatCard label="My library" value={stats.userCount} accent="#34d399" />
+        <StatCard label="Featured" value={stats.featured} accent="#a78bfa" />
+        <StatCard label="My library" value={stats.mine} accent="#34d399" />
         <StatCard label="Total views" value={stats.totalViews.toLocaleString()} accent="#fbbf24" />
       </div>
 
@@ -184,7 +150,7 @@ export default function ManagePage({
         </select>
       </div>
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {['all', 'mock', 'pdf', 'url', 'video'].map((s) => (
+        {['all', 'url', 'video', 'pdf'].map((s) => (
           <button
             key={s}
             onClick={() => setFilterSource(s)}
@@ -194,7 +160,7 @@ export default function ManagePage({
                 : 'bg-white/5 text-white/70 hover:bg-white/15'
             }`}
           >
-            {s === 'all' ? 'All sources' : SOURCE_LABELS[s].label}
+            {s === 'all' ? 'All sources' : sourceMeta(s).label}
           </button>
         ))}
         <span className="ml-auto text-xs text-deck-muted">{filtered.length} results</span>
@@ -224,18 +190,18 @@ export default function ManagePage({
               </tr>
             )}
             {filtered.map((deck) => {
-              const src = deck.source?.type || 'mock'
-              const isUser = deck.id.startsWith('user-')
-              const srcMeta = SOURCE_LABELS[src]
+              const meta = sourceMeta(deck.source?.type || 'url')
               return (
                 <tr key={deck.id} className="hover:bg-white/[0.03] transition-colors">
                   <td className="px-3 py-2">
-                    <button
-                      onClick={() => onDetails(deck)}
-                      className="text-left hover:text-white"
-                    >
-                      <div className="font-semibold truncate max-w-[260px]">
+                    <button onClick={() => onDetails(deck)} className="text-left hover:text-white">
+                      <div className="font-semibold truncate max-w-[260px] flex items-center gap-2">
                         {deck.title}
+                        {deck.featured && (
+                          <span className="text-[9px] uppercase tracking-wider font-bold text-deck-accent">
+                            ★
+                          </span>
+                        )}
                       </div>
                       {deck.subtitle && (
                         <div className="text-xs text-deck-muted truncate max-w-[260px]">
@@ -256,14 +222,14 @@ export default function ManagePage({
                   <td className="px-3 py-2">
                     <span
                       className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
-                      style={{ background: `${srcMeta.color}25`, color: srcMeta.color }}
+                      style={{ background: `${meta.color}25`, color: meta.color }}
                     >
-                      {srcMeta.label}
+                      {meta.label}
                     </span>
                   </td>
                   <td className="px-3 py-2 text-xs hidden md:table-cell">{deck.year}</td>
                   <td className="px-3 py-2 text-xs text-deck-muted tabular-nums hidden lg:table-cell">
-                    {!isUser ? getEffectiveViews(deck.id).toLocaleString() : '—'}
+                    {(deck.viewCount || 0).toLocaleString()}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
@@ -273,15 +239,11 @@ export default function ManagePage({
                       >
                         Open
                       </button>
-                      {isUser && (
+                      {onRemove && (
                         <button
-                          onClick={() => {
-                            if (confirm(`Remove "${deck.title}" from your library?`)) {
-                              onRemove(deck)
-                            }
-                          }}
+                          onClick={() => onRemove(deck)}
                           className="w-7 h-7 rounded flex items-center justify-center bg-white/5 hover:bg-red-500/30 text-white/70 hover:text-red-300"
-                          title="Delete"
+                          title="Delete deck"
                         >
                           <TrashIcon size={13} />
                         </button>

@@ -1,18 +1,21 @@
 import { useEffect } from 'react'
 import Slide from './Slide.jsx'
 import Cover from './Cover.jsx'
+import { useClosable } from '../lib/useClosable.js'
 import { PlayIcon, CloseIcon, ClockIcon, TrashIcon } from '../lib/icons.jsx'
 
 export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch, onCategoryNav }) {
+  const { closing, requestClose } = useClosable(onClose)
+
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const onKey = (e) => e.key === 'Escape' && requestClose()
     document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [onClose])
+  }, [requestClose])
 
   if (!deck) return null
   const totalSlides = deck.slides?.length || deck.slidesCount || 0
@@ -23,15 +26,17 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 backdrop-blur-sm animate-fade-in"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 backdrop-blur-sm animate-fade-in ${
+        closing ? 'is-closing' : ''
+      }`}
+      onClick={requestClose}
     >
       <div
-        className="relative w-full max-w-4xl my-12 mx-4 bg-deck-surface rounded-xl overflow-hidden ring-1 ring-deck-border shadow-2xl animate-scale-in"
+        className="modal-panel relative w-full max-w-4xl my-12 mx-4 bg-deck-surface rounded-xl overflow-hidden ring-1 ring-deck-border shadow-2xl animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         <button
-          onClick={onClose}
+          onClick={requestClose}
           className="absolute top-4 right-4 z-20 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center"
           aria-label="Close"
         >
@@ -84,13 +89,17 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
               ) : (
                 <span>{deck.author}</span>
               )}
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <ClockIcon size={14} />
-                {estMinutes} min read
-              </span>
-              <span>·</span>
-              <span>{totalSlides} slides</span>
+              {totalSlides > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="flex items-center gap-1">
+                    <ClockIcon size={14} />
+                    {estMinutes} min read
+                  </span>
+                  <span>·</span>
+                  <span>{totalSlides} slides</span>
+                </>
+              )}
               {onCategoryNav && deck.category && deck.category !== 'mine' && (
                 <>
                   <span>·</span>
@@ -138,7 +147,7 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
                 className="mt-2 inline-flex items-center gap-2 text-sm text-red-400 hover:text-red-300"
               >
                 <TrashIcon size={14} />
-                Remove from your library
+                Remove deck
               </button>
             )}
           </div>

@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
-import { MOCK_DECKS, CATEGORIES, INDUSTRIES, FEATURED_DECK } from './data/decks.js'
+import { useEffect, useMemo, useState, useCallback } from 'react'
+import { CATEGORIES, INDUSTRIES } from './data/decks.js'
 import {
-  loadUserDecks,
-  saveUserDecks,
-  loadHistory,
-  getEffectiveViews,
-  loadAuth,
-  saveAuth,
-  clearAuth,
-  loadUsers,
-  saveUsers,
-} from './lib/storage.js'
+  api,
+  normalizeDecks,
+  normalizeDeck,
+  normalizeUsers,
+  normalizeUser,
+  toCreateRequest,
+} from './lib/api.js'
+import { loadHistory, loadAuth, saveAuth, clearAuth } from './lib/storage.js'
+import { withViewTransition } from './lib/viewTransition.js'
 import Navbar from './components/Navbar.jsx'
+import MobileNav from './components/MobileNav.jsx'
 import Hero from './components/Hero.jsx'
 import Row from './components/Row.jsx'
 import TopTenRow from './components/TopTenRow.jsx'
@@ -20,6 +20,7 @@ import DetailsModal from './components/DetailsModal.jsx'
 import DeckPlayer from './components/DeckPlayer.jsx'
 import AddDeckModal from './components/AddDeckModal.jsx'
 import Cover from './components/Cover.jsx'
+import DeckFilters, { useDeckFilters } from './components/DeckFilters.jsx'
 import Toast from './components/Toast.jsx'
 import SearchModal from './components/SearchModal.jsx'
 import IndustriesPage from './components/IndustriesPage.jsx'
@@ -40,7 +41,10 @@ const matchesQuery = (deck, q) => {
 
 export default function App() {
   const [user, setUser] = useState(() => loadAuth())
-  const [userDecks, setUserDecks] = useState(() => loadUserDecks())
+  const [decks, setDecks] = useState([])
+  const [users, setUsers] = useState([])
+  const [status, setStatus] = useState('loading') // 'loading' | 'ready' | 'error'
+  const [error, setError] = useState(null)
   const [history, setHistory] = useState(() => loadHistory())
   const [query, setQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState('home')
@@ -50,15 +54,28 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [toast, setToast] = useState(null)
   const [activeIndustry, setActiveIndustry] = useState(null)
-  const [users, setUsers] = useState(() => loadUsers())
+
+  const canEdit = !!user && !user.guest && (user.role === 'admin' || user.role === 'editor')
+  const isAdmin = !!user && !user.guest && user.role === 'admin'
+
+  // Load the catalog + team directory from the backend once signed in.
+  const loadData = useCallback(async () => {
+    setStatus('loading')
+    setError(null)
+    try {
+      const [deckList, userList] = await Promise.all([api.listDecks(), api.listUsers()])
+      setDecks(normalizeDecks(deckList))
+      setUsers(normalizeUsers(userList))
+      setStatus('ready')
+    } catch (e) {
+      setError(e)
+      setStatus('error')
+    }
+  }, [])
 
   useEffect(() => {
-    saveUserDecks(userDecks)
-  }, [userDecks])
-
-  useEffect(() => {
-    saveUsers(users)
-  }, [users])
+    if (user) loadData()
+  }, [user, loadData])
 
   useEffect(() => {
     if (!playing) setHistory(loadHistory())
@@ -68,44 +85,32 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
 
-  const allDecks = useMemo(() => [...userDecks, ...MOCK_DECKS], [userDecks])
+  const featuredDeck = useMemo(() => decks.find((d) => d.featured) || decks[0], [decks])
 
   const continueWatching = useMemo(() => {
     const entries = Object.values(history)
-      .filter((h) => h.currentSlide > 0 && h.currentSlide < h.totalSlides - 1)
+      .filter((h) => h.currentSlide > 0 && h.currentSlide < (h.totalSlides || 1) - 1)
       .sort((a, b) => b.viewedAt - a.viewedAt)
       .slice(0, 10)
-    return entries
-      .map((h) => allDecks.find((d) => d.id === h.deckId))
-      .filter(Boolean)
-  }, [history, allDecks])
+    return entries.map((h) => decks.find((d) => d.id === h.deckId)).filter(Boolean)
+  }, [history, decks])
 
   const byCategory = useMemo(() => {
     const map = Object.fromEntries(CATEGORIES.map((c) => [c.id, []]))
-    for (const d of MOCK_DECKS) {
+    for (const d of decks) {
       if (map[d.category]) map[d.category].push(d)
     }
     return map
-  }, [])
+  }, [decks])
 
-  const mostViewed = useMemo(() => {
-    return [...MOCK_DECKS]
-      .map((d) => ({ deck: d, views: getEffectiveViews(d.id) }))
-      .sort((a, b) => b.views - a.views)
-      .slice(0, 10)
-      .map((x) => x.deck)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history])
+  const mostViewed = useMemo(
+    () => [...decks].sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0)).slice(0, 10),
+    [decks],
+  )
 
-  const byIndustry = useMemo(() => {
-    const map = Object.fromEntries(INDUSTRIES.map((c) => [c.id, []]))
-    for (const d of MOCK_DECKS) {
-      if (d.industry && map[d.industry]) map[d.industry].push(d)
-    }
-    return map
-  }, [])
+  const myLibrary = useMemo(() => decks.filter((d) => d.category === 'mine'), [decks])
 
-  // Gate the whole app behind a (mock) sign-in screen.
+  // ─────────── Sign-in gate ───────────
   if (!user) {
     return (
       <LoginPage
@@ -117,6 +122,9 @@ export default function App() {
     )
   }
 
+  if (status === 'loading') return <LoadingScreen />
+  if (status === 'error') return <ErrorScreen error={error} onRetry={loadData} />
+
   const handleLogout = () => {
     clearAuth()
     setUser(null)
@@ -125,8 +133,8 @@ export default function App() {
     setActiveIndustry(null)
   }
 
-  const filtered = (decks) =>
-    decks.filter((d) => {
+  const filtered = (list) =>
+    list.filter((d) => {
       if (!matchesQuery(d, query)) return false
       if (activeIndustry && d.industry !== activeIndustry) return false
       return true
@@ -135,31 +143,78 @@ export default function App() {
   const handlePlay = (deck, startIndex = 0) => {
     setDetailsDeck(null)
     setPlaying({ deck, startIndex })
-  }
-  const handleDetails = (deck) => setDetailsDeck(deck)
-  const handleAdd = (deck) => {
-    setUserDecks((prev) => [deck, ...prev])
-    setAddOpen(false)
-    setToast({
-      title: 'Added to your library',
-      message: `"${deck.title}" is ready to open.`,
-      actionLabel: 'Open',
-      onAction: () => handlePlay(deck),
-    })
-  }
-  const handleRemove = (deck) => {
-    if (!deck.id.startsWith('user-')) return
-    setUserDecks((prev) => prev.filter((d) => d.id !== deck.id))
+    // Bump the backend view counter (fire-and-forget) and reflect it locally.
+    api
+      .incrementViews(deck.id)
+      .then((updated) => {
+        if (updated) {
+          setDecks((prev) =>
+            prev.map((d) => (d.id === updated.id ? { ...d, viewCount: updated.viewCount } : d)),
+          )
+        }
+      })
+      .catch(() => {})
   }
 
-  const handleAddUser = (u) => {
-    setUsers((prev) => [u, ...prev])
-    setToast({ title: 'User added', message: `${u.name} can now access WIT.` })
+  const handleDetails = (deck) => setDetailsDeck(deck)
+
+  const handleAdd = async (deck) => {
+    setAddOpen(false)
+    try {
+      const created = await api.createDeck(toCreateRequest(deck))
+      const nd = normalizeDeck(created)
+      setDecks((prev) => [nd, ...prev])
+      setToast({
+        title: 'Added to the catalog',
+        message: `"${nd.title}" is live for everyone.`,
+        actionLabel: 'Open',
+        onAction: () => handlePlay(nd),
+      })
+    } catch (e) {
+      setToast({ title: "Couldn't save deck", message: e.message })
+    }
   }
-  const handleUpdateUser = (id, patch) =>
-    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)))
-  const handleRemoveUser = (id) =>
-    setUsers((prev) => prev.filter((u) => u.id !== id))
+
+  const handleRemove = async (deck) => {
+    if (!canEdit) return
+    if (!confirm(`Remove "${deck.title}" from the catalog? This can't be undone.`)) return
+    try {
+      await api.deleteDeck(deck.id)
+      setDecks((prev) => prev.filter((d) => d.id !== deck.id))
+      setToast({ title: 'Deck removed', message: `"${deck.title}" is gone.` })
+    } catch (e) {
+      setToast({ title: "Couldn't remove deck", message: e.message })
+    }
+  }
+
+  const handleAddUser = async (draft) => {
+    try {
+      const created = await api.createUser(draft)
+      setUsers((prev) => [normalizeUser(created), ...prev])
+      setToast({ title: 'User added', message: `${created.name} can now access WIT.` })
+    } catch (e) {
+      setToast({ title: "Couldn't add user", message: e.message })
+    }
+  }
+  const handleUpdateUser = async (id, patch) => {
+    try {
+      const updated = await api.updateUser(id, patch)
+      setUsers((prev) => prev.map((u) => (u.id === id ? normalizeUser(updated) : u)))
+    } catch (e) {
+      setToast({ title: "Couldn't update user", message: e.message })
+    }
+  }
+  const handleRemoveUser = async (id) => {
+    try {
+      await api.deleteUser(id)
+      setUsers((prev) => prev.filter((u) => u.id !== id))
+    } catch (e) {
+      setToast({ title: "Couldn't remove user", message: e.message })
+    }
+  }
+
+  // Every navigation goes through the View Transitions cross-fade.
+  const goTo = (update) => withViewTransition(update)
 
   const isSearching = !!query.trim() || !!activeIndustry
   const isHome = activeCategory === 'home' && !isSearching
@@ -167,7 +222,6 @@ export default function App() {
   const isIndustries = activeCategory === 'industries' && !isSearching
   const showCategory = !isHome && !isSearching && !isSettings && !isIndustries
 
-  // Decide what to render in the main area
   let body
   if (isSearching) {
     const industryLabel = activeIndustry
@@ -175,7 +229,7 @@ export default function App() {
       : null
     body = (
       <SearchResults
-        decks={filtered(allDecks)}
+        decks={filtered(decks)}
         onPlay={handlePlay}
         onDetails={handleDetails}
         query={query}
@@ -186,124 +240,102 @@ export default function App() {
     )
   } else if (isIndustries) {
     body = (
-      <IndustriesPage
-        onPickIndustry={(id) => {
-          setActiveIndustry(id)
-        }}
-      />
+      <IndustriesPage decks={decks} onPickIndustry={(id) => goTo(() => setActiveIndustry(id))} />
     )
   } else if (isSettings) {
     body = (
       <SettingsPage
         users={users}
         currentEmail={user?.email}
+        canManageUsers={isAdmin}
         onAddUser={handleAddUser}
         onUpdateUser={handleUpdateUser}
         onRemoveUser={handleRemoveUser}
         manageProps={{
-          userDecks,
+          decks,
+          canEdit,
           onAddClick: () => setAddOpen(true),
           onPlay: handlePlay,
           onDetails: handleDetails,
-          onRemove: handleRemove,
-          onExport: () => {
-            const blob = new Blob([JSON.stringify(userDecks, null, 2)], {
-              type: 'application/json',
-            })
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = `wit-library-${new Date().toISOString().slice(0, 10)}.json`
-            a.click()
-            URL.revokeObjectURL(url)
-            setToast({ title: 'Library exported', message: `${userDecks.length} decks downloaded.` })
-          },
-          onImport: (decks) => {
-            const valid = decks.filter((d) => d && d.title && d.source)
-            setUserDecks((prev) => {
-              const existingIds = new Set(prev.map((d) => d.id))
-              const fresh = valid.map((d) => ({
-                ...d,
-                id: existingIds.has(d.id) ? `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : d.id,
-              }))
-              return [...fresh, ...prev]
-            })
-            setToast({ title: 'Library imported', message: `${valid.length} decks added.` })
-          },
+          onRemove: canEdit ? handleRemove : undefined,
         }}
       />
     )
   } else if (showCategory) {
-    const decks =
-      activeCategory === 'mine' ? userDecks : byCategory[activeCategory] || []
+    const catDecks = activeCategory === 'mine' ? myLibrary : byCategory[activeCategory] || []
     body = (
       <CategoryView
         categoryId={activeCategory}
-        decks={decks}
+        decks={catDecks}
         onPlay={handlePlay}
         onDetails={handleDetails}
-        onRemove={handleRemove}
+        onRemove={canEdit ? handleRemove : undefined}
         onAddClick={() => setAddOpen(true)}
-        onCategoryClick={setActiveCategory}
+        onCategoryClick={(id) => goTo(() => setActiveCategory(id))}
+        canEdit={canEdit}
       />
     )
   } else {
     body = (
       <HomeRows
         continueWatching={continueWatching}
-        userDecks={userDecks}
+        myLibrary={myLibrary}
         byCategory={byCategory}
         mostViewed={mostViewed}
         onPlay={handlePlay}
         onDetails={handleDetails}
-        onRemove={handleRemove}
+        onRemove={canEdit ? handleRemove : undefined}
         onAddClick={() => setAddOpen(true)}
-        onCategoryNav={setActiveCategory}
+        onCategoryNav={(id) => goTo(() => setActiveCategory(id))}
+        canEdit={canEdit}
       />
     )
   }
 
   return (
-    <div className="min-h-screen text-white pb-20">
+    <div className="min-h-screen text-white pb-mobile-nav lg:pb-20">
       <Navbar
         user={user}
+        canEdit={canEdit}
         onLogout={handleLogout}
         onAddClick={() => setAddOpen(true)}
         onSearchClick={() => setSearchModalOpen(true)}
         activeCategory={activeCategory}
-        onCategoryChange={(id) => {
+        onCategoryChange={(id) => goTo(() => {
           setActiveCategory(id)
           if (query) setQuery('')
-        }}
+        })}
       />
 
-      {isHome && (
-        <Hero
-          deck={FEATURED_DECK}
-          onPlay={handlePlay}
-          onDetails={handleDetails}
-          onCategoryNav={setActiveCategory}
-        />
-      )}
+      {/* Named region for the View Transitions cross-fade — the navbar sits
+          outside it so it stays anchored while the content swaps. */}
+      <div className="view-content">
+        {isHome && featuredDeck && (
+          <Hero
+            deck={featuredDeck}
+            onPlay={handlePlay}
+            onDetails={handleDetails}
+            onCategoryNav={(id) => goTo(() => setActiveCategory(id))}
+          />
+        )}
 
-      <div className={isHome ? 'relative z-10 pt-8' : ''}>{body}</div>
+        <div className={isHome ? 'relative z-10 pt-8' : ''}>{body}</div>
+      </div>
 
       {detailsDeck && (
         <DetailsModal
           deck={detailsDeck}
           onClose={() => setDetailsDeck(null)}
           onPlay={handlePlay}
-          onRemove={
-            detailsDeck.id.startsWith('user-') ? handleRemove : undefined
-          }
+          onRemove={canEdit ? handleRemove : undefined}
           onSearch={(q) => {
             setActiveCategory('home')
             setQuery(q)
           }}
-          onCategoryNav={(id) => {
+          onCategoryNav={(id) => goTo(() => {
             setQuery('')
             setActiveCategory(id)
-          }}
+          })}
         />
       )}
 
@@ -315,9 +347,7 @@ export default function App() {
         />
       )}
 
-      {addOpen && (
-        <AddDeckModal onClose={() => setAddOpen(false)} onAdd={handleAdd} />
-      )}
+      {addOpen && <AddDeckModal onClose={() => setAddOpen(false)} onAdd={handleAdd} />}
 
       {searchModalOpen && (
         <SearchModal
@@ -327,8 +357,8 @@ export default function App() {
           industries={INDUSTRIES}
           activeIndustry={activeIndustry}
           onIndustryClick={setActiveIndustry}
-          allDecks={allDecks}
-          totalDecks={MOCK_DECKS.length}
+          allDecks={decks}
+          totalDecks={decks.length}
           onPickDeck={(deck) => {
             setSearchModalOpen(false)
             setDetailsDeck(deck)
@@ -336,14 +366,57 @@ export default function App() {
         />
       )}
 
+      <MobileNav
+        activeCategory={activeCategory}
+        searching={isSearching}
+        onSearchClick={() => setSearchModalOpen(true)}
+        onCategoryChange={(id) => goTo(() => {
+          setActiveCategory(id)
+          setQuery('')
+          setActiveIndustry(null)
+        })}
+      />
+
       <Toast toast={toast} onDismiss={() => setToast(null)} />
+    </div>
+  )
+}
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-white">
+      <span className="text-deck-accent font-black text-4xl tracking-tighter animate-glow-pulse">
+        WIT
+      </span>
+      <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+      <span className="text-deck-muted text-sm">Loading the catalog…</span>
+    </div>
+  )
+}
+
+function ErrorScreen({ error, onRetry }) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-6">
+      <span className="text-deck-accent font-black text-3xl tracking-tighter">WIT</span>
+      <h1 className="text-2xl font-black">Can't reach the WIT server</h1>
+      <p className="text-deck-muted max-w-md text-sm">
+        {error?.message || 'The backend is unavailable.'} Start the Go API
+        (<code className="text-white/80">make run</code> in <code className="text-white/80">backend/</code>),
+        then retry.
+      </p>
+      <button
+        onClick={onRetry}
+        className="mt-2 px-5 py-2.5 rounded-lg bg-deck-accent hover:bg-deck-accentDim font-bold text-sm"
+      >
+        Retry
+      </button>
     </div>
   )
 }
 
 function HomeRows({
   continueWatching,
-  userDecks,
+  myLibrary,
   byCategory,
   mostViewed,
   onPlay,
@@ -356,7 +429,7 @@ function HomeRows({
     <>
       <Row
         title="Company Profiles"
-        subtitle="Apple, Tesla, Stripe, OpenAI — full corporate decks."
+        subtitle="Apple, Tesla, Stripe, Notion — full corporate decks."
         decks={byCategory['company-profile']}
         onPlay={onPlay}
         onDetails={onDetails}
@@ -395,11 +468,11 @@ function HomeRows({
         onCategoryClick={onCategoryNav}
       />
 
-      {userDecks.length > 0 && (
+      {myLibrary.length > 0 && (
         <Row
           title="My Library"
-          subtitle="Decks you've uploaded or linked"
-          decks={userDecks}
+          subtitle="Decks added to the catalog"
+          decks={myLibrary}
           onPlay={onPlay}
           onDetails={onDetails}
           onRemove={onRemove}
@@ -458,8 +531,11 @@ function SearchResults({
   onClearIndustry,
   onClearQuery,
 }) {
+  // Industry is owned by the page (chip above), so it's hidden here.
+  const { filtered, controls } = useDeckFilters(decks)
+
   return (
-    <div className="px-8 md:px-12 pt-28">
+    <div className="px-8 md:px-12 pt-32 lg:pt-28">
       <div className="mb-6">
         <div className="text-xs uppercase tracking-widest text-deck-muted">
           {industryLabel && !query ? 'Industry filter' : 'Results for'}
@@ -495,8 +571,10 @@ function SearchResults({
           No decks match that. Try another query, or add your own deck.
         </div>
       ) : (
+        <>
+        <DeckFilters {...controls} hide={['industry']} />
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-          {decks.map((deck) => (
+          {filtered.map((deck) => (
             <div
               key={deck.id}
               className="cursor-pointer"
@@ -512,6 +590,7 @@ function SearchResults({
             </div>
           ))}
         </div>
+        </>
       )}
     </div>
   )
@@ -525,10 +604,10 @@ function Footer({ onAddClick }) {
         <span>— Open decks, beautifully presented.</span>
       </div>
       <p className="max-w-2xl leading-relaxed">
-        Browse a curated catalog of legendary public presentation decks, or build your own
-        library by uploading PDFs and linking to hosted presentations.{' '}
+        Browse a curated catalog of legendary public presentation decks, or contribute your own
+        by uploading PDFs and linking to hosted presentations.{' '}
         <button onClick={onAddClick} className="text-white underline hover:text-deck-accent">
-          Add your first deck →
+          Add a deck →
         </button>
       </p>
     </div>

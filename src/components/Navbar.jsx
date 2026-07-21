@@ -20,8 +20,15 @@ const NAV_ITEMS = [
   { id: 'settings', label: 'Settings' },
 ]
 
+// Content categories for the sub-lg chip strip. Home/Industries/Library/
+// Settings are reachable from the bottom tab bar, so they're omitted here.
+const CHIP_ITEMS = NAV_ITEMS.filter((i) =>
+  ['company-profile', 'iconic', 'design', 'engineering', 'strategy', 'keynotes'].includes(i.id),
+)
+
 export default function Navbar({
   user,
+  canEdit = false,
   onLogout,
   onAddClick,
   onSearchClick,
@@ -94,23 +101,8 @@ export default function Navbar({
           })}
         </ul>
 
-        {/* Center fallback: select for tablet */}
-        <div className="hidden sm:flex lg:hidden items-center justify-center">
-          <select
-            value={activeCategory}
-            onChange={(e) => onCategoryChange(e.target.value)}
-            className="bg-deck-card border border-deck-border text-white/90 text-sm px-2 py-1.5 rounded focus:outline-none focus:border-white/40"
-          >
-            {NAV_ITEMS.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Mobile spacer */}
-        <div className="sm:hidden" />
+        {/* Spacer — below lg, categories live in the chip strip underneath. */}
+        <div className="lg:hidden" />
 
         {/* Right: actions */}
         <div className="flex items-center gap-2 justify-end">
@@ -130,17 +122,43 @@ export default function Navbar({
             </span>
           </button>
 
-          <button
-            onClick={onAddClick}
-            className="group hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-full bg-deck-accent hover:bg-deck-accentDim text-sm font-bold transition-all whitespace-nowrap shadow-lg shadow-deck-accent/30 hover:shadow-deck-accent/60 hover:-translate-y-px"
-          >
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/15 group-hover:rotate-90 transition-transform duration-300">
-              <PlusIcon size={14} />
-            </span>
-            Add deck
-          </button>
+          {canEdit && (
+            <button
+              onClick={onAddClick}
+              className="group flex items-center gap-1.5 h-9 w-9 sm:w-auto justify-center sm:px-3 rounded-full bg-deck-accent hover:bg-deck-accentDim text-sm font-bold transition-[transform,background-color,box-shadow] duration-200 ease-out whitespace-nowrap shadow-lg shadow-deck-accent/30 hover:shadow-deck-accent/60 hover:-translate-y-px"
+              aria-label="Add deck"
+            >
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/15 group-hover:rotate-90 transition-transform duration-300">
+                <PlusIcon size={14} />
+              </span>
+              <span className="hidden sm:inline">Add deck</span>
+            </button>
+          )}
 
           <AccountMenu user={user} onLogout={onLogout} onNavigate={onCategoryChange} />
+        </div>
+      </div>
+
+      {/* Below lg the top nav can't fit, so categories become a swipeable chip
+          strip. Without this, phones had no way to browse categories at all. */}
+      <div className="lg:hidden border-t border-deck-border/60">
+        <div className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
+          {CHIP_ITEMS.map((item) => {
+            const active = activeCategory === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => onCategoryChange(item.id)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                  active
+                    ? 'bg-white text-black'
+                    : 'bg-white/8 text-white/75 active:bg-white/20'
+                }`}
+              >
+                {item.label}
+              </button>
+            )
+          })}
         </div>
       </div>
     </nav>

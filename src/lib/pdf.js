@@ -31,6 +31,12 @@ export const loadPdfDocument = async (data) => {
   return await pdfjs.getDocument({ data }).promise
 }
 
+// Load a PDF served over HTTP (uploaded files live at /uploads/<name>).
+export const loadPdfDocumentFromUrl = async (url) => {
+  const pdfjs = await loadPdfJs()
+  return await pdfjs.getDocument({ url }).promise
+}
+
 // Read a File into ArrayBuffer for pdfjs and persist as base64 in localStorage.
 export const fileToArrayBuffer = (file) =>
   new Promise((resolve, reject) => {

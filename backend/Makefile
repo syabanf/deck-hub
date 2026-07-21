@@ -18,12 +18,20 @@ DB_PASSWORD ?= wit
 DB_NAME     ?= wit
 DB_SSLMODE  ?= disable
 
-# DSN used by the golang-migrate CLI.
+# DSN used by the golang-migrate CLI and psql.
 DB_DSN := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
+
+# Separate database for the e2e suite — it is wiped on every run.
+E2E_DB_NAME ?= $(DB_NAME)_test
+E2E_DSN     := postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(E2E_DB_NAME)?sslmode=$(DB_SSLMODE)
+
+# psql may be keg-only (Homebrew libpq). Override if it isn't on PATH, e.g.:
+#   make seed-dummy PSQL=/opt/homebrew/opt/libpq/bin/psql
+PSQL ?= psql
 
 BINARY := bin/api
 
-.PHONY: help run build tidy test vet hash migrate-up migrate-down migrate-force docker-up docker-down
+.PHONY: help run build tidy test test-e2e stress vet hash migrate-up migrate-down migrate-force seed-dummy unseed-dummy docker-up docker-down
 
 help: ## Show this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -38,8 +46,18 @@ build: ## Build the API binary into bin/.
 tidy: ## Tidy go.mod/go.sum.
 	go mod tidy
 
-test: ## Run all tests.
+test: ## Run unit tests (e2e suite skips itself without E2E_DATABASE_URL).
 	go test ./...
+
+test-e2e: ## Run end-to-end tests against a real DB. WIPES $(E2E_DB_NAME).
+	E2E_DATABASE_URL="$(E2E_DSN)" go test ./test/e2e/... -count=1 -v
+
+stress: ## Load-test the API (throughput + latency percentiles). WIPES $(E2E_DB_NAME).
+	STRESS_DATABASE_URL="$(E2E_DSN)" \
+	STRESS_CONCURRENCY=$(or $(CONCURRENCY),50) \
+	STRESS_DURATION=$(or $(DURATION),3s) \
+	STRESS_DECKS=$(or $(DECKS),300) \
+	  go test ./test/stress/... -run TestStress -count=1 -v -timeout 10m
 
 vet: ## Run go vet.
 	go vet ./...
@@ -56,6 +74,12 @@ migrate-down: ## Roll back the last migration (requires golang-migrate CLI).
 
 migrate-force: ## Force the schema_migrations version. Usage: make migrate-force V=1
 	migrate -path migrations -database "$(DB_DSN)" force $(V)
+
+seed-dummy: ## Seed reversible dummy/test data (decks tagged 'sample', users @example.test).
+	$(PSQL) "$(DB_DSN)" -f scripts/seed_dummy.sql
+
+unseed-dummy: ## Remove the dummy/test data seeded by seed-dummy.
+	$(PSQL) "$(DB_DSN)" -f scripts/unseed_dummy.sql
 
 docker-up: ## Start postgres (and adminer) via docker-compose.
 	docker compose up -d

@@ -13,6 +13,7 @@ import (
 	"github.com/wit/wit-backend/internal/config"
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
 	"github.com/wit/wit-backend/internal/repository/postgres"
+	"github.com/wit/wit-backend/internal/storage/local"
 	"github.com/wit/wit-backend/internal/usecase"
 )
 
@@ -48,13 +49,23 @@ func run() error {
 	userUC := usecase.NewUserUsecase(userRepo)
 	deckUC := usecase.NewDeckUsecase(deckRepo)
 
+	// --- Infrastructure: file storage (local disk for now) ---
+	fileStore, err := local.New(cfg.UploadDir, "/uploads")
+	if err != nil {
+		return err
+	}
+	log.Printf("uploads stored in %s (max %dMB)", fileStore.Dir(), cfg.MaxUploadMB)
+
 	// --- Transport: token manager + handlers ---
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
-		Auth:   httpdelivery.NewAuthHandler(userUC, tokens),
-		Users:  httpdelivery.NewUserHandler(userUC),
-		Decks:  httpdelivery.NewDeckHandler(deckUC),
-		Tokens: tokens,
+		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
+		Users:     httpdelivery.NewUserHandler(userUC),
+		Decks:     httpdelivery.NewDeckHandler(deckUC),
+		Uploads:   httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
+		Tokens:      tokens,
+		UploadDir:   fileStore.Dir(),
+		CORSOrigins: cfg.CORSOrigins,
 	})
 
 	srv := &http.Server{
