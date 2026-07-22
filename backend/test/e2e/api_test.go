@@ -60,6 +60,7 @@ func TestMain(m *testing.M) {
 		"000001_init.down.sql",
 		"000001_init.up.sql",
 		"000004_favorites.up.sql",
+		"000005_deck_indexes.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)

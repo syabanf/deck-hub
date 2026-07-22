@@ -48,7 +48,8 @@ func NewRouter(d RouterDeps) http.Handler {
 		AllowedOrigins:   origins,
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
-		ExposedHeaders:   []string{"X-Request-Id"},
+		// Paging metadata is unreadable from JS unless it is exposed here.
+		ExposedHeaders:   []string{"X-Request-Id", "X-Total-Count", "X-Limit", "X-Offset"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -81,6 +82,8 @@ func NewRouter(d RouterDeps) http.Handler {
 	// an authenticated admin or editor.
 	r.Route("/decks", func(r chi.Router) {
 		r.Get("/", d.Decks.List)
+		// Must be registered before /{id} so "stats" isn't parsed as a deck id.
+		r.Get("/stats", d.Decks.Stats)
 		r.Get("/{id}", d.Decks.Get)
 		r.Post("/{id}/views", d.Decks.IncrementViews)
 

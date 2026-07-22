@@ -3,6 +3,7 @@ import Cover from './Cover.jsx'
 import { CloseIcon, UploadIcon, LinkIcon } from '../lib/icons.jsx'
 import { loadPdfDocument, fileToArrayBuffer } from '../lib/pdf.js'
 import { uploadFile } from '../lib/api.js'
+import { humanizeError } from '../lib/errors.js'
 import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
 import { detectAttachment } from '../lib/attachments.js'
 import { useClosable } from '../lib/useClosable.js'
@@ -236,7 +237,9 @@ export default function AddDeckModal({ onClose, onAdd }) {
       setPdfFile({ name: file.name, size: file.size, pages: doc.numPages, file })
       if (!title) setTitle(file.name.replace(/\.pdf$/i, ''))
     } catch (e) {
-      setError(e.message || 'Failed to read PDF')
+      // Reading happens in the browser, so this is a bad/corrupt file — not
+      // a server problem. Say what the person can actually do about it.
+      setError('We couldn’t read that PDF. It may be corrupted or password-protected — try another file.')
     } finally {
       setWorking(false)
     }
@@ -311,7 +314,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
       setSuccessDeck(deck)
       setTimeout(() => onAdd(deck), 900)
     } catch (e) {
-      setError(e.message || 'Upload failed')
+      setError(humanizeError(e, { action: 'upload this deck' }).message)
     } finally {
       setUploading(false)
     }

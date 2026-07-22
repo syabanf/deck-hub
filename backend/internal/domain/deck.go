@@ -41,8 +41,47 @@ type DeckFilter struct {
 	Industry   string
 	SourceType string
 	Featured   *bool
+	IDs        []uuid.UUID // fetch a specific set (used to hydrate favourites/history)
+	Sort       DeckSort
 	Limit      int
 	Offset     int
+}
+
+// DeckSort is the ordering applied to a listing. Kept as a closed set so a
+// caller can never inject an arbitrary ORDER BY.
+type DeckSort string
+
+const (
+	SortNewest    DeckSort = "newest"
+	SortOldest    DeckSort = "oldest"
+	SortMostViews DeckSort = "views"
+	SortTitle     DeckSort = "title"
+)
+
+// ParseDeckSort maps a query-string value to a known sort, falling back to
+// newest for anything unrecognised.
+func ParseDeckSort(s string) DeckSort {
+	switch DeckSort(s) {
+	case SortOldest:
+		return SortOldest
+	case SortMostViews:
+		return SortMostViews
+	case SortTitle:
+		return SortTitle
+	default:
+		return SortNewest
+	}
+}
+
+// DeckStats are catalog-wide aggregates. The browse UI needs a count per
+// category and per industry; without this it would have to download every deck
+// just to count them.
+type DeckStats struct {
+	Total      int
+	Featured   int
+	TotalViews int64
+	ByCategory map[string]int
+	ByIndustry map[string]int
 }
 
 // DeckRepository abstracts persistence for decks. Implementations live in the
@@ -51,6 +90,8 @@ type DeckRepository interface {
 	Create(ctx context.Context, d *Deck) error
 	GetByID(ctx context.Context, id uuid.UUID) (*Deck, error)
 	List(ctx context.Context, f DeckFilter) ([]*Deck, error)
+	Count(ctx context.Context, f DeckFilter) (int, error)
+	Stats(ctx context.Context) (*DeckStats, error)
 	Update(ctx context.Context, d *Deck) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	IncrementViews(ctx context.Context, id uuid.UUID) (*Deck, error)

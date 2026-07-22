@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { MOCK_DECKS } from '../data/decks.js'
 import { api } from '../lib/api.js'
+import { humanizeError } from '../lib/errors.js'
 import {
   MailIcon,
   LockIcon,
@@ -46,7 +47,7 @@ const DEMO_ACCOUNTS = [
   },
 ]
 
-export default function LoginPage({ onLogin }) {
+export default function LoginPage({ onLogin, notice }) {
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -84,7 +85,13 @@ export default function LoginPage({ onLogin }) {
     } catch (err) {
       setSubmitting(false)
       setDemoPending(null)
-      fail(err.code === 'unauthorized' ? 'Incorrect email or password.' : err.message)
+      // A wrong password is the user's problem to fix; anything else is ours
+      // to explain, so it goes through the same humanizer as the rest of the app.
+      fail(
+        err.code === 'unauthorized'
+          ? 'That email and password don’t match. Check for typos and try again.'
+          : humanizeError(err, { action: 'sign you in' }).message,
+      )
     }
   }
 
@@ -229,6 +236,16 @@ export default function LoginPage({ onLogin }) {
                 </button>
               }
             />
+
+            {/* Why you're suddenly back at the login screen. Amber, not red —
+                nothing went wrong, a session simply ran out. It steps aside as
+                soon as there's a real error to show. */}
+            {notice && !error && (
+              <div className="text-sm bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 animate-fade-in">
+                <div className="font-bold text-amber-300">{notice.title}</div>
+                <div className="text-amber-200/80 text-xs mt-0.5 leading-relaxed">{notice.message}</div>
+              </div>
+            )}
 
             {error && (
               <div className="text-sm text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2 animate-fade-in">

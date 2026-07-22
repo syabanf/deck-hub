@@ -1,5 +1,6 @@
 import Cover from './Cover.jsx'
 import DeckFilters, { useDeckFilters } from './DeckFilters.jsx'
+import LoadMore from './LoadMore.jsx'
 import { useFavorites } from '../lib/favoritesContext.jsx'
 import { PlayIcon, ChevronDown, TrashIcon, BookmarkIcon, BookmarkFilledIcon } from '../lib/icons.jsx'
 
@@ -129,6 +130,9 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
 export default function CategoryView({
   categoryId,
   decks,
+  total,
+  loading = false,
+  onLoadMore,
   onPlay,
   onDetails,
   onRemove,
@@ -174,6 +178,15 @@ export default function CategoryView({
             />
           ))}
         </div>
+        {/* Client-side filters narrow the loaded page; Load more fetches the
+            next one from the server. Both counts are shown so it's clear which
+            is which. */}
+        <LoadMore
+          loaded={decks.length}
+          total={total}
+          loading={loading}
+          onLoadMore={onLoadMore}
+        />
         </>
       )}
     </div>

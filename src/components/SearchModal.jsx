@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Cover from './Cover.jsx'
 import { useClosable } from '../lib/useClosable.js'
+import { api, normalizeDecks } from '../lib/api.js'
 import { SearchIcon, CloseIcon } from '../lib/icons.jsx'
 
 const SUGGESTIONS = ['Airbnb', 'Tesla', 'Transformer', 'Atomic Design', 'OpenAI', 'Lean Startup']
@@ -40,12 +41,46 @@ export default function SearchModal({
     }
   }, [])
 
-  const results = useMemo(() => {
-    return allDecks
-      .filter((d) => matchesQuery(d, query))
-      .filter((d) => !activeIndustry || d.industry === activeIndustry)
-      .slice(0, 8)
-  }, [allDecks, query, activeIndustry])
+  // Instant search hits the server. It used to filter an in-memory copy of the
+  // whole catalog; now that only a bounded working set is loaded, filtering
+  // locally would silently miss every deck that hadn't been fetched yet.
+  //
+  // `allDecks` is still used as the standing-start suggestion list, so opening
+  // the modal shows something before a single keystroke.
+  const [results, setResults] = useState(() => allDecks.slice(0, 8))
+
+  useEffect(() => {
+    const term = query.trim()
+    if (!term && !activeIndustry) {
+      setResults(allDecks.slice(0, 8))
+      return
+    }
+
+    let cancelled = false
+    const t = setTimeout(() => {
+      api
+        .listDecks({ search: term, industry: activeIndustry || undefined, limit: 8 })
+        .then((res) => {
+          if (!cancelled) setResults(normalizeDecks(res.data || []))
+        })
+        .catch(() => {
+          // Fall back to whatever is cached rather than showing nothing.
+          if (!cancelled) {
+            setResults(
+              allDecks
+                .filter((d) => matchesQuery(d, term))
+                .filter((d) => !activeIndustry || d.industry === activeIndustry)
+                .slice(0, 8),
+            )
+          }
+        })
+    }, 200)
+
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [query, activeIndustry, allDecks])
 
   // Reset highlight when results change
   useEffect(() => {
