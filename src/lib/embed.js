@@ -22,13 +22,4 @@ export const toEmbedUrl = (url) => {
   }
 }
 
-// Heuristic: does the URL point to a direct PDF file? If so we can render with pdfjs.
-export const isLikelyPdfUrl = (url) => {
-  if (!url) return false
-  try {
-    const u = new URL(url)
-    return u.pathname.toLowerCase().endsWith('.pdf')
-  } catch {
-    return false
-  }
-}
+

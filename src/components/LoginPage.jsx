@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { MOCK_DECKS } from '../data/decks.js'
+import { useState } from 'react'
+import { LOGIN_BACKDROP_SEEDS } from '../data/decks.js'
 import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import {
@@ -60,14 +60,9 @@ export default function LoginPage({ onLogin, notice }) {
   const [demoPending, setDemoPending] = useState(null)
 
   // A blurred "wall of decks" backdrop, like a streaming-service splash screen.
-  const backdrop = useMemo(() => {
-    const pool = MOCK_DECKS.filter((d) => !d.featured)
-    const picks = []
-    for (let i = 0; picks.length < 24 && i < pool.length * 2; i++) {
-      picks.push(pool[i % pool.length])
-    }
-    return picks
-  }, [])
+  // Purely decorative — the images are placeholders keyed off a fixed seed list,
+  // so the wall looks identical on every visit without loading the catalog.
+  const backdrop = LOGIN_BACKDROP_SEEDS
 
   const fail = (msg) => {
     setError(msg)
@@ -140,13 +135,13 @@ export default function LoginPage({ onLogin, notice }) {
       {/* ─── Backdrop: blurred wall of deck covers ─── */}
       <div className="absolute inset-0 -z-10">
         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 p-2 scale-110 blur-[2px] opacity-40">
-          {backdrop.map((deck, i) => (
+          {backdrop.map((seed, i) => (
             <div
-              key={`${deck.id}-${i}`}
+              key={`${seed}-${i}`}
               className="aspect-deck rounded-md overflow-hidden bg-deck-card"
             >
               <img
-                src={imageSrc(deck)}
+                src={imageSrc({ imageSeed: seed })}
                 alt=""
                 loading="lazy"
                 className="w-full h-full object-cover"
