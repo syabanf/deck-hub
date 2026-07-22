@@ -7,6 +7,7 @@ import {
   normalizeUsers,
   normalizeUser,
   toCreateRequest,
+  toUpdateRequest,
   setAuthFailureHandler,
 } from './lib/api.js'
 import { errorToast, humanizeError, isSessionExpired } from './lib/errors.js'
@@ -25,6 +26,7 @@ import CategoryView from './components/CategoryView.jsx'
 import DetailsModal from './components/DetailsModal.jsx'
 import DeckPlayer from './components/DeckPlayer.jsx'
 import AddDeckModal from './components/AddDeckModal.jsx'
+import EditDeckModal from './components/EditDeckModal.jsx'
 import Cover from './components/Cover.jsx'
 import DeckFilters, { useDeckFilters } from './components/DeckFilters.jsx'
 import Toast from './components/Toast.jsx'
@@ -74,6 +76,10 @@ export default function App() {
   const [detailsDeck, setDetailsDeck] = useState(null)
   const [playing, setPlaying] = useState(null) // { deck, startIndex }
   const [addOpen, setAddOpen] = useState(false)
+  // The deck currently open in the editor, plus its in-flight save state.
+  const [editingDeck, setEditingDeck] = useState(null)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState(null)
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [toast, setToast] = useState(null)
   const [activeIndustry, setActiveIndustry] = useState(null)
@@ -319,6 +325,28 @@ export default function App() {
     }
   }
 
+  // Apply a partial edit. `patch` only carries fields the admin actually
+  // changed, so untouched columns keep whatever the server has — see
+  // toUpdateRequest.
+  const handleSaveDeck = async (id, patch) => {
+    setEditSaving(true)
+    setEditError(null)
+    try {
+      const updated = await api.updateDeck(id, toUpdateRequest(patch))
+      const nd = normalizeDeck(updated)
+      setDecks((prev) => prev.map((d) => (d.id === nd.id ? nd : d)))
+      // Keep an open details panel in sync rather than showing stale fields.
+      setDetailsDeck((cur) => (cur && cur.id === nd.id ? nd : cur))
+      setEditingDeck(null)
+      setToast({ title: 'Deck updated', message: `"${nd.title}" is saved.` })
+    } catch (e) {
+      // Stay open with the error inline — closing would discard their edits.
+      setEditError(humanizeError(e, { action: 'save those changes' }).message)
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
   const handleAddUser = async (draft) => {
     try {
       const created = await api.createUser(draft)
@@ -389,6 +417,7 @@ export default function App() {
           onAddClick: () => setAddOpen(true),
           onPlay: handlePlay,
           onDetails: handleDetails,
+          onEdit: canEdit ? (deck) => { setEditError(null); setEditingDeck(deck) } : undefined,
           onRemove: canEdit ? handleRemove : undefined,
         }}
       />
@@ -532,6 +561,15 @@ export default function App() {
       {/* Self-driving "how to use" tour — clicks through the app itself. */}
       {demoOpen && <AutoDemo onExit={() => setDemoOpen(false)} />}
 
+      {editingDeck && (
+        <EditDeckModal
+          deck={editingDeck}
+          saving={editSaving}
+          error={editError}
+          onSave={handleSaveDeck}
+          onClose={() => setEditingDeck(null)}
+        />
+      )}
       <OfflineBanner online={online} />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>

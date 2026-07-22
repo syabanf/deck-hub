@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
-import { TrashIcon, PlusIcon, StarIcon } from '../lib/icons.jsx'
+import { TrashIcon, PlusIcon, StarIcon, PencilIcon } from '../lib/icons.jsx'
 
 const SOURCE_LABELS = {
   pdf: { label: 'PDF', color: '#60a5fa' },
@@ -21,13 +21,15 @@ function StatCard({ label, value, accent }) {
 }
 
 // Backend-primary catalog admin table. Operates on the live catalog fetched
-// from the API; edits flow back through onRemove → DELETE /decks.
+// from the API; edits flow back through onEdit → PUT /decks and
+// onRemove → DELETE /decks.
 export default function ManagePage({
   decks = [],
   canEdit = false,
   onAddClick,
   onPlay,
   onDetails,
+  onEdit,
   onRemove,
   embedded = false,
 }) {
@@ -237,6 +239,16 @@ export default function ManagePage({
                       >
                         Open
                       </button>
+                      {onEdit && (
+                        <button
+                          onClick={() => onEdit(deck)}
+                          className="w-7 h-7 rounded flex items-center justify-center bg-white/5 hover:bg-white/20 text-white/70 hover:text-white transition-colors"
+                          title="Edit deck"
+                          aria-label={`Edit ${deck.title}`}
+                        >
+                          <PencilIcon size={13} />
+                        </button>
+                      )}
                       {onRemove && (
                         <button
                           onClick={() => onRemove(deck)}

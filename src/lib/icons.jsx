@@ -124,6 +124,12 @@ export const TrashIcon = (p) => (
     <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
   </Icon>
 )
+export const PencilIcon = (p) => (
+  <Icon {...p}>
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
+    <path d="M14 6l4 4" />
+  </Icon>
+)
 export const BookmarkIcon = (p) => (
   <Icon {...p}>
     <path d="M6 4h12v17l-6-4-6 4V4z" />

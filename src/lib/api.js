@@ -230,6 +230,13 @@ const hashString = (s) => {
 
 // Map the backend {type,value} source to something the DeckPlayer/Cover can
 // render. Backend types: gslides, embed, pdf, url, video.
+// Note: this is lossy on purpose — `value` is rewritten for playback (a YouTube
+// watch URL becomes an embed URL; a relative /uploads path becomes absolute).
+// `raw`/`rawType` carry the untouched stored source alongside it, so anything
+// that writes back (the edit form) can round-trip without persisting the
+// playback form. Saving `value` would pin an upload to whatever origin the
+// browser happened to use and replace canonical URLs with embed ones; saving
+// `type` would flatten gslides/embed decks into plain 'url'.
 const normalizeSource = (src) => {
   const type = (src?.type || '').toLowerCase()
   const raw = src?.value || ''
@@ -239,18 +246,18 @@ const normalizeSource = (src) => {
     // detectVideo can recognise it as a direct file.
     const url = absoluteUrl(raw)
     const info = detectVideo(url)
-    if (info) return { type: 'video', value: info.embedUrl, kind: info.kind, platform: info.platform }
-    return { type: 'video', value: url, kind: 'iframe' }
+    if (info) return { type: 'video', value: info.embedUrl, raw, rawType: type, kind: info.kind, platform: info.platform }
+    return { type: 'video', value: url, raw, rawType: type, kind: 'iframe' }
   }
   if (type === 'pdf') {
     // Uploaded/remote PDFs are fetched by pdf.js from their URL; legacy decks
     // may still carry inline base64.
-    if (/^(https?:|\/)/i.test(raw)) return { type: 'pdf', value: absoluteUrl(raw), remote: true }
-    return { type: 'pdf', value: raw }
+    if (/^(https?:|\/)/i.test(raw)) return { type: 'pdf', value: absoluteUrl(raw), raw, rawType: type, remote: true }
+    return { type: 'pdf', value: raw, raw, rawType: type }
   }
   // gslides / embed / url (and anything else) → iframe; UrlStage's toEmbedUrl
   // handles the Google-Slides conversion.
-  return { type: 'url', value: absoluteUrl(raw) }
+  return { type: 'url', value: absoluteUrl(raw), raw, rawType: type || 'url' }
 }
 
 export const normalizeDeck = (d) => {
@@ -282,6 +289,29 @@ export const toCreateRequest = (deck) => ({
   description: deck.description || '',
   featured: !!deck.featured,
 })
+
+// Map an edit-form patch → the backend PUT body.
+//
+// Only the keys actually present are sent. UpdateDeckInput fields are pointers,
+// so anything omitted is left untouched server-side — which is what keeps an
+// edit of, say, the title from rewriting the source. `source` is included only
+// when the admin deliberately changed it, and always as the raw stored value.
+export const toUpdateRequest = (patch) => {
+  const body = {}
+  if (patch.title !== undefined) body.title = patch.title
+  if (patch.subtitle !== undefined) body.subtitle = patch.subtitle
+  if (patch.author !== undefined) body.author = patch.author
+  if (patch.year !== undefined) body.year = Number(patch.year) || new Date().getFullYear()
+  if (patch.category !== undefined) body.category = patch.category
+  if (patch.industry !== undefined) body.industry = patch.industry
+  if (patch.tags !== undefined) body.tags = Array.isArray(patch.tags) ? patch.tags : []
+  if (patch.description !== undefined) body.description = patch.description
+  if (patch.featured !== undefined) body.featured = !!patch.featured
+  if (patch.source !== undefined) {
+    body.source = { type: patch.source.type || 'url', value: patch.source.value || '' }
+  }
+  return body
+}
 
 // Backend user createdAt is a full ISO timestamp; the UI shows a date.
 export const normalizeUser = (u) => ({
