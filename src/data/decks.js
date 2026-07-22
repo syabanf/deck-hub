@@ -35,22 +35,22 @@ export const CATEGORIES = [
 ]
 
 export const INDUSTRIES = [
-  { id: 'tech', title: 'Technology', accent: '#00c6fb', secondary: '#005bea', icon: '💻' },
-  { id: 'finance', title: 'Finance & Fintech', accent: '#11998e', secondary: '#38ef7d', icon: '💳' },
-  { id: 'healthcare', title: 'Healthcare', accent: '#ff5f6d', secondary: '#ffc371', icon: '🏥' },
-  { id: 'retail', title: 'Retail & E-commerce', accent: '#f7971e', secondary: '#ffd200', icon: '🛍️' },
-  { id: 'media', title: 'Media & Entertainment', accent: '#7f00ff', secondary: '#e100ff', icon: '🎬' },
-  { id: 'mobility', title: 'Mobility & Travel', accent: '#fa709a', secondary: '#fee140', icon: '🚗' },
-  { id: 'education', title: 'Education', accent: '#43e97b', secondary: '#38f9d7', icon: '🎓' },
-  { id: 'enterprise', title: 'Enterprise SaaS', accent: '#4e4376', secondary: '#2b5876', icon: '🏢' },
-  { id: 'fnb', title: 'Food & Beverage', accent: '#ff6b6b', secondary: '#feca57', icon: '🍔' },
-  { id: 'manufacturing', title: 'Manufacturing', accent: '#6c5ce7', secondary: '#a29bfe', icon: '🏭' },
-  { id: 'energy', title: 'Energy & Utilities', accent: '#fdcb6e', secondary: '#e17055', icon: '⚡' },
-  { id: 'agriculture', title: 'Agriculture', accent: '#55efc4', secondary: '#00b894', icon: '🌾' },
-  { id: 'logistics', title: 'Logistics & Supply', accent: '#74b9ff', secondary: '#0984e3', icon: '📦' },
-  { id: 'realestate', title: 'Construction & Real Estate', accent: '#a29bfe', secondary: '#6c5ce7', icon: '🏗️' },
-  { id: 'telecom', title: 'Telecommunications', accent: '#fd79a8', secondary: '#e84393', icon: '📡' },
-  { id: 'public', title: 'Government & Public Sector', accent: '#636e72', secondary: '#2d3436', icon: '🏛️' },
+  { id: 'tech', title: 'Technology', accent: '#00c6fb', secondary: '#005bea' },
+  { id: 'finance', title: 'Finance & Fintech', accent: '#11998e', secondary: '#38ef7d' },
+  { id: 'healthcare', title: 'Healthcare', accent: '#ff5f6d', secondary: '#ffc371' },
+  { id: 'retail', title: 'Retail & E-commerce', accent: '#f7971e', secondary: '#ffd200' },
+  { id: 'media', title: 'Media & Entertainment', accent: '#7f00ff', secondary: '#e100ff' },
+  { id: 'mobility', title: 'Mobility & Travel', accent: '#fa709a', secondary: '#fee140' },
+  { id: 'education', title: 'Education', accent: '#43e97b', secondary: '#38f9d7' },
+  { id: 'enterprise', title: 'Enterprise SaaS', accent: '#4e4376', secondary: '#2b5876' },
+  { id: 'fnb', title: 'Food & Beverage', accent: '#ff6b6b', secondary: '#feca57' },
+  { id: 'manufacturing', title: 'Manufacturing', accent: '#6c5ce7', secondary: '#a29bfe' },
+  { id: 'energy', title: 'Energy & Utilities', accent: '#fdcb6e', secondary: '#e17055' },
+  { id: 'agriculture', title: 'Agriculture', accent: '#55efc4', secondary: '#00b894' },
+  { id: 'logistics', title: 'Logistics & Supply', accent: '#74b9ff', secondary: '#0984e3' },
+  { id: 'realestate', title: 'Construction & Real Estate', accent: '#a29bfe', secondary: '#6c5ce7' },
+  { id: 'telecom', title: 'Telecommunications', accent: '#fd79a8', secondary: '#e84393' },
+  { id: 'public', title: 'Government & Public Sector', accent: '#636e72', secondary: '#2d3436' },
 ]
 
 export const MOCK_DECKS = [

@@ -134,6 +134,15 @@ export const BookmarkFilledIcon = (p) => (
     <path d="M6 4h12v17l-6-4-6 4V4z" fill="currentColor" />
   </Icon>
 )
+export const StarIcon = (p) => (
+  <Icon {...p}>
+    <path
+      d="M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85L12 3.5z"
+      fill="currentColor"
+      stroke="none"
+    />
+  </Icon>
+)
 export const UserIcon = (p) => (
   <Icon {...p}>
     <circle cx="12" cy="8" r="4" />

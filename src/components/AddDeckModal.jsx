@@ -739,7 +739,7 @@ function VideoPanel({
           {working ? (
             <span className="block w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
           ) : (
-            <span className="text-white/70">📹</span>
+            <VideoIcon width={18} height={18} className="text-white/70" />
           )}
           <span className="font-semibold">
             {working ? 'Reading…' : 'Drop a video file, or click to upload'}
