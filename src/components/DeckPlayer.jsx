@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Slide from './Slide.jsx'
 import { toEmbedUrl } from '../lib/embed.js'
 import {
@@ -9,6 +9,7 @@ import {
 } from '../lib/pdf.js'
 import { recordView } from '../lib/storage.js'
 import { useClosable } from '../lib/useClosable.js'
+import { useSwipe } from '../lib/useSwipe.js'
 import { useVideoControls } from '../lib/useVideoControls.js'
 import { formatTime } from '../lib/videoControl.js'
 import {
@@ -262,9 +263,29 @@ export default function DeckPlayer({
 
   const progress = totalSlides > 1 ? ((index + 1) / totalSlides) * 100 : 100
 
+  // Touch: swipe to page slides (or step decks for embeds), swipe down to
+  // close. Ignore the media itself and the control buttons so their own
+  // gestures/taps aren't hijacked.
+  // Swipe to page slides (or step decks for embeds), swipe down to close.
+  // Ignores the media and control buttons so their own gestures aren't hijacked.
+  const swipeRef = useSwipe({
+    onLeft: () => (canNavigate ? goNext() : goNextDeck()),
+    onRight: () => (canNavigate ? goPrev() : goPrevDeck()),
+    onDown: () => requestClose(),
+    ignore: 'iframe, video, button, a, input',
+  })
+  // The container also needs containerRef for fullscreen — merge both.
+  const setStageRef = useCallback(
+    (node) => {
+      containerRef.current = node
+      swipeRef(node)
+    },
+    [swipeRef],
+  )
+
   return (
     <div
-      ref={containerRef}
+      ref={setStageRef}
       className={`fixed inset-0 z-50 bg-black flex flex-col animate-fade-in ${closing ? 'is-closing' : ''}`}
     >
       {/* Top progress bar */}

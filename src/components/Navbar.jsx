@@ -5,6 +5,7 @@ import {
   UserIcon,
   LogoutIcon,
   BookmarkIcon,
+  InfoIcon,
 } from '../lib/icons.jsx'
 
 const NAV_ITEMS = [
@@ -32,6 +33,7 @@ export default function Navbar({
   onLogout,
   onAddClick,
   onSearchClick,
+  onOpenTour,
   activeCategory,
   onCategoryChange,
 }) {
@@ -135,7 +137,12 @@ export default function Navbar({
             </button>
           )}
 
-          <AccountMenu user={user} onLogout={onLogout} onNavigate={onCategoryChange} />
+          <AccountMenu
+            user={user}
+            onLogout={onLogout}
+            onNavigate={onCategoryChange}
+            onOpenTour={onOpenTour}
+          />
         </div>
       </div>
 
@@ -165,7 +172,7 @@ export default function Navbar({
   )
 }
 
-function AccountMenu({ user, onLogout, onNavigate }) {
+function AccountMenu({ user, onLogout, onNavigate, onOpenTour }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -246,6 +253,14 @@ function AccountMenu({ user, onLogout, onNavigate }) {
           <div className="py-1">
             <MenuItem icon={<BookmarkIcon size={16} />} label="My Library" onClick={() => go('mine')} />
             <MenuItem icon={<UserIcon size={16} />} label="Settings" onClick={() => go('settings')} />
+            <MenuItem
+              icon={<InfoIcon size={16} />}
+              label="Product tour"
+              onClick={() => {
+                setOpen(false)
+                onOpenTour?.()
+              }}
+            />
           </div>
 
           <div className="border-t border-deck-border py-1">

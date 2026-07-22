@@ -8,10 +8,11 @@ import {
   normalizeUser,
   toCreateRequest,
 } from './lib/api.js'
-import { loadHistory, loadAuth, saveAuth, clearAuth } from './lib/storage.js'
+import { loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen } from './lib/storage.js'
 import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
 import { FavoritesProvider } from './lib/favoritesContext.jsx'
 import { withViewTransition } from './lib/viewTransition.js'
+import { useSwipe } from './lib/useSwipe.js'
 import Navbar from './components/Navbar.jsx'
 import MobileNav from './components/MobileNav.jsx'
 import Hero from './components/Hero.jsx'
@@ -28,6 +29,21 @@ import SearchModal from './components/SearchModal.jsx'
 import IndustriesPage from './components/IndustriesPage.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
+import DemoWizard from './components/DemoWizard.jsx'
+
+// Left/right order for swiping between browse sections on touch devices.
+// Settings is intentionally excluded — it's reached by tap, not by swiping.
+const SWIPE_SECTIONS = [
+  'home',
+  'company-profile',
+  'industries',
+  'iconic',
+  'design',
+  'engineering',
+  'strategy',
+  'keynotes',
+  'mine',
+]
 
 const matchesQuery = (deck, q) => {
   if (!q) return true
@@ -56,6 +72,7 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [toast, setToast] = useState(null)
   const [activeIndustry, setActiveIndustry] = useState(null)
+  const [tourOpen, setTourOpen] = useState(false)
   // Ordered newest-first; the source of truth for "My Library".
   const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
@@ -83,6 +100,35 @@ export default function App() {
   useEffect(() => {
     if (user) loadData()
   }, [user, loadData])
+
+  // Show the product tour once, the first time someone lands inside the app.
+  useEffect(() => {
+    if (user && status === 'ready' && !hasSeenTour()) setTourOpen(true)
+  }, [user, status])
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false)
+    markTourSeen()
+  }, [])
+
+  // Swipe left/right to step between browse sections. The `ignore` selector
+  // means a swipe that starts on a row carousel scrolls the row instead.
+  const navigateSection = (dir) => {
+    if (query.trim() || activeIndustry) return // not while searching/filtering
+    const i = SWIPE_SECTIONS.indexOf(activeCategory)
+    if (i < 0) return
+    const j = i + dir
+    if (j < 0 || j >= SWIPE_SECTIONS.length) return
+    withViewTransition(() => {
+      setActiveCategory(SWIPE_SECTIONS[j])
+      setQuery('')
+    })
+  }
+  const contentRef = useSwipe({
+    onLeft: () => navigateSection(1),
+    onRight: () => navigateSection(-1),
+    ignore: '.scroll-snap-x, input, textarea, select, [data-no-swipe]',
+  })
 
   // Pull the signed-in user's favorites from the backend; guests keep whatever
   // is in localStorage.
@@ -350,6 +396,7 @@ export default function App() {
         onLogout={handleLogout}
         onAddClick={() => setAddOpen(true)}
         onSearchClick={() => setSearchModalOpen(true)}
+        onOpenTour={() => setTourOpen(true)}
         activeCategory={activeCategory}
         onCategoryChange={(id) => goTo(() => {
           setActiveCategory(id)
@@ -358,8 +405,9 @@ export default function App() {
       />
 
       {/* Named region for the View Transitions cross-fade — the navbar sits
-          outside it so it stays anchored while the content swaps. */}
-      <div className="view-content">
+          outside it so it stays anchored while the content swaps. Also the
+          swipe surface for moving between sections on touch. */}
+      <div className="view-content" ref={contentRef}>
         {isHome && featuredDeck && (
           <Hero
             deck={featuredDeck}
@@ -432,6 +480,8 @@ export default function App() {
           setActiveIndustry(null)
         })}
       />
+
+      {tourOpen && <DemoWizard onClose={closeTour} />}
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
