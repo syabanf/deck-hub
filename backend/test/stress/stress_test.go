@@ -96,8 +96,13 @@ func TestMain(m *testing.M) {
 
 	ctx := context.Background()
 
-	// Clean schema, then load it up with a realistic amount of data.
-	for _, f := range []string{"000001_init.down.sql", "000001_init.up.sql"} {
+	// Clean schema, then load it up with a realistic amount of data. Drop
+	// favorites first so a leftover FK from an e2e run can't block the reset.
+	for _, f := range []string{
+		"000004_favorites.down.sql",
+		"000001_init.down.sql",
+		"000001_init.up.sql",
+	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)
 			os.Exit(1)

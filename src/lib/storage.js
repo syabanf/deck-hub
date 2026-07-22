@@ -1,5 +1,6 @@
 const HISTORY_KEY = 'deckflix.history.v1'
 const AUTH_KEY = 'deckflix.auth.v2'
+const WIZARD_KEY = 'wit.tour.seen.v1'
 
 const safeParse = (raw, fallback) => {
   try {
@@ -40,6 +41,11 @@ export const saveAuth = (auth) =>
   localStorage.setItem(AUTH_KEY, JSON.stringify(auth))
 
 export const clearAuth = () => localStorage.removeItem(AUTH_KEY)
+
+// ─────────── Onboarding wizard ───────────
+// Whether the product tour has been dismissed/completed on this device.
+export const hasSeenTour = () => localStorage.getItem(WIZARD_KEY) === '1'
+export const markTourSeen = () => localStorage.setItem(WIZARD_KEY, '1')
 
 // ─────────── Role / status vocab (shared with Settings UI) ───────────
 export const ROLES = ['admin', 'editor', 'viewer']

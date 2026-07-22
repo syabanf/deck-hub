@@ -12,7 +12,9 @@ export default function Toast({ toast, onDismiss }) {
   const isError = toast.type === 'error'
 
   return (
-    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
+    // The mobile navbar is taller (logo row + category chips), so clear it
+    // there and only tuck up under the slim desktop bar at lg.
+    <div className="fixed top-32 lg:top-20 left-1/2 -translate-x-1/2 z-[60] px-4 max-w-[calc(100vw-2rem)] pointer-events-none">
       <div
         className={`pointer-events-auto flex items-center gap-3 rounded-full px-5 py-3 shadow-2xl backdrop-blur animate-toast-in ${
           isError

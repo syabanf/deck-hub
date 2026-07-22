@@ -5,6 +5,8 @@ import {
   UserIcon,
   LogoutIcon,
   BookmarkIcon,
+  InfoIcon,
+  PlayIcon,
 } from '../lib/icons.jsx'
 
 const NAV_ITEMS = [
@@ -32,6 +34,8 @@ export default function Navbar({
   onLogout,
   onAddClick,
   onSearchClick,
+  onOpenTour,
+  onStartDemo,
   activeCategory,
   onCategoryChange,
 }) {
@@ -135,7 +139,13 @@ export default function Navbar({
             </button>
           )}
 
-          <AccountMenu user={user} onLogout={onLogout} onNavigate={onCategoryChange} />
+          <AccountMenu
+            user={user}
+            onLogout={onLogout}
+            onNavigate={onCategoryChange}
+            onOpenTour={onOpenTour}
+            onStartDemo={onStartDemo}
+          />
         </div>
       </div>
 
@@ -165,7 +175,7 @@ export default function Navbar({
   )
 }
 
-function AccountMenu({ user, onLogout, onNavigate }) {
+function AccountMenu({ user, onLogout, onNavigate, onOpenTour, onStartDemo }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -246,6 +256,22 @@ function AccountMenu({ user, onLogout, onNavigate }) {
           <div className="py-1">
             <MenuItem icon={<BookmarkIcon size={16} />} label="My Library" onClick={() => go('mine')} />
             <MenuItem icon={<UserIcon size={16} />} label="Settings" onClick={() => go('settings')} />
+            <MenuItem
+              icon={<InfoIcon size={16} />}
+              label="Product tour"
+              onClick={() => {
+                setOpen(false)
+                onOpenTour?.()
+              }}
+            />
+            <MenuItem
+              icon={<PlayIcon size={14} />}
+              label="How to use — auto demo"
+              onClick={() => {
+                setOpen(false)
+                onStartDemo?.()
+              }}
+            />
           </div>
 
           <div className="border-t border-deck-border py-1">

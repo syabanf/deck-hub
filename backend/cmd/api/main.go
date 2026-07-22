@@ -44,10 +44,12 @@ func run() error {
 	// --- Repositories (outer) ---
 	userRepo := postgres.NewUserRepository(pool)
 	deckRepo := postgres.NewDeckRepository(pool)
+	favoriteRepo := postgres.NewFavoriteRepository(pool)
 
 	// --- Usecases (depend only on domain interfaces) ---
 	userUC := usecase.NewUserUsecase(userRepo)
 	deckUC := usecase.NewDeckUsecase(deckRepo)
+	favoriteUC := usecase.NewFavoriteUsecase(favoriteRepo)
 
 	// --- Infrastructure: file storage (local disk for now) ---
 	fileStore, err := local.New(cfg.UploadDir, "/uploads")
@@ -59,10 +61,11 @@ func run() error {
 	// --- Transport: token manager + handlers ---
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
-		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
-		Users:     httpdelivery.NewUserHandler(userUC),
-		Decks:     httpdelivery.NewDeckHandler(deckUC),
-		Uploads:   httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
+		Auth:        httpdelivery.NewAuthHandler(userUC, tokens),
+		Users:       httpdelivery.NewUserHandler(userUC),
+		Decks:       httpdelivery.NewDeckHandler(deckUC),
+		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
+		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
 		Tokens:      tokens,
 		UploadDir:   fileStore.Dir(),
 		CORSOrigins: cfg.CORSOrigins,

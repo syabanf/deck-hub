@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
-import { TrashIcon, PlusIcon } from '../lib/icons.jsx'
+import { TrashIcon, PlusIcon, StarIcon } from '../lib/icons.jsx'
 
 const SOURCE_LABELS = {
   pdf: { label: 'PDF', color: '#60a5fa' },
@@ -198,9 +198,7 @@ export default function ManagePage({
                       <div className="font-semibold truncate max-w-[260px] flex items-center gap-2">
                         {deck.title}
                         {deck.featured && (
-                          <span className="text-[9px] uppercase tracking-wider font-bold text-deck-accent">
-                            ★
-                          </span>
+                          <StarIcon size={12} className="text-deck-accent shrink-0" />
                         )}
                       </div>
                       {deck.subtitle && (

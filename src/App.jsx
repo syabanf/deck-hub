@@ -8,8 +8,11 @@ import {
   normalizeUser,
   toCreateRequest,
 } from './lib/api.js'
-import { loadHistory, loadAuth, saveAuth, clearAuth } from './lib/storage.js'
+import { loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen } from './lib/storage.js'
+import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
+import { FavoritesProvider } from './lib/favoritesContext.jsx'
 import { withViewTransition } from './lib/viewTransition.js'
+import { useSwipe } from './lib/useSwipe.js'
 import Navbar from './components/Navbar.jsx'
 import MobileNav from './components/MobileNav.jsx'
 import Hero from './components/Hero.jsx'
@@ -26,6 +29,22 @@ import SearchModal from './components/SearchModal.jsx'
 import IndustriesPage from './components/IndustriesPage.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
+import DemoWizard from './components/DemoWizard.jsx'
+import AutoDemo from './components/AutoDemo.jsx'
+
+// Left/right order for swiping between browse sections on touch devices.
+// Settings is intentionally excluded — it's reached by tap, not by swiping.
+const SWIPE_SECTIONS = [
+  'home',
+  'company-profile',
+  'industries',
+  'iconic',
+  'design',
+  'engineering',
+  'strategy',
+  'keynotes',
+  'mine',
+]
 
 const matchesQuery = (deck, q) => {
   if (!q) return true
@@ -54,9 +73,16 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [toast, setToast] = useState(null)
   const [activeIndustry, setActiveIndustry] = useState(null)
+  const [tourOpen, setTourOpen] = useState(false)
+  const [demoOpen, setDemoOpen] = useState(false)
+  // Ordered newest-first; the source of truth for "My Library".
+  const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
   const canEdit = !!user && !user.guest && (user.role === 'admin' || user.role === 'editor')
   const isAdmin = !!user && !user.guest && user.role === 'admin'
+  // Signed-in users persist favorites to the backend; guests use localStorage.
+  const favBackend = !!user && !!user.token
+  const favSet = useMemo(() => new Set(favoriteIds), [favoriteIds])
 
   // Load the catalog + team directory from the backend once signed in.
   const loadData = useCallback(async () => {
@@ -76,6 +102,51 @@ export default function App() {
   useEffect(() => {
     if (user) loadData()
   }, [user, loadData])
+
+  // Show the product tour once, the first time someone lands inside the app.
+  useEffect(() => {
+    if (user && status === 'ready' && !hasSeenTour()) setTourOpen(true)
+  }, [user, status])
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false)
+    markTourSeen()
+  }, [])
+
+  // Swipe left/right to step between browse sections. The `ignore` selector
+  // means a swipe that starts on a row carousel scrolls the row instead.
+  const navigateSection = (dir) => {
+    if (query.trim() || activeIndustry) return // not while searching/filtering
+    const i = SWIPE_SECTIONS.indexOf(activeCategory)
+    if (i < 0) return
+    const j = i + dir
+    if (j < 0 || j >= SWIPE_SECTIONS.length) return
+    withViewTransition(() => {
+      setActiveCategory(SWIPE_SECTIONS[j])
+      setQuery('')
+    })
+  }
+  const contentRef = useSwipe({
+    onLeft: () => navigateSection(1),
+    onRight: () => navigateSection(-1),
+    ignore: '.scroll-snap-x, input, textarea, select, [data-no-swipe]',
+  })
+
+  // Pull the signed-in user's favorites from the backend; guests keep whatever
+  // is in localStorage.
+  useEffect(() => {
+    if (!favBackend) return
+    let cancelled = false
+    api
+      .listFavorites()
+      .then((res) => {
+        if (!cancelled) setFavoriteIds(res?.deckIds || [])
+      })
+      .catch(() => {}) // non-fatal; favorites just stay empty
+    return () => {
+      cancelled = true
+    }
+  }, [favBackend, user])
 
   useEffect(() => {
     if (!playing) setHistory(loadHistory())
@@ -108,7 +179,11 @@ export default function App() {
     [decks],
   )
 
-  const myLibrary = useMemo(() => decks.filter((d) => d.category === 'mine'), [decks])
+  // "My Library" is now the user's favorites, kept in favorite order.
+  const myLibrary = useMemo(() => {
+    const byId = new Map(decks.map((d) => [d.id, d]))
+    return favoriteIds.map((id) => byId.get(id)).filter(Boolean)
+  }, [decks, favoriteIds])
 
   // ─────────── Sign-in gate ───────────
   if (!user) {
@@ -158,15 +233,37 @@ export default function App() {
 
   const handleDetails = (deck) => setDetailsDeck(deck)
 
+  // Toggle a deck in "My Library". Optimistic, with a revert on API failure;
+  // guests persist to localStorage instead of the backend.
+  const toggleFavorite = (deck) => {
+    const id = deck.id
+    const wasFav = favSet.has(id)
+    const prev = favoriteIds
+    const next = wasFav ? favoriteIds.filter((x) => x !== id) : [id, ...favoriteIds]
+    setFavoriteIds(next)
+
+    if (favBackend) {
+      const call = wasFav ? api.removeFavorite(id) : api.addFavorite(id)
+      call.catch((e) => {
+        setFavoriteIds(prev) // revert
+        setToast({ title: "Couldn't update My Library", message: e.message })
+      })
+    } else {
+      saveLocalFavorites(next)
+    }
+  }
+
   const handleAdd = async (deck) => {
     setAddOpen(false)
     try {
       const created = await api.createDeck(toCreateRequest(deck))
       const nd = normalizeDeck(created)
       setDecks((prev) => [nd, ...prev])
+      // Your own uploads go straight into My Library so they're easy to find.
+      if (!favSet.has(nd.id)) toggleFavorite(nd)
       setToast({
         title: 'Added to the catalog',
-        message: `"${nd.title}" is live for everyone.`,
+        message: `"${nd.title}" is live and saved to My Library.`,
         actionLabel: 'Open',
         onAction: () => handlePlay(nd),
       })
@@ -293,6 +390,7 @@ export default function App() {
   }
 
   return (
+    <FavoritesProvider value={{ favSet, toggle: toggleFavorite }}>
     <div className="min-h-screen text-white pb-mobile-nav lg:pb-20">
       <Navbar
         user={user}
@@ -300,6 +398,8 @@ export default function App() {
         onLogout={handleLogout}
         onAddClick={() => setAddOpen(true)}
         onSearchClick={() => setSearchModalOpen(true)}
+        onOpenTour={() => setTourOpen(true)}
+        onStartDemo={() => setDemoOpen(true)}
         activeCategory={activeCategory}
         onCategoryChange={(id) => goTo(() => {
           setActiveCategory(id)
@@ -308,8 +408,9 @@ export default function App() {
       />
 
       {/* Named region for the View Transitions cross-fade — the navbar sits
-          outside it so it stays anchored while the content swaps. */}
-      <div className="view-content">
+          outside it so it stays anchored while the content swaps. Also the
+          swipe surface for moving between sections on touch. */}
+      <div className="view-content" ref={contentRef}>
         {isHome && featuredDeck && (
           <Hero
             deck={featuredDeck}
@@ -328,6 +429,8 @@ export default function App() {
           onClose={() => setDetailsDeck(null)}
           onPlay={handlePlay}
           onRemove={canEdit ? handleRemove : undefined}
+          isFavorite={favSet.has(detailsDeck.id)}
+          onToggleFavorite={() => toggleFavorite(detailsDeck)}
           onSearch={(q) => {
             setActiveCategory('home')
             setQuery(q)
@@ -343,6 +446,10 @@ export default function App() {
         <DeckPlayer
           deck={playing.deck}
           startIndex={playing.startIndex}
+          // Siblings from the same category, so "next deck" stays contextual
+          // rather than jumping across the whole catalog.
+          playlist={decks.filter((d) => d.category === playing.deck.category)}
+          onSelectDeck={(d) => handlePlay(d)}
           onClose={() => setPlaying(null)}
         />
       )}
@@ -377,8 +484,22 @@ export default function App() {
         })}
       />
 
+      {tourOpen && (
+        <DemoWizard
+          onClose={closeTour}
+          onStartDemo={() => {
+            closeTour()
+            setDemoOpen(true)
+          }}
+        />
+      )}
+
+      {/* Self-driving "how to use" tour — clicks through the app itself. */}
+      {demoOpen && <AutoDemo onExit={() => setDemoOpen(false)} />}
+
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
+    </FavoritesProvider>
   )
 }
 
@@ -471,7 +592,7 @@ function HomeRows({
       {myLibrary.length > 0 && (
         <Row
           title="My Library"
-          subtitle="Decks added to the catalog"
+          subtitle="Decks you've saved"
           decks={myLibrary}
           onPlay={onPlay}
           onDetails={onDetails}
