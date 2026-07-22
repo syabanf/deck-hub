@@ -19,7 +19,45 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, auth = false } = {}) {
+// A request that never returns is worse than one that fails: the UI sits on a
+// spinner forever. Cap every call so a hung server still produces an error the
+// user can act on.
+const TIMEOUT_MS = 15_000
+const UPLOAD_TIMEOUT_MS = 120_000 // 25 MB over a slow uplink needs real headroom
+
+// Lets the app react to an expired session once, centrally, instead of every
+// caller having to recognise a 401.
+let onAuthFailure = null
+export const setAuthFailureHandler = (fn) => {
+  onAuthFailure = fn
+}
+
+// fetch that turns "hung" into a real, catchable error.
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    // An abort here is always ours — nothing else cancels these requests.
+    if (err?.name === 'AbortError') {
+      throw new ApiError('timeout', 'The server took too long to respond.')
+    }
+    throw new ApiError(
+      'network',
+      `Can't reach the WIT server at ${BASE}. Make sure the API is running.`,
+    )
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Worth retrying: the request never landed, or the server had a bad moment.
+// A 4xx is a considered "no" — retrying just fails again more slowly.
+const transient = (err) =>
+  err?.code === 'network' || err?.code === 'timeout' || (err?.status >= 500 && err?.status < 600)
+
+async function request(path, { method = 'GET', body, auth = false, retries } = {}) {
   const headers = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (auth) {
@@ -27,38 +65,67 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
     if (token) headers.Authorization = `Bearer ${token}`
   }
 
-  let res
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    })
-  } catch {
-    throw new ApiError(
-      'network',
-      `Can't reach the WIT server at ${BASE}. Make sure the API is running.`,
-    )
-  }
+  // Only GETs retry by default. Replaying a POST could create the same deck
+  // twice — a silent duplicate is worse than a visible error.
+  const attempts = (retries ?? (method === 'GET' ? 2 : 0)) + 1
 
-  if (res.status === 204) return null
+  let lastErr
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      // Brief backoff: 300ms, then 900ms. Long enough for a restarting API to
+      // come back, short enough that nobody thinks the app has frozen.
+      await new Promise((r) => setTimeout(r, 300 * 3 ** (attempt - 1)))
+    }
 
-  const text = await res.text()
-  let data = null
-  if (text) {
     try {
-      data = JSON.parse(text)
-    } catch {
-      data = null
+      const res = await fetchWithTimeout(
+        `${BASE}${path}`,
+        {
+          method,
+          headers,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+        },
+        TIMEOUT_MS,
+      )
+
+      if (res.status === 204) return null
+
+      const text = await res.text()
+      let data = null
+      if (text) {
+        try {
+          data = JSON.parse(text)
+        } catch {
+          data = null
+        }
+      }
+
+      if (!res.ok) {
+        const code = data?.error?.code || 'error'
+        const message = data?.error?.message || `Request failed (${res.status}).`
+        const err = new ApiError(code, message, res.status)
+
+        // An authenticated call rejected as 401 means the JWT lapsed. Tell the
+        // app once so it can sign out cleanly; a failed login is the caller's
+        // business, not a session expiry.
+        if (res.status === 401 && auth) onAuthFailure?.(err)
+
+        if (transient(err) && attempt < attempts - 1) {
+          lastErr = err
+          continue
+        }
+        throw err
+      }
+      return data
+    } catch (err) {
+      if (transient(err) && attempt < attempts - 1) {
+        lastErr = err
+        continue
+      }
+      throw err
     }
   }
-
-  if (!res.ok) {
-    const code = data?.error?.code || 'error'
-    const message = data?.error?.message || `Request failed (${res.status}).`
-    throw new ApiError(code, message, res.status)
-  }
-  return data
+  throw lastErr
 }
 
 // Uploaded files come back as a server-relative path ("/uploads/<name>"); the
@@ -79,12 +146,13 @@ export async function uploadFile(file) {
   const token = loadAuth()?.token
   if (token) headers.Authorization = `Bearer ${token}`
 
-  let res
-  try {
-    res = await fetch(`${BASE}/uploads`, { method: 'POST', headers, body: form })
-  } catch {
-    throw new ApiError('network', `Can't reach the WIT server at ${BASE}.`)
-  }
+  // No retry: re-sending a large file after a failure wastes the user's data
+  // and the server rejects duplicates anyway.
+  const res = await fetchWithTimeout(
+    `${BASE}/uploads`,
+    { method: 'POST', headers, body: form },
+    UPLOAD_TIMEOUT_MS,
+  )
 
   const text = await res.text()
   let data = null
@@ -96,11 +164,13 @@ export async function uploadFile(file) {
     }
   }
   if (!res.ok) {
-    throw new ApiError(
+    const err = new ApiError(
       data?.error?.code || 'error',
       data?.error?.message || `Upload failed (${res.status}).`,
       res.status,
     )
+    if (res.status === 401) onAuthFailure?.(err)
+    throw err
   }
   // `path` is what gets persisted on the deck (origin-independent); `url` is
   // the absolute form for immediate use in the browser.

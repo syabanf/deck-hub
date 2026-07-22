@@ -7,7 +7,10 @@ import {
   normalizeUsers,
   normalizeUser,
   toCreateRequest,
+  setAuthFailureHandler,
 } from './lib/api.js'
+import { errorToast, humanizeError, isSessionExpired } from './lib/errors.js'
+import { useOnline } from './lib/useOnline.js'
 import { loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen } from './lib/storage.js'
 import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
 import { FavoritesProvider } from './lib/favoritesContext.jsx'
@@ -27,6 +30,7 @@ import DeckFilters, { useDeckFilters } from './components/DeckFilters.jsx'
 import Toast from './components/Toast.jsx'
 import SearchModal from './components/SearchModal.jsx'
 import IndustriesPage from './components/IndustriesPage.jsx'
+import OfflineBanner from './components/OfflineBanner.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
@@ -75,6 +79,9 @@ export default function App() {
   const [activeIndustry, setActiveIndustry] = useState(null)
   const [tourOpen, setTourOpen] = useState(false)
   const [demoOpen, setDemoOpen] = useState(false)
+  // Survives the sign-out that unmounts the whole signed-in tree (toast included),
+  // so the login screen can explain why the person is suddenly back here.
+  const [signedOutReason, setSignedOutReason] = useState(null)
   // Ordered newest-first; the source of truth for "My Library".
   const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
@@ -83,6 +90,22 @@ export default function App() {
   // Signed-in users persist favorites to the backend; guests use localStorage.
   const favBackend = !!user && !!user.token
   const favSet = useMemo(() => new Set(favoriteIds), [favoriteIds])
+  const online = useOnline()
+
+  // The JWT lasts 24h, so a tab left open overnight wakes up holding a dead
+  // token: the UI still looks signed in while every action fails. Catch the
+  // first 401 centrally, sign out, and say why — instead of letting the person
+  // retry into an error again and again.
+  useEffect(() => {
+    setAuthFailureHandler(() => {
+      clearAuth()
+      setUser(null)
+      // A toast is no good here: setUser(null) swaps the whole tree for the
+      // login screen, taking the toast with it. Hand the reason to LoginPage.
+      setSignedOutReason(humanizeError({ code: 'unauthorized', status: 401 }))
+    })
+    return () => setAuthFailureHandler(null)
+  }, [])
 
   // Load the catalog + team directory from the backend once signed in.
   const loadData = useCallback(async () => {
@@ -189,8 +212,10 @@ export default function App() {
   if (!user) {
     return (
       <LoginPage
+        notice={signedOutReason}
         onLogin={(profile) => {
           saveAuth(profile)
+          setSignedOutReason(null)
           setUser(profile)
         }}
       />
@@ -198,7 +223,17 @@ export default function App() {
   }
 
   if (status === 'loading') return <LoadingScreen />
-  if (status === 'error') return <ErrorScreen error={error} onRetry={loadData} />
+  if (status === 'error')
+    return (
+      <ErrorScreen
+        error={error}
+        onRetry={loadData}
+        onSignOut={() => {
+          clearAuth()
+          setUser(null)
+        }}
+      />
+    )
 
   const handleLogout = () => {
     clearAuth()
@@ -246,7 +281,7 @@ export default function App() {
       const call = wasFav ? api.removeFavorite(id) : api.addFavorite(id)
       call.catch((e) => {
         setFavoriteIds(prev) // revert
-        setToast({ title: "Couldn't update My Library", message: e.message })
+        setToast(errorToast(e, { action: 'update My Library' }))
       })
     } else {
       saveLocalFavorites(next)
@@ -268,7 +303,7 @@ export default function App() {
         onAction: () => handlePlay(nd),
       })
     } catch (e) {
-      setToast({ title: "Couldn't save deck", message: e.message })
+      setToast(errorToast(e, { action: 'save this deck' }))
     }
   }
 
@@ -280,7 +315,7 @@ export default function App() {
       setDecks((prev) => prev.filter((d) => d.id !== deck.id))
       setToast({ title: 'Deck removed', message: `"${deck.title}" is gone.` })
     } catch (e) {
-      setToast({ title: "Couldn't remove deck", message: e.message })
+      setToast(errorToast(e, { action: 'remove this deck' }))
     }
   }
 
@@ -290,7 +325,7 @@ export default function App() {
       setUsers((prev) => [normalizeUser(created), ...prev])
       setToast({ title: 'User added', message: `${created.name} can now access WIT.` })
     } catch (e) {
-      setToast({ title: "Couldn't add user", message: e.message })
+      setToast(errorToast(e, { action: 'add that person' }))
     }
   }
   const handleUpdateUser = async (id, patch) => {
@@ -298,7 +333,7 @@ export default function App() {
       const updated = await api.updateUser(id, patch)
       setUsers((prev) => prev.map((u) => (u.id === id ? normalizeUser(updated) : u)))
     } catch (e) {
-      setToast({ title: "Couldn't update user", message: e.message })
+      setToast(errorToast(e, { action: 'update that person' }))
     }
   }
   const handleRemoveUser = async (id) => {
@@ -306,7 +341,7 @@ export default function App() {
       await api.deleteUser(id)
       setUsers((prev) => prev.filter((u) => u.id !== id))
     } catch (e) {
-      setToast({ title: "Couldn't remove user", message: e.message })
+      setToast(errorToast(e, { action: 'remove that person' }))
     }
   }
 
@@ -497,6 +532,7 @@ export default function App() {
       {/* Self-driving "how to use" tour — clicks through the app itself. */}
       {demoOpen && <AutoDemo onExit={() => setDemoOpen(false)} />}
 
+      <OfflineBanner online={online} />
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
     </FavoritesProvider>
@@ -504,33 +540,77 @@ export default function App() {
 }
 
 function LoadingScreen() {
+  // A spinner that never changes reads as "frozen" after a few seconds. Saying
+  // it's slow — and that we're still trying — is the difference between waiting
+  // and giving up.
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 5000)
+    return () => clearTimeout(t)
+  }, [])
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-white">
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-white px-6 text-center">
       <span className="text-deck-accent font-black text-4xl tracking-tighter animate-glow-pulse">
         WIT
       </span>
       <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
       <span className="text-deck-muted text-sm">Loading the catalog…</span>
+      {slow && (
+        <span className="text-white/40 text-xs max-w-xs leading-relaxed animate-fade-in">
+          This is taking longer than usual — still trying. A slow connection can do this.
+        </span>
+      )}
     </div>
   )
 }
 
-function ErrorScreen({ error, onRetry }) {
+function ErrorScreen({ error, onRetry, onSignOut }) {
+  const { title, message } = humanizeError(error, { action: 'load your catalog' })
+  const expired = isSessionExpired(error)
+  const [retrying, setRetrying] = useState(false)
+
+  const retry = async () => {
+    setRetrying(true)
+    try {
+      await onRetry()
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-6">
       <span className="text-deck-accent font-black text-3xl tracking-tighter">WIT</span>
-      <h1 className="text-2xl font-black">Can't reach the WIT server</h1>
-      <p className="text-deck-muted max-w-md text-sm">
-        {error?.message || 'The backend is unavailable.'} Start the Go API
-        (<code className="text-white/80">make run</code> in <code className="text-white/80">backend/</code>),
-        then retry.
-      </p>
-      <button
-        onClick={onRetry}
-        className="mt-2 px-5 py-2.5 rounded-lg bg-deck-accent hover:bg-deck-accentDim font-bold text-sm"
-      >
-        Retry
-      </button>
+      <h1 className="text-2xl font-black tracking-tight">{title}</h1>
+      <p className="text-deck-muted max-w-md text-sm leading-relaxed">{message}</p>
+
+      <div className="flex items-center gap-2 mt-2">
+        {expired ? (
+          <button
+            onClick={onSignOut}
+            className="px-5 py-2.5 rounded-lg bg-deck-accent hover:bg-deck-accentDim font-bold text-sm transition-colors"
+          >
+            Sign in again
+          </button>
+        ) : (
+          <button
+            onClick={retry}
+            disabled={retrying}
+            className="px-5 py-2.5 rounded-lg bg-deck-accent hover:bg-deck-accentDim font-bold text-sm disabled:opacity-60 transition-colors"
+          >
+            {retrying ? 'Trying…' : 'Try again'}
+          </button>
+        )}
+      </div>
+
+      {/* Only developers can act on this, so only they see it. */}
+      {import.meta.env.DEV && error?.code === 'network' && (
+        <p className="text-xs text-white/35 mt-3">
+          Dev hint: start the Go API with <code className="text-white/60">make run</code> in{' '}
+          <code className="text-white/60">backend/</code>.
+        </p>
+      )}
     </div>
   )
 }
