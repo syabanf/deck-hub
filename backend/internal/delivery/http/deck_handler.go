@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -16,6 +18,8 @@ type deckUsecase interface {
 	Create(ctx context.Context, in usecase.CreateDeckInput) (*domain.Deck, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Deck, error)
 	List(ctx context.Context, f domain.DeckFilter) ([]*domain.Deck, error)
+	ListPage(ctx context.Context, f domain.DeckFilter) ([]*domain.Deck, int, error)
+	Stats(ctx context.Context) (*domain.DeckStats, error)
 	Update(ctx context.Context, id uuid.UUID, in usecase.UpdateDeckInput) (*domain.Deck, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	IncrementViews(ctx context.Context, id uuid.UUID) (*domain.Deck, error)
@@ -67,6 +71,7 @@ func (h *DeckHandler) List(w http.ResponseWriter, r *http.Request) {
 		Category:   q.Get("category"),
 		Industry:   q.Get("industry"),
 		SourceType: q.Get("sourceType"),
+		Sort:       domain.ParseDeckSort(q.Get("sort")),
 		Limit:      atoiDefault(q.Get("limit"), 0),
 		Offset:     atoiDefault(q.Get("offset"), 0),
 	}
@@ -74,13 +79,85 @@ func (h *DeckHandler) List(w http.ResponseWriter, r *http.Request) {
 		b := fv == "true" || fv == "1"
 		filter.Featured = &b
 	}
+	if idsRaw := q.Get("ids"); idsRaw != "" {
+		ids, err := parseUUIDList(idsRaw)
+		if err != nil {
+			writeErrorMsg(w, http.StatusBadRequest, "invalid_input", "ids must be a comma-separated list of deck ids")
+			return
+		}
+		// An explicit empty result beats silently listing the whole catalog.
+		if len(ids) == 0 {
+			w.Header().Set("X-Total-Count", "0")
+			writeJSON(w, http.StatusOK, []deckResponse{})
+			return
+		}
+		filter.IDs = ids
+	}
 
-	decks, err := h.uc.List(r.Context(), filter)
+	decks, total, err := h.uc.ListPage(r.Context(), filter)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+
+	// The body stays a plain array so existing clients keep working; paging
+	// metadata rides in headers. X-Total-Count must be in the CORS
+	// ExposedHeaders list or the browser hides it from JS.
+	w.Header().Set("X-Total-Count", strconv.Itoa(total))
+	w.Header().Set("X-Limit", strconv.Itoa(clampedLimit(filter.Limit)))
+	w.Header().Set("X-Offset", strconv.Itoa(filter.Offset))
 	writeJSON(w, http.StatusOK, toDeckResponses(decks))
+}
+
+// clampedLimit mirrors the usecase bounds so the header reports the page size
+// actually applied, not the one the caller asked for.
+func clampedLimit(n int) int {
+	if n <= 0 {
+		return usecase.DefaultDeckLimit
+	}
+	if n > usecase.MaxDeckLimit {
+		return usecase.MaxDeckLimit
+	}
+	return n
+}
+
+// parseUUIDList turns "a,b,c" into ids, ignoring empty entries so a trailing
+// comma isn't an error. It caps the set at MaxDeckLimit: `ids` is a hydration
+// helper, not a way around paging.
+func parseUUIDList(raw string) ([]uuid.UUID, error) {
+	parts := strings.Split(raw, ",")
+	out := make([]uuid.UUID, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		id, err := uuid.Parse(p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+		if len(out) >= usecase.MaxDeckLimit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Stats handles GET /decks/stats.
+func (h *DeckHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.uc.Stats(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total":      stats.Total,
+		"featured":   stats.Featured,
+		"totalViews": stats.TotalViews,
+		"byCategory": stats.ByCategory,
+		"byIndustry": stats.ByIndustry,
+	})
 }
 
 // Get handles GET /decks/{id}.

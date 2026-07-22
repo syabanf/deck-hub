@@ -57,7 +57,7 @@ async function fetchWithTimeout(url, options, ms) {
 const transient = (err) =>
   err?.code === 'network' || err?.code === 'timeout' || (err?.status >= 500 && err?.status < 600)
 
-async function request(path, { method = 'GET', body, auth = false, retries } = {}) {
+async function request(path, { method = 'GET', body, auth = false, retries, meta = false } = {}) {
   const headers = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (auth) {
@@ -88,7 +88,7 @@ async function request(path, { method = 'GET', body, auth = false, retries } = {
         TIMEOUT_MS,
       )
 
-      if (res.status === 204) return null
+      if (res.status === 204) return withMeta(null, res, meta)
 
       const text = await res.text()
       let data = null
@@ -116,7 +116,7 @@ async function request(path, { method = 'GET', body, auth = false, retries } = {
         }
         throw err
       }
-      return data
+      return withMeta(data, res, meta)
     } catch (err) {
       if (transient(err) && attempt < attempts - 1) {
         lastErr = err
@@ -126,6 +126,18 @@ async function request(path, { method = 'GET', body, auth = false, retries } = {
     }
   }
   throw lastErr
+}
+
+// When `meta` is set the caller wants the paging headers too, not just the body.
+// X-Total-Count is only readable because the server lists it in CORS
+// ExposedHeaders — without that the browser hides it and total would be null.
+const withMeta = (data, res, meta) => {
+  if (!meta) return data
+  const num = (h) => {
+    const v = res.headers.get(h)
+    return v === null ? null : Number(v)
+  }
+  return { data, total: num('X-Total-Count'), limit: num('X-Limit'), offset: num('X-Offset') }
 }
 
 // Uploaded files come back as a server-relative path ("/uploads/<name>"); the
@@ -183,7 +195,25 @@ export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: { email, password } }),
 
-  listDecks: () => request('/decks'),
+  // Every listing is paged. The server applies a default limit even when none
+  // is given, so there is no longer a call that can pull the whole catalog.
+  listDecks: (params = {}) => {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, v)
+    }
+    const q = qs.toString()
+    return request(`/decks${q ? `?${q}` : ''}`, { meta: true })
+  },
+
+  // Hydrate a known set of decks (favourites, continue-watching) without
+  // listing the catalog. Capped server-side at the max page size.
+  listDecksByIds: (ids) => {
+    if (!ids?.length) return Promise.resolve({ data: [], total: 0 })
+    return request(`/decks?ids=${ids.join(',')}&limit=200`, { meta: true })
+  },
+
+  deckStats: () => request('/decks/stats'),
   createDeck: (deck) => request('/decks', { method: 'POST', body: deck, auth: true }),
   updateDeck: (id, patch) => request(`/decks/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteDeck: (id) => request(`/decks/${id}`, { method: 'DELETE', auth: true }),

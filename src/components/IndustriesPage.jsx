@@ -80,16 +80,18 @@ function IndustryTile({ ind, count, onPick }) {
   )
 }
 
-export default function IndustriesPage({ onPickIndustry, decks = [] }) {
+// Counts come from GET /decks/stats. They used to be tallied from an in-memory
+// copy of the whole catalog, which is exactly the fetch this change removed.
+export default function IndustriesPage({ onPickIndustry, counts: rawCounts }) {
   const counts = useMemo(() => {
     const map = Object.fromEntries(INDUSTRIES.map((i) => [i.id, 0]))
-    for (const d of decks) {
-      if (d.industry && map[d.industry] !== undefined) map[d.industry]++
+    for (const [id, n] of Object.entries(rawCounts || {})) {
+      if (map[id] !== undefined) map[id] = n
     }
     return map
-  }, [decks])
+  }, [rawCounts])
 
-  const total = decks.filter((d) => d.industry).length
+  const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts])
 
   return (
     <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">

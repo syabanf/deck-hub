@@ -33,6 +33,7 @@ import Toast from './components/Toast.jsx'
 import SearchModal from './components/SearchModal.jsx'
 import IndustriesPage from './components/IndustriesPage.jsx'
 import OfflineBanner from './components/OfflineBanner.jsx'
+import LoadMore from './components/LoadMore.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
@@ -51,6 +52,19 @@ const SWIPE_SECTIONS = [
   'keynotes',
   'mine',
 ]
+
+// Bounded fetch sizes. The home page needs a handful of decks per row, not the
+// catalog — at 73k decks the old unbounded fetch was 25 MB.
+const HOME_ROW_LIMIT = 20
+const PAGE_SIZE = 50
+
+// Merge freshly fetched decks into the working set, de-duped by id and with the
+// newest copy winning. Every screen reads from this one cache.
+const mergeById = (prev, incoming) => {
+  const byId = new Map(prev.map((d) => [d.id, d]))
+  for (const d of incoming) byId.set(d.id, d)
+  return [...byId.values()]
+}
 
 const matchesQuery = (deck, q) => {
   if (!q) return true
@@ -88,6 +102,17 @@ export default function App() {
   // Survives the sign-out that unmounts the whole signed-in tree (toast included),
   // so the login screen can explain why the person is suddenly back here.
   const [signedOutReason, setSignedOutReason] = useState(null)
+  // Catalog aggregates (counts per category/industry) come from the server now;
+  // they used to be derived by counting a full in-memory catalog.
+  const [stats, setStats] = useState(null)
+  const [heroId, setHeroId] = useState(null)
+  const [topTenIds, setTopTenIds] = useState([])
+  // The current category/search listing: which ids, how many exist, and whether
+  // another page is being fetched.
+  const [page, setPage] = useState({ key: null, ids: [], total: 0, loading: false })
+  // The admin catalog table pages independently of the browse listings.
+  const [adminFilters, setAdminFilters] = useState({ search: '', category: 'all', industry: 'all', source: 'all' })
+  const [adminPage, setAdminPage] = useState({ key: null, ids: [], total: 0, loading: false })
   // Ordered newest-first; the source of truth for "My Library".
   const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
@@ -114,18 +139,45 @@ export default function App() {
   }, [])
 
   // Load the catalog + team directory from the backend once signed in.
+  // The home screen is assembled from several small, bounded requests instead
+  // of one that returned the entire catalog: the hero, the top ten, and one
+  // short row per category. Together they fetch on the order of a hundred rows
+  // regardless of how large the catalog grows.
   const loadData = useCallback(async () => {
     setStatus('loading')
     setError(null)
     try {
-      const [deckList, userList] = await Promise.all([api.listDecks(), api.listUsers()])
-      setDecks(normalizeDecks(deckList))
+      const [statsRes, heroRes, topRes, userList, ...rowRes] = await Promise.all([
+        api.deckStats(),
+        api.listDecks({ featured: 'true', limit: 1 }),
+        api.listDecks({ sort: 'views', limit: 10 }),
+        api.listUsers(),
+        ...CATEGORIES.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
+      ])
+
+      const hero = normalizeDecks(heroRes.data || [])
+      const top = normalizeDecks(topRes.data || [])
+      const rows = rowRes.flatMap((r) => normalizeDecks(r.data || []))
+
+      setStats(statsRes)
+      setHeroId(hero[0]?.id ?? null)
+      setTopTenIds(top.map((d) => d.id))
+      setDecks(mergeById([], [...hero, ...top, ...rows]))
       setUsers(normalizeUsers(userList))
       setStatus('ready')
     } catch (e) {
       setError(e)
       setStatus('error')
     }
+  }, [])
+
+  // Counts live on the server now, so any mutation that changes them needs a
+  // refresh — otherwise the admin summary drifts from the catalog.
+  //
+  // Must stay above the early returns below: it's a hook, and React requires
+  // the same hooks to run in the same order on every render.
+  const refreshStats = useCallback(() => {
+    api.deckStats().then(setStats).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -181,11 +233,45 @@ export default function App() {
     if (!playing) setHistory(loadHistory())
   }, [playing])
 
+  // Favourites and continue-watching are lists of ids. Previously the deck
+  // behind each id was already in memory because everything was; now they are
+  // fetched explicitly — but only the ones not already cached.
+  useEffect(() => {
+    if (status !== 'ready') return
+    const wanted = new Set([...favoriteIds, ...Object.values(history).map((h) => h.deckId)])
+    const missing = [...wanted].filter((id) => id && !byId.has(id))
+    if (missing.length === 0) return
+
+    let cancelled = false
+    api
+      .listDecksByIds(missing.slice(0, 200))
+      .then((res) => {
+        if (!cancelled && res?.data?.length) {
+          setDecks((prev) => mergeById(prev, normalizeDecks(res.data)))
+        }
+      })
+      .catch(() => {}) // non-fatal: those rows just stay out of the rail
+    return () => {
+      cancelled = true
+    }
+    // byId is intentionally omitted: it changes on every merge, and including
+    // it would re-run this effect in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favoriteIds, history, status])
+
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
 
-  const featuredDeck = useMemo(() => decks.find((d) => d.featured) || decks[0], [decks])
+  const byId = useMemo(() => new Map(decks.map((d) => [d.id, d])), [decks])
+
+  // The hero and the top ten are chosen by the server (featured flag, view
+  // count). Re-deriving them from the cache would rank only the decks that
+  // happen to be loaded.
+  const featuredDeck = useMemo(
+    () => (heroId && byId.get(heroId)) || decks[0],
+    [heroId, byId, decks],
+  )
 
   const continueWatching = useMemo(() => {
     const entries = Object.values(history)
@@ -204,15 +290,158 @@ export default function App() {
   }, [decks])
 
   const mostViewed = useMemo(
-    () => [...decks].sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0)).slice(0, 10),
-    [decks],
+    () => topTenIds.map((id) => byId.get(id)).filter(Boolean),
+    [topTenIds, byId],
+  )
+
+  // Which listing the browse area is showing. My Library is excluded: it's
+  // driven by the favourites list, not by a catalog query.
+  const pageQuery = useMemo(() => {
+    if (query.trim()) return { search: query.trim(), industry: activeIndustry || undefined }
+    if (activeIndustry) return { industry: activeIndustry }
+    if (SWIPE_SECTIONS.includes(activeCategory) && activeCategory !== 'home' && activeCategory !== 'mine'
+        && activeCategory !== 'industries') {
+      return { category: activeCategory }
+    }
+    return null
+  }, [query, activeIndustry, activeCategory])
+
+  const pageKey = pageQuery ? JSON.stringify(pageQuery) : null
+
+  // Fetch the first page whenever the listing changes. Search is debounced so
+  // typing doesn't fire a request per keystroke.
+  useEffect(() => {
+    if (status !== 'ready' || !pageQuery) {
+      setPage((p) => (p.key === null ? p : { key: null, ids: [], total: 0, loading: false }))
+      return
+    }
+
+    let cancelled = false
+    setPage({ key: pageKey, ids: [], total: 0, loading: true })
+
+    const t = setTimeout(() => {
+      api
+        .listDecks({ ...pageQuery, limit: PAGE_SIZE, offset: 0 })
+        .then((res) => {
+          if (cancelled) return
+          const fetched = normalizeDecks(res.data || [])
+          setDecks((prev) => mergeById(prev, fetched))
+          setPage({ key: pageKey, ids: fetched.map((d) => d.id), total: res.total ?? fetched.length, loading: false })
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setPage({ key: pageKey, ids: [], total: 0, loading: false })
+          setToast(errorToast(e, { action: 'load those decks' }))
+        })
+    }, pageQuery.search ? 250 : 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [pageKey, status]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Load more" appends the next page to the current listing.
+  const loadMore = useCallback(() => {
+    if (!pageQuery || page.loading || page.ids.length >= page.total) return
+    setPage((p) => ({ ...p, loading: true }))
+    api
+      .listDecks({ ...pageQuery, limit: PAGE_SIZE, offset: page.ids.length })
+      .then((res) => {
+        const fetched = normalizeDecks(res.data || [])
+        setDecks((prev) => mergeById(prev, fetched))
+        setPage((p) => ({
+          ...p,
+          // Guard against a page that arrives after the listing changed.
+          ids: p.key === pageKey ? [...p.ids, ...fetched.map((d) => d.id)] : p.ids,
+          total: res.total ?? p.total,
+          loading: false,
+        }))
+      })
+      .catch((e) => {
+        setPage((p) => ({ ...p, loading: false }))
+        setToast(errorToast(e, { action: 'load more decks' }))
+      })
+  }, [pageQuery, pageKey, page.loading, page.ids.length, page.total])
+
+  const pageDecks = useMemo(
+    () => page.ids.map((id) => byId.get(id)).filter(Boolean),
+    [page.ids, byId],
+  )
+
+  // ---- admin catalog table (Settings → Master Data) ----
+  const isSettingsTab = activeCategory === 'settings'
+
+  const adminQuery = useMemo(() => {
+    const f = adminFilters
+    return {
+      search: f.search.trim() || undefined,
+      category: f.category !== 'all' ? f.category : undefined,
+      industry: f.industry !== 'all' ? f.industry : undefined,
+      sourceType: f.source !== 'all' ? f.source : undefined,
+    }
+  }, [adminFilters])
+
+  const adminKey = JSON.stringify(adminQuery)
+
+  useEffect(() => {
+    if (status !== 'ready' || !isSettingsTab) return
+    let cancelled = false
+    setAdminPage((p) => ({ ...p, key: adminKey, loading: true }))
+
+    const t = setTimeout(() => {
+      api
+        .listDecks({ ...adminQuery, limit: PAGE_SIZE, offset: 0 })
+        .then((res) => {
+          if (cancelled) return
+          const fetched = normalizeDecks(res.data || [])
+          setDecks((prev) => mergeById(prev, fetched))
+          setAdminPage({ key: adminKey, ids: fetched.map((d) => d.id), total: res.total ?? fetched.length, loading: false })
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setAdminPage({ key: adminKey, ids: [], total: 0, loading: false })
+          setToast(errorToast(e, { action: 'load the catalog' }))
+        })
+    }, adminQuery.search ? 250 : 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [adminKey, isSettingsTab, status]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadMoreAdmin = useCallback(() => {
+    if (adminPage.loading || adminPage.ids.length >= adminPage.total) return
+    setAdminPage((p) => ({ ...p, loading: true }))
+    api
+      .listDecks({ ...adminQuery, limit: PAGE_SIZE, offset: adminPage.ids.length })
+      .then((res) => {
+        const fetched = normalizeDecks(res.data || [])
+        setDecks((prev) => mergeById(prev, fetched))
+        setAdminPage((p) => ({
+          ...p,
+          ids: p.key === adminKey ? [...p.ids, ...fetched.map((d) => d.id)] : p.ids,
+          total: res.total ?? p.total,
+          loading: false,
+        }))
+      })
+      .catch((e) => {
+        setAdminPage((p) => ({ ...p, loading: false }))
+        setToast(errorToast(e, { action: 'load more decks' }))
+      })
+  }, [adminQuery, adminKey, adminPage.loading, adminPage.ids.length, adminPage.total])
+
+  const adminDecks = useMemo(
+    () => adminPage.ids.map((id) => byId.get(id)).filter(Boolean),
+    [adminPage.ids, byId],
   )
 
   // "My Library" is now the user's favorites, kept in favorite order.
-  const myLibrary = useMemo(() => {
-    const byId = new Map(decks.map((d) => [d.id, d]))
-    return favoriteIds.map((id) => byId.get(id)).filter(Boolean)
-  }, [decks, favoriteIds])
+  const myLibrary = useMemo(
+    () => favoriteIds.map((id) => byId.get(id)).filter(Boolean),
+    [byId, favoriteIds],
+  )
 
   // ─────────── Sign-in gate ───────────
   if (!user) {
@@ -300,6 +529,8 @@ export default function App() {
       const created = await api.createDeck(toCreateRequest(deck))
       const nd = normalizeDeck(created)
       setDecks((prev) => [nd, ...prev])
+      setAdminPage((p) => ({ ...p, ids: [nd.id, ...p.ids], total: p.total + 1 }))
+      refreshStats()
       // Your own uploads go straight into My Library so they're easy to find.
       if (!favSet.has(nd.id)) toggleFavorite(nd)
       setToast({
@@ -319,6 +550,11 @@ export default function App() {
     try {
       await api.deleteDeck(deck.id)
       setDecks((prev) => prev.filter((d) => d.id !== deck.id))
+      // The paged listings hold ids, so they need pruning independently.
+      setPage((p) => ({ ...p, ids: p.ids.filter((id) => id !== deck.id), total: Math.max(0, p.total - 1) }))
+      setAdminPage((p) => ({ ...p, ids: p.ids.filter((id) => id !== deck.id), total: Math.max(0, p.total - 1) }))
+      setTopTenIds((ids) => ids.filter((id) => id !== deck.id))
+      refreshStats()
       setToast({ title: 'Deck removed', message: `"${deck.title}" is gone.` })
     } catch (e) {
       setToast(errorToast(e, { action: 'remove this deck' }))
@@ -338,6 +574,7 @@ export default function App() {
       // Keep an open details panel in sync rather than showing stale fields.
       setDetailsDeck((cur) => (cur && cur.id === nd.id ? nd : cur))
       setEditingDeck(null)
+      refreshStats()
       setToast({ title: 'Deck updated', message: `"${nd.title}" is saved.` })
     } catch (e) {
       // Stay open with the error inline — closing would discard their edits.
@@ -389,7 +626,10 @@ export default function App() {
       : null
     body = (
       <SearchResults
-        decks={filtered(decks)}
+        decks={pageDecks}
+        total={page.total}
+        loading={page.loading}
+        onLoadMore={loadMore}
         onPlay={handlePlay}
         onDetails={handleDetails}
         query={query}
@@ -400,7 +640,10 @@ export default function App() {
     )
   } else if (isIndustries) {
     body = (
-      <IndustriesPage decks={decks} onPickIndustry={(id) => goTo(() => setActiveIndustry(id))} />
+      <IndustriesPage
+        counts={stats?.byIndustry}
+        onPickIndustry={(id) => goTo(() => setActiveIndustry(id))}
+      />
     )
   } else if (isSettings) {
     body = (
@@ -412,7 +655,13 @@ export default function App() {
         onUpdateUser={handleUpdateUser}
         onRemoveUser={handleRemoveUser}
         manageProps={{
-          decks,
+          decks: adminDecks,
+          total: adminPage.total,
+          loading: adminPage.loading,
+          catalogStats: stats,
+          filters: adminFilters,
+          onFiltersChange: setAdminFilters,
+          onLoadMore: loadMoreAdmin,
           canEdit,
           onAddClick: () => setAddOpen(true),
           onPlay: handlePlay,
@@ -423,11 +672,14 @@ export default function App() {
       />
     )
   } else if (showCategory) {
-    const catDecks = activeCategory === 'mine' ? myLibrary : byCategory[activeCategory] || []
+    const isLibrary = activeCategory === 'mine'
     body = (
       <CategoryView
         categoryId={activeCategory}
-        decks={catDecks}
+        decks={isLibrary ? myLibrary : pageDecks}
+        total={isLibrary ? myLibrary.length : page.total}
+        loading={isLibrary ? false : page.loading}
+        onLoadMore={isLibrary ? undefined : loadMore}
         onPlay={handlePlay}
         onDetails={handleDetails}
         onRemove={canEdit ? handleRemove : undefined}
@@ -529,7 +781,7 @@ export default function App() {
           activeIndustry={activeIndustry}
           onIndustryClick={setActiveIndustry}
           allDecks={decks}
-          totalDecks={decks.length}
+          totalDecks={stats?.total ?? decks.length}
           onPickDeck={(deck) => {
             setSearchModalOpen(false)
             setDetailsDeck(deck)
@@ -763,6 +1015,9 @@ function HomeRows({
 
 function SearchResults({
   decks,
+  total,
+  loading = false,
+  onLoadMore,
   onPlay,
   onDetails,
   query,
@@ -829,6 +1084,7 @@ function SearchResults({
             </div>
           ))}
         </div>
+        <LoadMore loaded={decks.length} total={total} loading={loading} onLoadMore={onLoadMore} />
         </>
       )}
     </div>

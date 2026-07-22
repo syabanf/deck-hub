@@ -106,12 +106,17 @@ func (r *DeckRepository) List(ctx context.Context, f domain.DeckFilter) ([]*doma
 		args = append(args, *f.Featured)
 		i++
 	}
+	if len(f.IDs) > 0 {
+		conds = append(conds, fmt.Sprintf("id = ANY($%d)", i))
+		args = append(args, f.IDs)
+		i++
+	}
 
 	q := `SELECT ` + deckColumns + ` FROM decks`
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY created_at DESC"
+	q += " ORDER BY " + orderBy(f.Sort)
 
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT $%d", i)
@@ -190,4 +195,134 @@ func (r *DeckRepository) IncrementViews(ctx context.Context, id uuid.UUID) (*dom
 		return nil, fmt.Errorf("increment deck views: %w", err)
 	}
 	return d, nil
+}
+
+// orderBy maps a validated DeckSort to SQL. The input is a closed set from the
+// domain, so this never interpolates caller-supplied text.
+//
+// Every ordering is tie-broken by id: without it, rows with equal sort keys can
+// come back in a different order between pages, which makes a paginated client
+// skip or repeat rows.
+func orderBy(s domain.DeckSort) string {
+	switch s {
+	case domain.SortOldest:
+		return "created_at ASC, id ASC"
+	case domain.SortMostViews:
+		return "view_count DESC, id ASC"
+	case domain.SortTitle:
+		return "lower(title) ASC, id ASC"
+	default:
+		return "created_at DESC, id DESC"
+	}
+}
+
+// Count returns how many decks match the filter, ignoring limit/offset. It is
+// what lets a client know there are more pages without fetching them.
+func (r *DeckRepository) Count(ctx context.Context, f domain.DeckFilter) (int, error) {
+	var (
+		conds []string
+		args  []any
+		i     = 1
+	)
+
+	if f.Search != "" {
+		conds = append(conds, fmt.Sprintf(
+			"(title ILIKE $%d OR subtitle ILIKE $%d OR author ILIKE $%d OR description ILIKE $%d)",
+			i, i, i, i))
+		args = append(args, "%"+f.Search+"%")
+		i++
+	}
+	if f.Category != "" {
+		conds = append(conds, fmt.Sprintf("category = $%d", i))
+		args = append(args, f.Category)
+		i++
+	}
+	if f.Industry != "" {
+		conds = append(conds, fmt.Sprintf("industry = $%d", i))
+		args = append(args, f.Industry)
+		i++
+	}
+	if f.SourceType != "" {
+		conds = append(conds, fmt.Sprintf("source_type = $%d", i))
+		args = append(args, f.SourceType)
+		i++
+	}
+	if f.Featured != nil {
+		conds = append(conds, fmt.Sprintf("featured = $%d", i))
+		args = append(args, *f.Featured)
+		i++
+	}
+	if len(f.IDs) > 0 {
+		conds = append(conds, fmt.Sprintf("id = ANY($%d)", i))
+		args = append(args, f.IDs)
+		i++
+	}
+
+	q := "SELECT count(*) FROM decks"
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	var n int
+	if err := r.pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count decks: %w", err)
+	}
+	return n, nil
+}
+
+// Stats aggregates the whole catalog in one round trip, so the browse UI can
+// show per-category and per-industry counts without downloading any decks.
+func (r *DeckRepository) Stats(ctx context.Context) (*domain.DeckStats, error) {
+	// One round trip for every aggregate the browse and admin screens need.
+	// 'total' is computed here rather than summed from the category buckets so
+	// decks with no category still count.
+	const q = `
+		SELECT 'category' AS kind, category AS key, count(*) AS n FROM decks GROUP BY category
+		UNION ALL
+		SELECT 'industry', industry, count(*) FROM decks GROUP BY industry
+		UNION ALL
+		SELECT 'total', '', count(*) FROM decks
+		UNION ALL
+		SELECT 'featured', '', count(*) FROM decks WHERE featured
+		UNION ALL
+		SELECT 'views', '', coalesce(sum(view_count), 0) FROM decks`
+
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("query deck stats: %w", err)
+	}
+	defer rows.Close()
+
+	out := &domain.DeckStats{
+		ByCategory: map[string]int{},
+		ByIndustry: map[string]int{},
+	}
+	for rows.Next() {
+		var kind, key string
+		var n int
+		if err := rows.Scan(&kind, &key, &n); err != nil {
+			return nil, fmt.Errorf("scan deck stats: %w", err)
+		}
+		switch kind {
+		case "total":
+			out.Total = n
+		case "featured":
+			out.Featured = n
+		case "views":
+			out.TotalViews = int64(n)
+		case "category":
+			// Untagged decks still count in the total; they just have no bucket.
+			if key != "" {
+				out.ByCategory[key] = n
+			}
+		case "industry":
+			if key != "" {
+				out.ByIndustry[key] = n
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deck stats: %w", err)
+	}
+	return out, nil
 }

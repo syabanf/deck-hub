@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
 import { TrashIcon, PlusIcon, StarIcon, PencilIcon } from '../lib/icons.jsx'
+import LoadMore from './LoadMore.jsx'
 
 const SOURCE_LABELS = {
   pdf: { label: 'PDF', color: '#60a5fa' },
@@ -23,8 +24,18 @@ function StatCard({ label, value, accent }) {
 // Backend-primary catalog admin table. Operates on the live catalog fetched
 // from the API; edits flow back through onEdit → PUT /decks and
 // onRemove → DELETE /decks.
+// The table is server-paged: `decks` is one page of results the API already
+// filtered, and `filters` are controlled by the parent so the query and the
+// fetch can't drift apart. Filtering locally would only ever search the rows
+// that happened to be loaded.
 export default function ManagePage({
   decks = [],
+  total = 0,
+  loading = false,
+  catalogStats,
+  filters,
+  onFiltersChange,
+  onLoadMore,
   canEdit = false,
   onAddClick,
   onPlay,
@@ -33,39 +44,25 @@ export default function ManagePage({
   onRemove,
   embedded = false,
 }) {
-  const [search, setSearch] = useState('')
-  const [filterCategory, setFilterCategory] = useState('all')
-  const [filterIndustry, setFilterIndustry] = useState('all')
-  const [filterSource, setFilterSource] = useState('all')
+  const { search = '', category: filterCategory = 'all', industry: filterIndustry = 'all', source: filterSource = 'all' } = filters || {}
+  const setFilter = (patch) => onFiltersChange?.({ ...filters, ...patch })
+  const setSearch = (v) => setFilter({ search: v })
+  const setFilterCategory = (v) => setFilter({ category: v })
+  const setFilterIndustry = (v) => setFilter({ industry: v })
+  const setFilterSource = (v) => setFilter({ source: v })
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return decks.filter((d) => {
-      if (filterCategory !== 'all' && d.category !== filterCategory) return false
-      if (filterIndustry !== 'all' && d.industry !== filterIndustry) return false
-      const src = d.source?.type || 'url'
-      if (filterSource !== 'all' && src !== filterSource) return false
-      if (!q) return true
-      return (
-        d.title.toLowerCase().includes(q) ||
-        (d.author || '').toLowerCase().includes(q) ||
-        (d.description || '').toLowerCase().includes(q) ||
-        (d.tags || []).some((t) => t.toLowerCase().includes(q))
-      )
-    })
-  }, [decks, search, filterCategory, filterIndustry, filterSource])
+  // Already filtered server-side.
+  const filtered = decks
 
-  const stats = useMemo(() => {
-    const total = decks.length
-    const mine = decks.filter((d) => d.category === 'mine').length
-    const featured = decks.filter((d) => d.featured).length
-    const totalViews = decks.reduce((sum, d) => sum + (d.viewCount || 0), 0)
-    const byCategory = CATEGORIES.reduce((acc, c) => {
-      acc[c.id] = decks.filter((d) => d.category === c.id).length
-      return acc
-    }, {})
-    return { total, mine, featured, byCategory, totalViews }
-  }, [decks])
+  // Catalog-wide totals come from /decks/stats — counting the loaded page would
+  // report the page size, not the catalog.
+  const stats = useMemo(() => ({
+    total: catalogStats?.total ?? 0,
+    mine: catalogStats?.byCategory?.mine ?? 0,
+    featured: catalogStats?.featured ?? 0,
+    totalViews: catalogStats?.totalViews ?? 0,
+    byCategory: catalogStats?.byCategory ?? {},
+  }), [catalogStats])
 
   return (
     <div className={embedded ? '' : 'px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen'}>
@@ -266,6 +263,7 @@ export default function ManagePage({
           </tbody>
         </table>
       </div>
+      <LoadMore loaded={decks.length} total={total} loading={loading} onLoadMore={onLoadMore} />
     </div>
   )
 }

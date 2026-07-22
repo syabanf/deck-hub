@@ -426,15 +426,23 @@ func TestStress(t *testing.T) {
 		})).log(t)
 	})
 
-	// The create phase leaves a large table behind — use it to quantify what an
-	// unbounded list costs versus a paged one. GET /decks applies LIMIT only
-	// when ?limit is passed, so by default it serialises the entire table.
+	// The create phase leaves a large table behind — use it to prove the size of
+	// a response no longer tracks the size of the table.
+	//
+	// This scenario used to show a 500x gap: GET /decks applied LIMIT only when
+	// ?limit was passed, so by default it serialised every row (25 MB at 73k
+	// decks). The usecase now applies a default page size, so an omitted limit
+	// and an explicit one cost the same — a ~1x ratio here is the fix working,
+	// not a missing measurement.
+	//
+	// The guard below is what stops the regression coming back: if someone
+	// removes the default, the no-limit response balloons and this fails.
 	t.Run("5-large-table", func(t *testing.T) {
 		total := countDecks(t)
 		t.Logf("table size: %d decks", total)
 
-		unbounded := run("GET /decks (UNBOUNDED)", concurrency, duration, get("/decks"))
-		unbounded.log(t)
+		noLimit := run("GET /decks (no ?limit)", concurrency, duration, get("/decks"))
+		noLimit.log(t)
 		paged := run("GET /decks?limit=50", concurrency, duration, get("/decks?limit=50"))
 		paged.log(t)
 
@@ -444,8 +452,14 @@ func TestStress(t *testing.T) {
 			}
 			return float64(r.bytes) / float64(r.total) / (1024 * 1024)
 		}
-		t.Logf("→ at %d decks: unbounded %.1f MB/req @ %.0f rps vs paged %.3f MB/req @ %.0f rps (%.0fx throughput)",
-			total, perReqMB(unbounded), unbounded.rps(),
-			perReqMB(paged), paged.rps(), paged.rps()/max(unbounded.rps(), 0.001))
+		t.Logf("→ at %d decks: no-limit %.3f MB/req @ %.0f rps vs limit=50 %.3f MB/req @ %.0f rps",
+			total, perReqMB(noLimit), noLimit.rps(), perReqMB(paged), paged.rps())
+
+		// A page of 50 decks is a few tens of KB whatever the table size. Well
+		// under a megabyte, and nowhere near the 25 MB an unbounded list cost.
+		if mb := perReqMB(noLimit); mb > 1.0 {
+			t.Errorf("GET /decks with no ?limit returned %.1f MB per request at %d decks — "+
+				"the default page size is not being applied", mb, total)
+		}
 	})
 }
