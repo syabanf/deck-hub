@@ -170,36 +170,36 @@ curl -s localhost:8080/healthz
 
 Base URL: `http://localhost:8080`
 
-Error responses use a consistent envelope:
+Full reference — every endpoint, parameter, status code and curl example:
+
+| Document | For |
+| -------- | --- |
+| [`docs/API.md`](docs/API.md) | Reading. Grouped by resource, with runnable examples. |
+| [`docs/openapi.yaml`](docs/openapi.yaml) | Tooling. OpenAPI 3.0 — client generation, Postman/Insomnia import, doc viewers. |
+
+The spec is not on the honour system: `test/docs` walks the chi router and fails
+the build if a mounted route is undocumented, if the spec describes a route that
+no longer exists, or if a `$ref` dangles.
+
+```bash
+make docs
+```
+
+A table of routes used to live here too. It drifted — it was missing
+`/decks/stats` and all of `/favorites` — so it now lives in one place that CI
+keeps honest.
+
+### The two things worth knowing up front
+
+**Errors** use one envelope, so clients branch on `code` rather than parsing prose:
 
 ```json
 { "error": { "code": "not_found", "message": "resource not found: deck ..." } }
 ```
 
-| Method | Path                  | Auth                     | Description                |
-| ------ | --------------------- | ------------------------ | -------------------------- |
-| GET    | `/healthz`            | public                   | Liveness probe             |
-| POST   | `/auth/login`         | public                   | Login → JWT + user         |
-| GET    | `/users`              | public                   | List users (filterable)    |
-| GET    | `/users/{id}`         | public                   | Get a user                 |
-| POST   | `/users`              | **admin**                | Create a user              |
-| PUT    | `/users/{id}`         | **admin**                | Update a user              |
-| DELETE | `/users/{id}`         | **admin**                | Delete a user              |
-| GET    | `/decks`              | public                   | List decks (filterable)    |
-| GET    | `/decks/{id}`         | public                   | Get a deck                 |
-| POST   | `/decks/{id}/views`   | public                   | Increment view count       |
-| POST   | `/decks`              | **admin or editor**      | Create a deck              |
-| PUT    | `/decks/{id}`         | **admin or editor**      | Update a deck              |
-| DELETE | `/decks/{id}`         | **admin or editor**      | Delete a deck              |
-| POST   | `/uploads`            | **admin or editor**      | Upload a file (multipart)  |
-| GET    | `/uploads/{name}`     | public                   | Download an uploaded file  |
-
-Query filters:
-
-- `GET /users?search=&role=&status=&limit=&offset=`
-- `GET /decks?search=&category=&industry=&sourceType=&featured=&limit=&offset=`
-
-User responses **never** include the password hash.
+**`GET /decks` is always paged.** Omitting `limit` applies the default of 50
+instead of returning the catalog; the ceiling is 200. Totals come back in
+`X-Total-Count`, with `X-Limit` and `X-Offset` alongside.
 
 ### Example curl
 
@@ -212,66 +212,6 @@ TOKEN=$(curl -s -X POST localhost:8080/auth/login \
   python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
 echo "$TOKEN"
 ```
-
-List decks (public):
-
-```bash
-curl -s localhost:8080/decks
-curl -s 'localhost:8080/decks?category=technology&featured=true'
-```
-
-Get one deck and bump its view count:
-
-```bash
-curl -s localhost:8080/decks/<deck-id>
-curl -s -X POST localhost:8080/decks/<deck-id>/views
-```
-
-Create a deck (admin/editor):
-
-```bash
-curl -s -X POST localhost:8080/decks \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "title": "Quarterly Strategy",
-    "subtitle": "FY25 plan",
-    "author": "Strategy Team",
-    "year": 2025,
-    "category": "business",
-    "industry": "finance",
-    "tags": ["strategy","planning"],
-    "source": { "type": "gslides", "value": "https://docs.google.com/presentation/d/abc" },
-    "description": "Company-wide strategy overview.",
-    "featured": false
-  }'
-```
-
-Create a user (admin only):
-
-```bash
-curl -s -X POST localhost:8080/users \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Casey Editor","email":"casey@wit.id","password":"editor1234","role":"editor","status":"active"}'
-```
-
-Update a deck (partial; send only changed fields):
-
-```bash
-curl -s -X PUT localhost:8080/decks/<deck-id> \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"featured": true}'
-```
-
-Delete a deck:
-
-```bash
-curl -s -X DELETE localhost:8080/decks/<deck-id> -H "Authorization: Bearer $TOKEN"
-```
-
----
 
 ## File uploads
 
