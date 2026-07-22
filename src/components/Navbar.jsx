@@ -6,6 +6,7 @@ import {
   LogoutIcon,
   BookmarkIcon,
   InfoIcon,
+  PlayIcon,
 } from '../lib/icons.jsx'
 
 const NAV_ITEMS = [
@@ -34,6 +35,7 @@ export default function Navbar({
   onAddClick,
   onSearchClick,
   onOpenTour,
+  onStartDemo,
   activeCategory,
   onCategoryChange,
 }) {
@@ -142,6 +144,7 @@ export default function Navbar({
             onLogout={onLogout}
             onNavigate={onCategoryChange}
             onOpenTour={onOpenTour}
+            onStartDemo={onStartDemo}
           />
         </div>
       </div>
@@ -172,7 +175,7 @@ export default function Navbar({
   )
 }
 
-function AccountMenu({ user, onLogout, onNavigate, onOpenTour }) {
+function AccountMenu({ user, onLogout, onNavigate, onOpenTour, onStartDemo }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -259,6 +262,14 @@ function AccountMenu({ user, onLogout, onNavigate, onOpenTour }) {
               onClick={() => {
                 setOpen(false)
                 onOpenTour?.()
+              }}
+            />
+            <MenuItem
+              icon={<PlayIcon size={14} />}
+              label="How to use — auto demo"
+              onClick={() => {
+                setOpen(false)
+                onStartDemo?.()
               }}
             />
           </div>

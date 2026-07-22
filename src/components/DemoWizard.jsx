@@ -65,7 +65,7 @@ const STEPS = [
   },
 ]
 
-export default function DemoWizard({ onClose }) {
+export default function DemoWizard({ onClose, onStartDemo }) {
   const { closing, requestClose } = useClosable(onClose)
   const [step, setStep] = useState(0)
   const last = STEPS.length - 1
@@ -205,6 +205,16 @@ export default function DemoWizard({ onClose }) {
                 className="flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold text-white/70 hover:text-white hover:bg-white/5 transition-colors"
               >
                 <ChevronLeft size={16} /> Back
+              </button>
+            )}
+            {step === last && onStartDemo && (
+              <button
+                onClick={onStartDemo}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-bold transition-colors"
+                title="Watch the app drive itself"
+              >
+                <PlayIcon size={13} />
+                Watch demo
               </button>
             )}
             <button

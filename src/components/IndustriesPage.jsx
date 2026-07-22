@@ -16,6 +16,7 @@ function IndustryTile({ ind, count, onPick }) {
   return (
     <button
       onClick={() => onPick(ind.id)}
+      data-tour="industry-tile"
       className="group relative aspect-[5/3] rounded-xl overflow-hidden ring-1 ring-deck-border shadow-lg card-tilt text-left"
       style={{
         backgroundImage: `linear-gradient(135deg, ${ind.accent} 0%, ${ind.secondary || ind.accent} 100%)`,

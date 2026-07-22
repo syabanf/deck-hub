@@ -30,6 +30,7 @@ import IndustriesPage from './components/IndustriesPage.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
+import AutoDemo from './components/AutoDemo.jsx'
 
 // Left/right order for swiping between browse sections on touch devices.
 // Settings is intentionally excluded — it's reached by tap, not by swiping.
@@ -73,6 +74,7 @@ export default function App() {
   const [toast, setToast] = useState(null)
   const [activeIndustry, setActiveIndustry] = useState(null)
   const [tourOpen, setTourOpen] = useState(false)
+  const [demoOpen, setDemoOpen] = useState(false)
   // Ordered newest-first; the source of truth for "My Library".
   const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
@@ -397,6 +399,7 @@ export default function App() {
         onAddClick={() => setAddOpen(true)}
         onSearchClick={() => setSearchModalOpen(true)}
         onOpenTour={() => setTourOpen(true)}
+        onStartDemo={() => setDemoOpen(true)}
         activeCategory={activeCategory}
         onCategoryChange={(id) => goTo(() => {
           setActiveCategory(id)
@@ -481,7 +484,18 @@ export default function App() {
         })}
       />
 
-      {tourOpen && <DemoWizard onClose={closeTour} />}
+      {tourOpen && (
+        <DemoWizard
+          onClose={closeTour}
+          onStartDemo={() => {
+            closeTour()
+            setDemoOpen(true)
+          }}
+        />
+      )}
+
+      {/* Self-driving "how to use" tour — clicks through the app itself. */}
+      {demoOpen && <AutoDemo onExit={() => setDemoOpen(false)} />}
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
