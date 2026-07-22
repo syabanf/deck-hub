@@ -52,8 +52,15 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 
 	// Reset the schema so every run starts from the same known state
-	// (000001 also seeds the admin user the tests authenticate with).
-	for _, f := range []string{"000001_init.down.sql", "000001_init.up.sql"} {
+	// (000001 also seeds the admin user the tests authenticate with). Favorites
+	// is dropped first — its FK to decks would otherwise block the reset — and
+	// re-created after, without the catalog/demo seeds from 000002/000003.
+	for _, f := range []string{
+		"000004_favorites.down.sql",
+		"000001_init.down.sql",
+		"000001_init.up.sql",
+		"000004_favorites.up.sql",
+	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
 			os.Exit(1)
@@ -83,6 +90,7 @@ func TestMain(m *testing.M) {
 	// Same wiring as cmd/api/main.go — this is what makes it end-to-end.
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool))
+	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
 
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
@@ -90,6 +98,7 @@ func TestMain(m *testing.M) {
 		Users:     httpdelivery.NewUserHandler(userUC),
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
+		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
 		Tokens:    tokens,
 		UploadDir: store.Dir(),
 	})
@@ -359,6 +368,102 @@ func TestDeckAuthorization(t *testing.T) {
 	t.Run("garbage token is rejected", func(t *testing.T) {
 		status, raw := do(t, http.MethodPost, "/decks", "not-a-real-jwt", newDeckBody("nope"))
 		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+}
+
+func TestFavorites(t *testing.T) {
+	admin := adminToken(t)
+
+	// A deck to favorite.
+	status, raw := do(t, http.MethodPost, "/decks", admin, newDeckBody("Favorite Me"))
+	requireStatus(t, http.StatusCreated, status, raw)
+	var deck deckPayload
+	decode(t, raw, &deck)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+deck.ID, admin, nil) })
+
+	favIDs := func(token string) []string {
+		t.Helper()
+		s, r := do(t, http.MethodGet, "/favorites", token, nil)
+		requireStatus(t, http.StatusOK, s, r)
+		var out struct {
+			DeckIDs []string `json:"deckIds"`
+		}
+		decode(t, r, &out)
+		return out.DeckIDs
+	}
+
+	t.Run("requires auth", func(t *testing.T) {
+		s, r := do(t, http.MethodGet, "/favorites", "", nil)
+		requireStatus(t, http.StatusUnauthorized, s, r)
+	})
+
+	t.Run("add is idempotent and shows up in the list", func(t *testing.T) {
+		if len(favIDs(admin)) != 0 {
+			t.Fatalf("expected no favorites initially")
+		}
+		s, r := do(t, http.MethodPut, "/favorites/"+deck.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, s, r)
+		// Again — must not error or duplicate.
+		s, r = do(t, http.MethodPut, "/favorites/"+deck.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, s, r)
+
+		ids := favIDs(admin)
+		if len(ids) != 1 || ids[0] != deck.ID {
+			t.Fatalf("expected [%s], got %v", deck.ID, ids)
+		}
+	})
+
+	t.Run("favoriting a missing deck is 404", func(t *testing.T) {
+		s, r := do(t, http.MethodPut, "/favorites/00000000-0000-0000-0000-000000000000", admin, nil)
+		requireStatus(t, http.StatusNotFound, s, r)
+	})
+
+	t.Run("favorites are per-user", func(t *testing.T) {
+		// A second user with their own (empty) library.
+		s, r := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "Fav Other", "email": "fav-other@wit.id",
+			"password": "other12345", "role": "viewer", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, s, r)
+		var other struct {
+			ID string `json:"id"`
+		}
+		decode(t, r, &other)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+other.ID, admin, nil) })
+
+		otherToken := login(t, "fav-other@wit.id", "other12345")
+		if len(favIDs(otherToken)) != 0 {
+			t.Fatal("second user should not see the admin's favorites")
+		}
+	})
+
+	t.Run("remove is idempotent", func(t *testing.T) {
+		s, r := do(t, http.MethodDelete, "/favorites/"+deck.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, s, r)
+		s, r = do(t, http.MethodDelete, "/favorites/"+deck.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, s, r)
+		if len(favIDs(admin)) != 0 {
+			t.Fatal("expected empty favorites after removal")
+		}
+	})
+
+	t.Run("deleting a deck cascades its favorites", func(t *testing.T) {
+		// Fresh deck, favorite it, delete it — the favorite should vanish.
+		s, r := do(t, http.MethodPost, "/decks", admin, newDeckBody("Cascade Me"))
+		requireStatus(t, http.StatusCreated, s, r)
+		var d2 deckPayload
+		decode(t, r, &d2)
+
+		s, r = do(t, http.MethodPut, "/favorites/"+d2.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, s, r)
+		s, r = do(t, http.MethodDelete, "/decks/"+d2.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, s, r)
+
+		for _, id := range favIDs(admin) {
+			if id == d2.ID {
+				t.Fatal("favorite survived deck deletion — ON DELETE CASCADE not working")
+			}
+		}
 	})
 }
 

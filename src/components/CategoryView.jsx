@@ -1,6 +1,7 @@
 import Cover from './Cover.jsx'
 import DeckFilters, { useDeckFilters } from './DeckFilters.jsx'
-import { PlayIcon, ChevronDown, TrashIcon } from '../lib/icons.jsx'
+import { useFavorites } from '../lib/favoritesContext.jsx'
+import { PlayIcon, ChevronDown, TrashIcon, BookmarkIcon, BookmarkFilledIcon } from '../lib/icons.jsx'
 
 const HEADERS = {
   'company-profile': {
@@ -35,12 +36,14 @@ const HEADERS = {
   },
   mine: {
     title: 'My Library',
-    description: 'Decks uploaded or linked by the team, served by the WIT API.',
+    description: 'Decks you\'ve saved. Tap the bookmark on any deck to add it here.',
     accent: '#11998e',
   },
 }
 
 function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
+  const { favSet, toggle } = useFavorites()
+  const isFav = favSet.has(deck.id)
   return (
     <div
       className="group relative cursor-pointer"
@@ -60,6 +63,19 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
             title="Open deck"
           >
             <PlayIcon size={15} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              toggle(deck)
+            }}
+            className={`flex items-center justify-center w-8 h-8 rounded-full backdrop-blur border hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out ${
+              isFav ? 'bg-white/20 border-white text-white' : 'bg-black/40 border-white/40 hover:border-white'
+            }`}
+            title={isFav ? 'In My Library' : 'Add to My Library'}
+            aria-label={isFav ? 'In My Library' : 'Add to My Library'}
+          >
+            {isFav ? <BookmarkFilledIcon size={14} /> : <BookmarkIcon size={14} />}
           </button>
           <button
             onClick={(e) => {
@@ -94,8 +110,16 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
         )}
         <div className="text-xs text-deck-muted mt-1 flex items-center gap-1.5 truncate">
           <span className="truncate">{deck.author}</span>
-          <span>·</span>
-          <span className="whitespace-nowrap">{deck.slides?.length || deck.slidesCount || '—'} slides</span>
+          {/* Source-based decks have no slide count — don't render "— slides".
+              Ternary, not &&: a count of 0 would otherwise print a stray "0". */}
+          {deck.slides?.length || deck.slidesCount ? (
+            <>
+              <span>·</span>
+              <span className="whitespace-nowrap">
+                {deck.slides?.length || deck.slidesCount} slides
+              </span>
+            </>
+          ) : null}
         </div>
       </div>
     </div>
@@ -131,7 +155,7 @@ export default function CategoryView({
       </div>
 
       {isEmpty ? (
-        <EmptyState categoryId={categoryId} onAddClick={onAddClick} canEdit={canEdit} />
+        <EmptyState categoryId={categoryId} />
       ) : (
         <>
         <DeckFilters {...controls} />
@@ -156,27 +180,18 @@ export default function CategoryView({
   )
 }
 
-function EmptyState({ categoryId, onAddClick, canEdit }) {
+function EmptyState({ categoryId }) {
   if (categoryId === 'mine') {
     return (
       <div className="text-center py-20 max-w-md mx-auto">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-deck-card flex items-center justify-center text-white/60 text-2xl font-black">
-          +
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-deck-card flex items-center justify-center text-white/50">
+          <BookmarkIcon size={26} />
         </div>
-        <h3 className="text-xl font-bold mb-2">Nothing in My Library yet</h3>
-        <p className="text-deck-muted text-sm mb-6">
-          {canEdit
-            ? 'Upload a PDF or paste a link to a hosted presentation. It joins the shared catalog under “My Library”.'
-            : 'Decks you add appear here. Ask an editor or admin to contribute decks to the catalog.'}
+        <h3 className="text-xl font-bold mb-2">My Library is empty</h3>
+        <p className="text-deck-muted text-sm">
+          Save the decks you'll come back to. Hover any deck and tap the
+          bookmark, or open a deck and use “Add to My Library”.
         </p>
-        {canEdit && (
-          <button
-            onClick={onAddClick}
-            className="px-5 py-2.5 rounded bg-deck-accent hover:bg-deck-accentDim font-semibold text-sm"
-          >
-            Add your first deck
-          </button>
-        )}
       </div>
     )
   }

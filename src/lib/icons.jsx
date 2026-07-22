@@ -15,6 +15,22 @@ const Icon = ({ children, size = 18, className = '', ...rest }) => (
   </svg>
 )
 
+export const PauseIcon = (p) => (
+  <Icon {...p}>
+    <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+    <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+  </Icon>
+)
+export const Replay10Icon = (p) => (
+  <Icon {...p}>
+    <path d="M12 5V2L7 6l5 4V7a6 6 0 11-6 6" />
+  </Icon>
+)
+export const Forward10Icon = (p) => (
+  <Icon {...p}>
+    <path d="M12 5V2l5 4-5 4V7a6 6 0 106 6" />
+  </Icon>
+)
 export const PlayIcon = (p) => (
   <Icon {...p}>
     <path d="M6 4l14 8-14 8V4z" fill="currentColor" stroke="none" />
@@ -111,6 +127,11 @@ export const TrashIcon = (p) => (
 export const BookmarkIcon = (p) => (
   <Icon {...p}>
     <path d="M6 4h12v17l-6-4-6 4V4z" />
+  </Icon>
+)
+export const BookmarkFilledIcon = (p) => (
+  <Icon {...p}>
+    <path d="M6 4h12v17l-6-4-6 4V4z" fill="currentColor" />
   </Icon>
 )
 export const UserIcon = (p) => (

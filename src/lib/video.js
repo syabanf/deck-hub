@@ -43,7 +43,7 @@ export const detectVideo = (url) => {
         platform: 'YouTube',
         color: '#ff0000',
         icon: 'Y',
-        embedUrl: `https://www.youtube.com/embed/${id}?rel=0`,
+        embedUrl: `https://www.youtube.com/embed/${id}?rel=0&enablejsapi=1`,
         thumbnail: `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
       }
     }

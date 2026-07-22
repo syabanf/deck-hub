@@ -12,11 +12,12 @@ import (
 // RouterDeps bundles everything the router needs to wire its routes. Handlers
 // depend on narrow usecase interfaces, not concrete types or repositories.
 type RouterDeps struct {
-	Auth    *AuthHandler
-	Users   *UserHandler
-	Decks   *DeckHandler
-	Uploads *UploadHandler
-	Tokens  *TokenManager
+	Auth      *AuthHandler
+	Users     *UserHandler
+	Decks     *DeckHandler
+	Uploads   *UploadHandler
+	Favorites *FavoriteHandler
+	Tokens    *TokenManager
 
 	// UploadDir is the directory uploaded files are served from. When empty,
 	// the static /uploads/* route is not mounted.
@@ -104,6 +105,17 @@ func NewRouter(d RouterDeps) http.Handler {
 	if d.UploadDir != "" {
 		fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir(d.UploadDir)))
 		r.Get("/uploads/*", fileServer.ServeHTTP)
+	}
+
+	// Favorites ("My Library") — always scoped to the authenticated user, so
+	// every route requires a token but no particular role (viewers can favorite).
+	if d.Favorites != nil {
+		r.Route("/favorites", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Favorites.List)
+			r.Put("/{deckId}", d.Favorites.Add)
+			r.Delete("/{deckId}", d.Favorites.Remove)
+		})
 	}
 
 	return r

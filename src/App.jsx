@@ -9,6 +9,8 @@ import {
   toCreateRequest,
 } from './lib/api.js'
 import { loadHistory, loadAuth, saveAuth, clearAuth } from './lib/storage.js'
+import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
+import { FavoritesProvider } from './lib/favoritesContext.jsx'
 import { withViewTransition } from './lib/viewTransition.js'
 import Navbar from './components/Navbar.jsx'
 import MobileNav from './components/MobileNav.jsx'
@@ -54,9 +56,14 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [toast, setToast] = useState(null)
   const [activeIndustry, setActiveIndustry] = useState(null)
+  // Ordered newest-first; the source of truth for "My Library".
+  const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
   const canEdit = !!user && !user.guest && (user.role === 'admin' || user.role === 'editor')
   const isAdmin = !!user && !user.guest && user.role === 'admin'
+  // Signed-in users persist favorites to the backend; guests use localStorage.
+  const favBackend = !!user && !!user.token
+  const favSet = useMemo(() => new Set(favoriteIds), [favoriteIds])
 
   // Load the catalog + team directory from the backend once signed in.
   const loadData = useCallback(async () => {
@@ -76,6 +83,22 @@ export default function App() {
   useEffect(() => {
     if (user) loadData()
   }, [user, loadData])
+
+  // Pull the signed-in user's favorites from the backend; guests keep whatever
+  // is in localStorage.
+  useEffect(() => {
+    if (!favBackend) return
+    let cancelled = false
+    api
+      .listFavorites()
+      .then((res) => {
+        if (!cancelled) setFavoriteIds(res?.deckIds || [])
+      })
+      .catch(() => {}) // non-fatal; favorites just stay empty
+    return () => {
+      cancelled = true
+    }
+  }, [favBackend, user])
 
   useEffect(() => {
     if (!playing) setHistory(loadHistory())
@@ -108,7 +131,11 @@ export default function App() {
     [decks],
   )
 
-  const myLibrary = useMemo(() => decks.filter((d) => d.category === 'mine'), [decks])
+  // "My Library" is now the user's favorites, kept in favorite order.
+  const myLibrary = useMemo(() => {
+    const byId = new Map(decks.map((d) => [d.id, d]))
+    return favoriteIds.map((id) => byId.get(id)).filter(Boolean)
+  }, [decks, favoriteIds])
 
   // ─────────── Sign-in gate ───────────
   if (!user) {
@@ -158,15 +185,37 @@ export default function App() {
 
   const handleDetails = (deck) => setDetailsDeck(deck)
 
+  // Toggle a deck in "My Library". Optimistic, with a revert on API failure;
+  // guests persist to localStorage instead of the backend.
+  const toggleFavorite = (deck) => {
+    const id = deck.id
+    const wasFav = favSet.has(id)
+    const prev = favoriteIds
+    const next = wasFav ? favoriteIds.filter((x) => x !== id) : [id, ...favoriteIds]
+    setFavoriteIds(next)
+
+    if (favBackend) {
+      const call = wasFav ? api.removeFavorite(id) : api.addFavorite(id)
+      call.catch((e) => {
+        setFavoriteIds(prev) // revert
+        setToast({ title: "Couldn't update My Library", message: e.message })
+      })
+    } else {
+      saveLocalFavorites(next)
+    }
+  }
+
   const handleAdd = async (deck) => {
     setAddOpen(false)
     try {
       const created = await api.createDeck(toCreateRequest(deck))
       const nd = normalizeDeck(created)
       setDecks((prev) => [nd, ...prev])
+      // Your own uploads go straight into My Library so they're easy to find.
+      if (!favSet.has(nd.id)) toggleFavorite(nd)
       setToast({
         title: 'Added to the catalog',
-        message: `"${nd.title}" is live for everyone.`,
+        message: `"${nd.title}" is live and saved to My Library.`,
         actionLabel: 'Open',
         onAction: () => handlePlay(nd),
       })
@@ -293,6 +342,7 @@ export default function App() {
   }
 
   return (
+    <FavoritesProvider value={{ favSet, toggle: toggleFavorite }}>
     <div className="min-h-screen text-white pb-mobile-nav lg:pb-20">
       <Navbar
         user={user}
@@ -328,6 +378,8 @@ export default function App() {
           onClose={() => setDetailsDeck(null)}
           onPlay={handlePlay}
           onRemove={canEdit ? handleRemove : undefined}
+          isFavorite={favSet.has(detailsDeck.id)}
+          onToggleFavorite={() => toggleFavorite(detailsDeck)}
           onSearch={(q) => {
             setActiveCategory('home')
             setQuery(q)
@@ -343,6 +395,10 @@ export default function App() {
         <DeckPlayer
           deck={playing.deck}
           startIndex={playing.startIndex}
+          // Siblings from the same category, so "next deck" stays contextual
+          // rather than jumping across the whole catalog.
+          playlist={decks.filter((d) => d.category === playing.deck.category)}
+          onSelectDeck={(d) => handlePlay(d)}
           onClose={() => setPlaying(null)}
         />
       )}
@@ -379,6 +435,7 @@ export default function App() {
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
+    </FavoritesProvider>
   )
 }
 
@@ -471,7 +528,7 @@ function HomeRows({
       {myLibrary.length > 0 && (
         <Row
           title="My Library"
-          subtitle="Decks added to the catalog"
+          subtitle="Decks you've saved"
           decks={myLibrary}
           onPlay={onPlay}
           onDetails={onDetails}

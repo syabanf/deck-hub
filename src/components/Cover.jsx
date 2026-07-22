@@ -25,6 +25,10 @@ export default function Cover({
   sizeClass = 'text-xs',
   large = false,
   minimal = false,
+  // `hideBadges`: drop the corner badges too, for callers that already show the
+  // category/year themselves (the details modal) or whose own chrome would
+  // collide with them.
+  hideBadges = false,
   onCategoryClick,
 }) {
   const [imgFailed, setImgFailed] = useState(false)
@@ -121,7 +125,11 @@ export default function Cover({
       <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black via-black/70 to-transparent" />
 
       {/* Top badges */}
-      <div className="absolute top-0 inset-x-0 p-3 flex items-start justify-between">
+      <div
+        className={`absolute top-0 inset-x-0 p-3 flex items-start justify-between ${
+          hideBadges ? 'hidden' : ''
+        }`}
+      >
         <div className="flex items-center gap-1.5">
           {deck.featured && (
             <span className="text-[10px] uppercase tracking-widest font-black text-deck-accent bg-black/50 backdrop-blur px-1.5 py-0.5 rounded">

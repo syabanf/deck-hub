@@ -123,6 +123,11 @@ export const api = {
   createUser: (user) => request('/users', { method: 'POST', body: user, auth: true }),
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
+
+  // Favorites ("My Library") — always scoped to the signed-in user.
+  listFavorites: () => request('/favorites', { auth: true }),
+  addFavorite: (deckId) => request(`/favorites/${deckId}`, { method: 'PUT', auth: true }),
+  removeFavorite: (deckId) => request(`/favorites/${deckId}`, { method: 'DELETE', auth: true }),
 }
 
 // ─────────────── Deck shape mapping ───────────────

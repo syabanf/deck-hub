@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import Cover from './Cover.jsx'
+import { useFavorites } from '../lib/favoritesContext.jsx'
 import {
   PlayIcon,
-  PlusIcon,
-  CheckIcon,
+  BookmarkIcon,
+  BookmarkFilledIcon,
   ThumbsUpIcon,
   ChevronDown,
   TrashIcon,
@@ -33,9 +34,10 @@ function CircleBtn({ children, onClick, title, filled = false, active = false })
 
 export default function Card({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
   const [hover, setHover] = useState(false)
-  const [listed, setListed] = useState(false)
   const [liked, setLiked] = useState(false)
   const timer = useRef(null)
+  const { favSet, toggle } = useFavorites()
+  const isFav = favSet.has(deck.id)
 
   // Netflix-style delay before the card expands, so a quick skim doesn't
   // trigger a wall of expanding cards.
@@ -86,11 +88,11 @@ export default function Card({ deck, onPlay, onDetails, onRemove, onCategoryClic
               <PlayIcon size={16} />
             </CircleBtn>
             <CircleBtn
-              title={listed ? 'On your list' : 'Add to My List'}
-              active={listed}
-              onClick={stop(() => setListed((v) => !v))}
+              title={isFav ? 'In My Library' : 'Add to My Library'}
+              active={isFav}
+              onClick={stop(() => toggle(deck))}
             >
-              {listed ? <CheckIcon size={14} /> : <PlusIcon size={14} />}
+              {isFav ? <BookmarkFilledIcon size={14} /> : <BookmarkIcon size={14} />}
             </CircleBtn>
             <CircleBtn
               title="Like"

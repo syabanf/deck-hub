@@ -2,9 +2,25 @@ import { useEffect } from 'react'
 import Slide from './Slide.jsx'
 import Cover from './Cover.jsx'
 import { useClosable } from '../lib/useClosable.js'
-import { PlayIcon, CloseIcon, ClockIcon, TrashIcon } from '../lib/icons.jsx'
+import {
+  PlayIcon,
+  CloseIcon,
+  ClockIcon,
+  TrashIcon,
+  BookmarkIcon,
+  BookmarkFilledIcon,
+} from '../lib/icons.jsx'
 
-export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch, onCategoryNav }) {
+export default function DetailsModal({
+  deck,
+  onClose,
+  onPlay,
+  onRemove,
+  onSearch,
+  onCategoryNav,
+  isFavorite = false,
+  onToggleFavorite,
+}) {
   const { closing, requestClose } = useClosable(onClose)
 
   useEffect(() => {
@@ -49,7 +65,9 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
             {deck.source?.type === 'mock' ? (
               <Slide deck={deck} slide={deck.slides[0]} showFooter={false} />
             ) : (
-              <Cover deck={deck} />
+              // The modal draws its own title, category and year below, so the
+              // cover renders as artwork only — otherwise both stack up.
+              <Cover deck={deck} minimal hideBadges />
             )}
           </div>
           <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-deck-surface via-deck-surface/60 to-transparent pointer-events-none" />
@@ -60,13 +78,29 @@ export default function DetailsModal({ deck, onClose, onPlay, onRemove, onSearch
                 <p className="text-base text-white/80 mt-1 drop-shadow">{deck.subtitle}</p>
               )}
             </div>
-            <button
-              onClick={() => onPlay(deck)}
-              className="flex items-center gap-2 px-5 py-3 bg-white text-black font-bold rounded hover:bg-white/90 play-pulse shadow-lg flex-shrink-0"
-            >
-              <PlayIcon size={20} />
-              Open
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {onToggleFavorite && (
+                <button
+                  onClick={onToggleFavorite}
+                  title={isFavorite ? 'In My Library' : 'Add to My Library'}
+                  aria-label={isFavorite ? 'Remove from My Library' : 'Add to My Library'}
+                  className={`flex items-center justify-center w-12 h-12 rounded-full border-2 backdrop-blur transition-colors ${
+                    isFavorite
+                      ? 'bg-white/20 border-white text-white'
+                      : 'bg-black/40 border-white/60 hover:border-white text-white'
+                  }`}
+                >
+                  {isFavorite ? <BookmarkFilledIcon size={20} /> : <BookmarkIcon size={20} />}
+                </button>
+              )}
+              <button
+                onClick={() => onPlay(deck)}
+                className="flex items-center gap-2 px-5 py-3 bg-white text-black font-bold rounded hover:bg-white/90 play-pulse shadow-lg"
+              >
+                <PlayIcon size={20} />
+                Open
+              </button>
+            </div>
           </div>
         </div>
 
