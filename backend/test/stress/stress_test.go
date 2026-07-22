@@ -102,6 +102,9 @@ func TestMain(m *testing.M) {
 		"000004_favorites.down.sql",
 		"000001_init.down.sql",
 		"000001_init.up.sql",
+		// The perf indexes are part of the schema under test — without them
+		// these numbers would measure an unindexed table, not production.
+		"000005_deck_indexes.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)
