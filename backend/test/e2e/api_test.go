@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -685,4 +686,153 @@ func TestUploadServing_NoTraversal(t *testing.T) {
 			t.Fatal("path traversal escaped the upload directory")
 		}
 	}
+}
+
+// ---------- paging contract ----------
+
+// doHead issues a GET and returns status, body and headers — the paging
+// contract lives in headers, which `do` discards.
+func doHead(t *testing.T, path, token string) (int, []byte, http.Header) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return res.StatusCode, body, res.Header
+}
+
+// TestDeckListPaging pins the behaviour that keeps a large catalog from being
+// serialised in one response, plus the ids= hydration contract.
+func TestDeckListPaging(t *testing.T) {
+	token := adminToken(t)
+
+	// Enough rows to page through, and more than one page worth.
+	const seeded = 60
+	var created []string
+	for i := 0; i < seeded; i++ {
+		status, raw := do(t, http.MethodPost, "/decks", token, newDeckBody(fmt.Sprintf("Paging deck %02d", i)))
+		requireStatus(t, http.StatusCreated, status, raw)
+		var d deckPayload
+		decode(t, raw, &d)
+		created = append(created, d.ID)
+	}
+	t.Cleanup(func() {
+		for _, id := range created {
+			do(t, http.MethodDelete, "/decks/"+id, token, nil)
+		}
+	})
+
+	t.Run("omitting limit applies a default instead of returning everything", func(t *testing.T) {
+		status, raw, h := doHead(t, "/decks", "")
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var decks []deckPayload
+		decode(t, raw, &decks)
+		if len(decks) != 50 {
+			t.Fatalf("expected the 50-row default page, got %d", len(decks))
+		}
+		if got := h.Get("X-Total-Count"); got == "" {
+			t.Fatal("X-Total-Count missing — clients cannot tell more pages exist")
+		}
+		if got := h.Get("X-Limit"); got != "50" {
+			t.Fatalf("X-Limit = %q, want 50", got)
+		}
+	})
+
+	t.Run("limit above the ceiling is clamped, not rejected", func(t *testing.T) {
+		status, raw, h := doHead(t, "/decks?limit=9999", "")
+		requireStatus(t, http.StatusOK, status, raw)
+		if got := h.Get("X-Limit"); got != "200" {
+			t.Fatalf("X-Limit = %q, want the 200 ceiling", got)
+		}
+	})
+
+	t.Run("consecutive pages do not overlap", func(t *testing.T) {
+		_, rawA, _ := doHead(t, "/decks?limit=10&offset=0", "")
+		_, rawB, _ := doHead(t, "/decks?limit=10&offset=10", "")
+
+		var pageA, pageB []deckPayload
+		decode(t, rawA, &pageA)
+		decode(t, rawB, &pageB)
+
+		seen := map[string]bool{}
+		for _, d := range pageA {
+			seen[d.ID] = true
+		}
+		for _, d := range pageB {
+			if seen[d.ID] {
+				t.Fatalf("deck %s appeared on both pages — the sort needs a tiebreak", d.ID)
+			}
+		}
+	})
+
+	t.Run("ids= with no value returns nothing, not the whole catalog", func(t *testing.T) {
+		// A client building `?ids=${ids.join(",")}` from an empty array sends
+		// exactly this. Falling back to a full listing would be silent and wrong.
+		for _, path := range []string{"/decks?ids=", "/decks?ids=,,,"} {
+			status, raw, h := doHead(t, path, "")
+			requireStatus(t, http.StatusOK, status, raw)
+
+			var decks []deckPayload
+			decode(t, raw, &decks)
+			if len(decks) != 0 {
+				t.Errorf("%s returned %d decks, want 0", path, len(decks))
+			}
+			if got := h.Get("X-Total-Count"); got != "0" {
+				t.Errorf("%s: X-Total-Count = %q, want 0", path, got)
+			}
+		}
+	})
+
+	t.Run("ids= hydrates exactly the requested decks", func(t *testing.T) {
+		want := created[:3]
+		status, raw, _ := doHead(t, "/decks?ids="+strings.Join(want, ","), "")
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var decks []deckPayload
+		decode(t, raw, &decks)
+		if len(decks) != len(want) {
+			t.Fatalf("asked for %d ids, got %d decks", len(want), len(decks))
+		}
+		got := map[string]bool{}
+		for _, d := range decks {
+			got[d.ID] = true
+		}
+		for _, id := range want {
+			if !got[id] {
+				t.Errorf("requested deck %s missing from the response", id)
+			}
+		}
+	})
+
+	t.Run("malformed ids are rejected", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks?ids=not-a-uuid", "", nil)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("stats count the catalog, not a page", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks/stats", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var stats struct {
+			Total      int            `json:"total"`
+			ByCategory map[string]int `json:"byCategory"`
+		}
+		decode(t, raw, &stats)
+		if stats.Total < seeded {
+			t.Fatalf("stats.total = %d, expected at least the %d seeded decks", stats.Total, seeded)
+		}
+	})
 }

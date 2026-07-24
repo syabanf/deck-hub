@@ -1,6 +1,30 @@
-const HISTORY_KEY = 'deckflix.history.v1'
-const AUTH_KEY = 'deckflix.auth.v2'
+// All local state is namespaced `wit.` — the product's one name. Two keys
+// predate that and used a `deckflix.` prefix from an earlier iteration.
+const HISTORY_KEY = 'wit.history.v1'
+const AUTH_KEY = 'wit.auth.v2'
 const WIZARD_KEY = 'wit.tour.seen.v1'
+
+// Renaming a storage key silently signs everyone out and drops their
+// continue-watching list, because the old value is still there under the old
+// name and nothing reads it. This copies each one across on first load and
+// removes the original, so the rename is invisible to anyone already signed in.
+const LEGACY_KEYS = [
+  ['deckflix.history.v1', HISTORY_KEY],
+  ['deckflix.auth.v2', AUTH_KEY],
+]
+
+try {
+  for (const [oldKey, newKey] of LEGACY_KEYS) {
+    const legacy = localStorage.getItem(oldKey)
+    if (legacy === null) continue
+    // Never clobber a newer value that already exists under the new name.
+    if (localStorage.getItem(newKey) === null) localStorage.setItem(newKey, legacy)
+    localStorage.removeItem(oldKey)
+  }
+} catch {
+  // Private-browsing modes can throw on localStorage access. A failed
+  // migration just means signing in again — not worth breaking startup over.
+}
 
 const safeParse = (raw, fallback) => {
   try {

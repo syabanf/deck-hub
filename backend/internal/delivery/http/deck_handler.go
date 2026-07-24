@@ -79,8 +79,11 @@ func (h *DeckHandler) List(w http.ResponseWriter, r *http.Request) {
 		b := fv == "true" || fv == "1"
 		filter.Featured = &b
 	}
-	if idsRaw := q.Get("ids"); idsRaw != "" {
-		ids, err := parseUUIDList(idsRaw)
+	// Has, not Get != "": a client building `?ids=${ids.join(",")}` from an empty
+	// array sends `ids=` with no value. Treating that as "filter absent" would
+	// answer "give me these zero decks" with the whole first page.
+	if q.Has("ids") {
+		ids, err := parseUUIDList(q.Get("ids"))
 		if err != nil {
 			writeErrorMsg(w, http.StatusBadRequest, "invalid_input", "ids must be a comma-separated list of deck ids")
 			return
@@ -88,6 +91,8 @@ func (h *DeckHandler) List(w http.ResponseWriter, r *http.Request) {
 		// An explicit empty result beats silently listing the whole catalog.
 		if len(ids) == 0 {
 			w.Header().Set("X-Total-Count", "0")
+			w.Header().Set("X-Limit", strconv.Itoa(clampedLimit(filter.Limit)))
+			w.Header().Set("X-Offset", strconv.Itoa(filter.Offset))
 			writeJSON(w, http.StatusOK, []deckResponse{})
 			return
 		}

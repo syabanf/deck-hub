@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import Slide from './Slide.jsx'
 import Cover from './Cover.jsx'
 import { useClosable } from '../lib/useClosable.js'
 import {
@@ -38,7 +37,6 @@ export default function DetailsModal({
   const estMinutes = Math.max(1, Math.round(totalSlides * 0.4))
 
   // Preview thumbnails: up to 6 first slides (only for mock; PDFs/URLs show cover instead)
-  const previews = deck.source?.type === 'mock' ? (deck.slides || []).slice(0, 6) : null
 
   return (
     <div
@@ -59,16 +57,12 @@ export default function DetailsModal({
           <CloseIcon size={20} />
         </button>
 
-        {/* Hero preview — first real slide for mock decks, cover otherwise */}
+        {/* Hero preview */}
         <div className="relative aspect-[16/8] bg-deck-card overflow-hidden">
           <div className="absolute inset-0 pointer-events-none">
-            {deck.source?.type === 'mock' ? (
-              <Slide deck={deck} slide={deck.slides[0]} showFooter={false} />
-            ) : (
-              // The modal draws its own title, category and year below, so the
-              // cover renders as artwork only — otherwise both stack up.
-              <Cover deck={deck} minimal hideBadges />
-            )}
+            {/* The modal draws its own title, category and year below, so the
+                cover renders as artwork only — otherwise both stack up. */}
+            <Cover deck={deck} minimal hideBadges />
           </div>
           <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-deck-surface via-deck-surface/60 to-transparent pointer-events-none" />
           <div className="absolute z-20 bottom-6 left-6 right-6 flex items-end justify-between gap-4">
@@ -189,7 +183,6 @@ export default function DetailsModal({
           <div className="space-y-2">
             <div className="text-xs uppercase tracking-wider text-deck-muted">Source</div>
             <div className="text-sm">
-              {deck.source?.type === 'mock' && 'Curated catalog'}
               {deck.source?.type === 'pdf' && 'Uploaded PDF'}
               {deck.source?.type === 'video' && (deck.source.platform || 'Video')}
               {deck.source?.type === 'url' && (
@@ -258,24 +251,6 @@ export default function DetailsModal({
           </div>
         )}
 
-        {previews && (
-          <div className="px-6 pb-8">
-            <div className="text-xs uppercase tracking-wider text-deck-muted mb-3">
-              Slide previews
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {previews.map((slide, i) => (
-                <button
-                  key={i}
-                  onClick={() => onPlay(deck, i)}
-                  className="aspect-deck rounded-md overflow-hidden bg-deck-card ring-1 ring-deck-border hover:ring-white/40 transition-all"
-                >
-                  <Slide deck={deck} slide={slide} showFooter={false} />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

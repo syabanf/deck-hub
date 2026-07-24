@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import Slide from './Slide.jsx'
 import { toEmbedUrl } from '../lib/embed.js'
 import {
   loadPdfDocument,
@@ -30,12 +29,6 @@ const openPdf = (source) =>
   source.remote
     ? loadPdfDocumentFromUrl(source.value)
     : loadPdfDocument(base64ToArrayBuffer(source.value))
-
-const MockSlideStage = ({ deck, index }) => (
-  <div className="aspect-[16/9] w-full max-w-[1600px] mx-auto rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10">
-    <Slide deck={deck} slide={deck.slides[index]} sizeClass="text-[2.2vw] sm:text-[1.6vw] lg:text-[1.1vw]" />
-  </div>
-)
 
 const PdfSlideStage = ({ deck, index }) => {
   const canvasRef = useRef(null)
@@ -157,7 +150,9 @@ export default function DeckPlayer({
   const containerRef = useRef(null)
   const mediaRef = useRef(null)
 
-  const sourceType = deck.source?.type || 'mock'
+  // Every persisted deck has a source type; 'url' is the safe fallback for a
+  // malformed one, since it renders in an iframe without dereferencing anything.
+  const sourceType = deck.source?.type || 'url'
 
   // For PDFs, discover page count up front so navigation works.
   useEffect(() => {
@@ -176,12 +171,10 @@ export default function DeckPlayer({
     }
   }, [deck.id, sourceType])
 
-  const totalSlides =
-    sourceType === 'mock' ? deck.slides.length :
-    sourceType === 'pdf' ? (pdfPageCount || deck.slidesCount || 1) :
-    1
+  const totalSlides = sourceType === 'pdf' ? (pdfPageCount || deck.slidesCount || 1) : 1
 
-  const canNavigate = sourceType === 'mock' || sourceType === 'pdf'
+  // Only PDFs page in-app. Cross-origin embeds own their own navigation.
+  const canNavigate = sourceType === 'pdf'
   const goPrev = () => canNavigate && setIndex((i) => Math.max(0, i - 1))
   const goNext = () => canNavigate && setIndex((i) => Math.min(totalSlides - 1, i + 1))
 
@@ -322,7 +315,6 @@ export default function DeckPlayer({
 
       {/* Stage */}
       <div className="flex-1 flex items-center justify-center px-4 sm:px-12 py-16 relative">
-        {sourceType === 'mock' && <MockSlideStage deck={deck} index={index} />}
         {sourceType === 'pdf' && <PdfSlideStage deck={deck} index={index} />}
         {sourceType === 'url' && <UrlStage deck={deck} />}
         {sourceType === 'video' && <VideoStage deck={deck} mediaRef={mediaRef} />}

@@ -1,0 +1,631 @@
+openapi: 3.0.3
+
+# Hand-written, but not on the honour system: test/docs/openapi_test.go walks the
+# chi router and fails if any mounted route is missing here (or documented here
+# but not mounted). Add a route without documenting it and the build goes red.
+
+info:
+  title: WIT API
+  version: "1.0.0"
+  description: |
+    Backend for the WIT deck catalog — a Netflix-style library of presentation
+    decks. Go + PostgreSQL, JSON over HTTP.
+
+    ## Authentication
+
+    `POST /auth/login` returns a JWT (HS256, 24h by default — `JWT_TTL`). Send it
+    as `Authorization: Bearer <token>`.
+
+    Three roles, enforced at the router:
+
+    | Role     | Can do                                    |
+    |----------|-------------------------------------------|
+    | `admin`  | everything, including managing users      |
+    | `editor` | create/update/delete decks, upload files  |
+    | `viewer` | read, and manage their own favourites     |
+
+    Reads on `/decks` and `/users` are public. A 401 on an authenticated call
+    means the token is missing, malformed, or expired.
+
+    ## Errors
+
+    Every failure uses the same envelope, so a client can branch on `code`
+    without parsing prose:
+
+    ```json
+    { "error": { "code": "not_found", "message": "deck not found" } }
+    ```
+
+    Codes: `invalid_input` (400), `unauthorized` (401), `forbidden` (403),
+    `not_found` (404), `conflict` (409), `internal` (500).
+
+    ## Paging
+
+    `GET /decks` is always paged. Omitting `limit` applies the default of 50
+    rather than returning the whole catalog, and the ceiling is 200. The body
+    stays a plain array; paging metadata rides in headers:
+
+    | Header          | Meaning                                  |
+    |-----------------|------------------------------------------|
+    | `X-Total-Count` | rows matching the filter, ignoring paging |
+    | `X-Limit`       | page size actually applied (after clamping) |
+    | `X-Offset`      | offset echoed back                        |
+
+    These are listed in the CORS `Access-Control-Expose-Headers`; a browser
+    hides response headers from JavaScript otherwise.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Auth
+  - name: Decks
+  - name: Users
+  - name: Favorites
+  - name: Uploads
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange credentials for a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: admin@wit.id }
+                password: { type: string, format: password, example: admin1234 }
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: JWT, example: "eyJhbGciOiJIUzI1NiIs..." }
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401":
+          description: |
+            Wrong password, unknown email, or a suspended account. Deliberately
+            indistinguishable — telling them apart would confirm which emails
+            have accounts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /decks:
+    get:
+      tags: [Decks]
+      summary: List decks (paged)
+      security: []
+      description: |
+        Filters combine with AND. `search` matches title, subtitle, author and
+        description, case-insensitively.
+      parameters:
+        - { name: search,     in: query, schema: { type: string }, description: "Substring match across title/subtitle/author/description" }
+        - { name: category,   in: query, schema: { type: string }, example: engineering }
+        - { name: industry,   in: query, schema: { type: string }, example: tech }
+        - { name: sourceType, in: query, schema: { type: string, enum: [pdf, url, video, gslides, embed] } }
+        - { name: featured,   in: query, schema: { type: boolean } }
+        - name: ids
+          in: query
+          schema: { type: string }
+          description: |
+            Comma-separated deck ids, for hydrating a known set (favourites,
+            continue-watching) without listing the catalog. Capped at 200. An
+            `ids` parameter that resolves to nothing returns `[]` rather than
+            falling back to a full listing.
+          example: "0f7c...,3b21..."
+        - name: sort
+          in: query
+          schema: { type: string, enum: [newest, oldest, views, title], default: newest }
+          description: |
+            Every ordering is tie-broken by id. Without that, rows sharing a sort
+            key can reorder between pages and a paging client silently skips or
+            repeats them.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Values above 200 are clamped, not rejected.
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: A page of decks
+          headers:
+            X-Total-Count: { schema: { type: integer }, description: Total matches, ignoring paging }
+            X-Limit:       { schema: { type: integer }, description: Page size actually applied }
+            X-Offset:      { schema: { type: integer } }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Deck" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+    post:
+      tags: [Decks]
+      summary: Create a deck
+      description: Requires `admin` or `editor`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeckInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deck" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /decks/stats:
+    get:
+      tags: [Decks]
+      summary: Catalog-wide aggregates
+      security: []
+      description: |
+        Counts for the browse and admin screens. Exists so a client can show
+        "16 decks in Technology" without downloading any decks.
+      responses:
+        "200":
+          description: Aggregates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:      { type: integer, example: 69 }
+                  featured:   { type: integer, example: 6 }
+                  totalViews: { type: integer, format: int64, example: 13397 }
+                  byCategory:
+                    type: object
+                    additionalProperties: { type: integer }
+                    example: { engineering: 12, design: 11 }
+                  byIndustry:
+                    type: object
+                    additionalProperties: { type: integer }
+                    example: { tech: 16, finance: 8 }
+
+  /decks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Decks]
+      summary: Fetch one deck
+      security: []
+      responses:
+        "200":
+          description: The deck
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deck" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Decks]
+      summary: Update a deck (partial)
+      description: |
+        Requires `admin` or `editor`. Every field is optional — omitted fields
+        are left untouched, so two clients editing different fields don't
+        clobber each other. Sending `source` replaces it wholesale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeckPatch" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deck" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Decks]
+      summary: Delete a deck
+      description: |
+        Requires `admin` or `editor`. Favourite rows referencing the deck are
+        removed with it (`ON DELETE CASCADE`).
+      responses:
+        "204": { description: Deleted }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /decks/{id}/views:
+    post:
+      tags: [Decks]
+      summary: Increment the view counter
+      security: []
+      description: |
+        Public and unauthenticated — view counts are a global signal, not
+        per-user history. Fire-and-forget: clients should not block playback on
+        the response.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The deck, with the new count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deck" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      security: []
+      description: Password hashes are never serialised.
+      responses:
+        "200":
+          description: All users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+    post:
+      tags: [Users]
+      summary: Create a user
+      description: Requires `admin`. There is no public registration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:     { type: string }
+                email:    { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+                role:     { $ref: "#/components/schemas/Role" }
+                status:   { $ref: "#/components/schemas/Status" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Email already registered (compared case-insensitively)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Users]
+      summary: Fetch one user
+      security: []
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Users]
+      summary: Update a user (partial)
+      description: Requires `admin`. Omitted fields are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:     { type: string }
+                email:    { type: string, format: email }
+                password: { type: string, format: password, description: Re-hashed when present }
+                role:     { $ref: "#/components/schemas/Role" }
+                status:   { $ref: "#/components/schemas/Status" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Email already taken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      description: |
+        Requires `admin`. The user's favourite rows go with them
+        (`ON DELETE CASCADE`).
+      responses:
+        "204": { description: Deleted }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /favorites:
+    get:
+      tags: [Favorites]
+      summary: List the caller's favourited deck ids
+      description: |
+        Always scoped to the token's user — there is no way to read someone
+        else's library. Any role may have favourites, including `viewer`.
+        Returns ids only; hydrate them with `GET /decks?ids=`.
+      responses:
+        "200":
+          description: Deck ids, newest favourite first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deckIds:
+                    type: array
+                    items: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /favorites/{deckId}:
+    parameters:
+      - { name: deckId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Favorites]
+      summary: Add a deck to the caller's library
+      description: Idempotent — favouriting twice is not an error.
+      responses:
+        "204": { description: Favourited }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such deck
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [Favorites]
+      summary: Remove a deck from the caller's library
+      description: Idempotent — removing a deck that isn't favourited is not an error.
+      responses:
+        "204": { description: Removed }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /uploads:
+    post:
+      tags: [Uploads]
+      summary: Upload a file
+      description: |
+        Requires `admin` or `editor`. `multipart/form-data` with a single `file`
+        part, capped at 25 MB (`UPLOAD_MAX_BYTES`).
+
+        Allowed extensions: `.pdf .mp4 .webm .mov .m4v .png .jpg .jpeg .gif .webp`.
+
+        The stored filename is a generated UUID plus the extension — the client's
+        filename never becomes part of the path, so it cannot be used to traverse
+        or overwrite. Persist the returned `url` (server-relative) on the deck
+        rather than an absolute one, so stored decks survive an origin change.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:         { type: string, example: /uploads/8f14e45f-ea3b-41d4-a716-446655440000.pdf }
+                  name:        { type: string, description: The client's original filename, echoed for display only }
+                  size:        { type: integer, format: int64 }
+                  contentType: { type: string, example: application/pdf }
+        "400":
+          description: Missing `file` part, or a disallowed extension
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413":
+          description: Larger than the configured cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /uploads/{path}:
+    get:
+      tags: [Uploads]
+      summary: Download an uploaded file
+      security: []
+      description: |
+        Served publicly so decks can reference their own assets without a token.
+        Path traversal is rejected — `/uploads/../../etc/passwd` is a 404.
+      parameters:
+        - { name: path, in: path, required: true, schema: { type: string }, example: 8f14e45f-....pdf }
+      responses:
+        "200":
+          description: The file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { description: No such file }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Role:
+      type: string
+      enum: [admin, editor, viewer]
+      default: viewer
+    Status:
+      type: string
+      enum: [active, invited, suspended]
+      default: active
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum: [invalid_input, unauthorized, forbidden, not_found, conflict, internal]
+            message:
+              type: string
+              description: |
+                Written for developers, not end users. Clients should render
+                their own copy keyed off `code`.
+
+    User:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        name:      { type: string }
+        email:     { type: string, format: email }
+        role:      { $ref: "#/components/schemas/Role" }
+        status:    { $ref: "#/components/schemas/Status" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DeckSource:
+      type: object
+      description: |
+        Where the deck's content lives. `value` is stored verbatim: a YouTube
+        watch URL stays a watch URL, and an uploaded file stays a server-relative
+        `/uploads/...` path. Clients that rewrite it for playback (embed URLs,
+        absolute URLs) must not write the rewritten form back.
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          enum: [pdf, url, video, gslides, embed]
+          description: Not validated as a closed set server-side; these are the values in use.
+        value: { type: string }
+
+    Deck:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        title:       { type: string }
+        subtitle:    { type: string }
+        author:      { type: string }
+        year:        { type: integer }
+        category:    { type: string, description: Category id, e.g. engineering }
+        industry:    { type: string, description: Industry id, e.g. tech }
+        tags:        { type: array, items: { type: string } }
+        source:      { $ref: "#/components/schemas/DeckSource" }
+        description: { type: string }
+        featured:    { type: boolean, description: The newest featured deck is the one the home hero shows }
+        viewCount:   { type: integer }
+        createdAt:   { type: string, format: date-time }
+        updatedAt:   { type: string, format: date-time }
+
+    DeckInput:
+      type: object
+      required: [title, source]
+      properties:
+        title:       { type: string }
+        subtitle:    { type: string }
+        author:      { type: string }
+        year:        { type: integer }
+        category:    { type: string }
+        industry:    { type: string }
+        tags:        { type: array, items: { type: string } }
+        source:      { $ref: "#/components/schemas/DeckSource" }
+        description: { type: string }
+        featured:    { type: boolean }
+
+    DeckPatch:
+      type: object
+      description: All fields optional; omitted fields are left unchanged.
+      properties:
+        title:       { type: string }
+        subtitle:    { type: string }
+        author:      { type: string }
+        year:        { type: integer }
+        category:    { type: string }
+        industry:    { type: string }
+        tags:        { type: array, items: { type: string } }
+        source:      { $ref: "#/components/schemas/DeckSource" }
+        description: { type: string }
+        featured:    { type: boolean }
+
+  responses:
+    InvalidInput:
+      description: Malformed body, bad UUID, or a failed validation rule
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing, malformed, or expired token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated, but the role is not allowed here
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such resource
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+security:
+  - bearerAuth: []

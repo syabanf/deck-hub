@@ -31,7 +31,7 @@ PSQL ?= psql
 
 BINARY := bin/api
 
-.PHONY: help run build tidy test test-e2e stress vet hash migrate-up migrate-down migrate-force seed-dummy unseed-dummy docker-up docker-down
+.PHONY: help run build tidy test test-e2e stress docs vet hash migrate-up migrate-down migrate-force seed-dummy unseed-dummy docker-up docker-down
 
 help: ## Show this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -51,6 +51,9 @@ test: ## Run unit tests (e2e suite skips itself without E2E_DATABASE_URL).
 
 test-e2e: ## Run end-to-end tests against a real DB. WIPES $(E2E_DB_NAME).
 	E2E_DATABASE_URL="$(E2E_DSN)" go test ./test/e2e/... -count=1 -v
+
+docs: ## Check docs/openapi.yaml still matches the mounted routes. No DB needed.
+	go test ./test/docs/... -count=1
 
 stress: ## Load-test the API (throughput + latency percentiles). WIPES $(E2E_DB_NAME).
 	STRESS_DATABASE_URL="$(E2E_DSN)" \

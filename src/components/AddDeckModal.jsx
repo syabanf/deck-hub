@@ -172,7 +172,9 @@ export default function AddDeckModal({ onClose, onAdd }) {
     if (tab === 'video' && videoUrl) {
       return { ...base, slidesCount: 1, source: { type: 'video' } }
     }
-    return { ...base, slidesCount: '—', source: { type: 'mock' } }
+    // Nothing chosen yet. An empty type matches none of Cover's badges, which
+    // is the intent — it used to say 'mock', a leftover from the offline catalog.
+    return { ...base, slidesCount: '—', source: { type: '' } }
   }, [tab, pdfFile, url, videoUrl, title, subtitle, author, year, category, industry, description, tags, paletteIndex, pattern])
 
   const handleVideoFile = async (file) => {

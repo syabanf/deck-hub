@@ -51,7 +51,7 @@ export const detectAttachment = (url) => {
     if (host.includes('figma.com')) {
       return {
         type: 'url',
-        value: `https://www.figma.com/embed?embed_host=deckflix&url=${encodeURIComponent(url)}`,
+        value: `https://www.figma.com/embed?embed_host=wit&url=${encodeURIComponent(url)}`,
         platform: 'Figma',
         color: '#a259ff',
         icon: 'F',
