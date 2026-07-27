@@ -1,0 +1,96 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - public
+      - private
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-wit}
+      DB_PASSWORD: ${DB_PASSWORD:-wit}
+      DB_NAME: ${DB_NAME:-wit}
+      DB_SSLMODE: disable
+      HTTP_PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET:-local-dev-only-change-me}
+      JWT_TTL: ${JWT_TTL:-24h}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - private
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.migrate
+    command:
+      - -path=/migrations
+      - -database=postgres://${DB_USER:-wit}:${DB_PASSWORD:-wit}@db:5432/${DB_NAME:-wit}?sslmode=disable
+      - up
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - private
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-wit}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wit}
+      POSTGRES_DB: ${DB_NAME:-wit}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - private
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  public:
+  private:
+    internal: true
+
+volumes:
+  postgres_data:
+  uploads_data:
