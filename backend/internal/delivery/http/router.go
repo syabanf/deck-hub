@@ -13,6 +13,7 @@ import (
 // depend on narrow usecase interfaces, not concrete types or repositories.
 type RouterDeps struct {
 	Auth      *AuthHandler
+	Register  *RegistrationHandler
 	Users     *UserHandler
 	Decks     *DeckHandler
 	Uploads   *UploadHandler
@@ -59,9 +60,15 @@ func NewRouter(d RouterDeps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Auth (public).
+	// Auth (public). Self-service sign-up is mounted only when a registration
+	// handler is supplied, so a deployment can leave it off entirely.
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/login", d.Auth.Login)
+		if d.Register != nil {
+			r.Post("/register", d.Register.Register)
+			r.Post("/verify", d.Register.Verify)
+			r.Post("/resend-verification", d.Register.Resend)
+		}
 	})
 
 	// Users: reads are public-ish; mutations require admin.

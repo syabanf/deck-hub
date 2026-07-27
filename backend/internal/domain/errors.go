@@ -17,4 +17,10 @@ var (
 	// ErrForbidden indicates the caller is authenticated but lacks permission
 	// for the requested action (HTTP 403).
 	ErrForbidden = errors.New("forbidden")
+
+	// ErrEmailNotVerified is a 401 like a bad password, but a different code:
+	// the credentials were right and the account exists, it just cannot sign in
+	// until the address is proven. Clients turn this into "check your inbox"
+	// with a resend button rather than "wrong password".
+	ErrEmailNotVerified = errors.New("email not verified")
 )

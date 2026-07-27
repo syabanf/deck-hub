@@ -3,8 +3,10 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -19,6 +21,20 @@ type fakeUserRepo struct {
 	byID     map[uuid.UUID]*domain.User
 	byEmail  map[string]*domain.User
 	createErr error
+}
+
+// MarkEmailVerified mirrors the real repository: idempotent, first stamp wins.
+func (f *fakeUserRepo) MarkEmailVerified(_ context.Context, id uuid.UUID, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[id]
+	if !ok {
+		return fmt.Errorf("%w: user %s", domain.ErrNotFound, id)
+	}
+	if u.EmailVerifiedAt == nil {
+		u.EmailVerifiedAt = &at
+	}
+	return nil
 }
 
 func newFakeUserRepo() *fakeUserRepo {

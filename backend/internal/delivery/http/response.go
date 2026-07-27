@@ -53,6 +53,10 @@ func statusForError(err error) (int, string) {
 		return http.StatusConflict, "conflict"
 	case errors.Is(err, domain.ErrInvalidInput):
 		return http.StatusBadRequest, "invalid_input"
+	case errors.Is(err, domain.ErrEmailNotVerified):
+		// Checked before ErrUnauthorized: it is the more specific case, and a
+		// client needs to tell them apart to show the right next step.
+		return http.StatusUnauthorized, "email_not_verified"
 	case errors.Is(err, domain.ErrUnauthorized):
 		return http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, domain.ErrForbidden):

@@ -30,6 +30,11 @@ type Config struct {
 	MaxUploadMB int
 	// CORSOrigins lists the browser origins allowed to call the API.
 	CORSOrigins []string
+
+	// AppBaseURL is the frontend origin. Verification links point at it, so it
+	// must be where the browser can actually reach the app — not the API's own
+	// address.
+	AppBaseURL string
 }
 
 // MaxUploadBytes returns the upload cap in bytes.
@@ -52,6 +57,7 @@ func Load() (*Config, error) {
 		HTTPPort:   getEnv("HTTP_PORT", "8080"),
 		JWTSecret:  getEnv("JWT_SECRET", ""),
 		UploadDir:  getEnv("UPLOAD_DIR", "./uploads"),
+		AppBaseURL: getEnv("APP_BASE_URL", "http://localhost:5173"),
 	}
 
 	// Comma-separated browser origins. Defaults cover the Vite dev server and

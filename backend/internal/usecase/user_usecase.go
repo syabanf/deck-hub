@@ -89,8 +89,14 @@ func (uc *UserUsecase) Create(ctx context.Context, in CreateUserInput) (*domain.
 		Role:         in.Role,
 		Status:       in.Status,
 		PasswordHash: string(hash),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		// Provisioned by an admin, so the address counts as verified: an admin
+		// deciding someone should have an account *is* the check. Leaving this
+		// nil would lock every admin-created user out of a login they were
+		// never told to verify. Self-service sign-up is the path that has to
+		// prove the address — see RegistrationUsecase.
+		EmailVerifiedAt: &now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	if err := uc.repo.Create(ctx, u); err != nil {
@@ -209,6 +215,16 @@ func (uc *UserUsecase) Authenticate(ctx context.Context, email, password string)
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
 		return nil, fmt.Errorf("%w: invalid credentials", domain.ErrUnauthorized)
+	}
+	// Checked after the password, deliberately. Answering "verify your email"
+	// before the password is proven would confirm that an address is registered
+	// to anyone who guesses it.
+	//
+	// A distinct error code, because the fix is completely different from a
+	// wrong password: the client turns this into "check your inbox", with a
+	// resend button.
+	if u.EmailVerifiedAt == nil {
+		return nil, fmt.Errorf("%w: email not verified", domain.ErrEmailNotVerified)
 	}
 	return u, nil
 }

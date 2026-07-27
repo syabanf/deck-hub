@@ -51,8 +51,11 @@ type User struct {
 	Role         Role      `json:"role"`
 	Status       Status    `json:"status"`
 	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	// Nil until the address is proven. Kept separate from Status, which is
+	// admin-managed — suspending an account must not undo its verification.
+	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 // UserFilter narrows a List query. Zero values mean "no filter".
@@ -72,5 +75,6 @@ type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	List(ctx context.Context, f UserFilter) ([]*User, error)
 	Update(ctx context.Context, u *User) error
+	MarkEmailVerified(ctx context.Context, id uuid.UUID, at time.Time) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }

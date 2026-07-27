@@ -1,0 +1,7 @@
+No,Email,Password,Peran,Set,Bisa Tambah/Ubah Deck,Bisa Kelola User
+1,admin@wit.id,admin1234,Admin,Demo,Ya,Ya
+2,editor@wit.id,editor1234,Editor,Demo,Ya,Tidak
+3,viewer@wit.id,viewer1234,Viewer,Demo,Tidak,Tidak
+4,lead-admin@wit.id,wit-admin-1234,Admin,Lead,Ya,Ya
+5,lead-editor@wit.id,wit-editor-1234,Editor,Lead,Ya,Tidak
+6,lead-viewer@wit.id,wit-viewer-1234,Viewer,Lead,Tidak,Tidak

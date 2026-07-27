@@ -62,8 +62,13 @@ func mountedRoutes(t *testing.T) map[string]bool {
 
 	// Handlers over nil dependencies: chi only needs something non-nil to mount,
 	// and no request is ever served here.
+	// Every optional handler must be supplied. Several routes are mounted only
+	// when their handler is non-nil, so a nil here would silently drop them
+	// from the comparison and let an undocumented route pass — which is exactly
+	// what this test exists to prevent.
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
 		Auth:      httpdelivery.NewAuthHandler(nil, nil),
+		Register:  httpdelivery.NewRegistrationHandler(nil, nil),
 		Users:     httpdelivery.NewUserHandler(nil),
 		Decks:     httpdelivery.NewDeckHandler(nil),
 		Uploads:   httpdelivery.NewUploadHandler(nil, 0),

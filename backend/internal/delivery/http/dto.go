@@ -11,24 +11,28 @@ import (
 // userResponse is the public representation of a user. It deliberately omits
 // PasswordHash so the bcrypt hash can never leak into a response.
 type userResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	Status string `json:"status"`
+	// Absent while an address is unproven. Lets the admin list show who is
+	// still pending without a second request.
+	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 func toUserResponse(u *domain.User) userResponse {
 	return userResponse{
-		ID:        u.ID.String(),
-		Name:      u.Name,
-		Email:     u.Email,
-		Role:      string(u.Role),
-		Status:    string(u.Status),
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
+		ID:              u.ID.String(),
+		Name:            u.Name,
+		Email:           u.Email,
+		Role:            string(u.Role),
+		Status:          string(u.Status),
+		EmailVerifiedAt: u.EmailVerifiedAt,
+		CreatedAt:       u.CreatedAt,
+		UpdatedAt:       u.UpdatedAt,
 	}
 }
 

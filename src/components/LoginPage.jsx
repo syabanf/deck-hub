@@ -58,6 +58,13 @@ export default function LoginPage({ onLogin, notice }) {
   const [shake, setShake] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [demoPending, setDemoPending] = useState(null)
+  // Set once registration succeeds — the account exists but cannot sign in yet,
+  // so the form is replaced by "check your inbox" rather than cleared.
+  const [pendingEmail, setPendingEmail] = useState(null)
+  const [resent, setResent] = useState(false)
+  // A failed sign-in on an unverified account: same screen, reached the other
+  // way round, so it offers the same resend.
+  const [needsVerify, setNeedsVerify] = useState(false)
 
   // A blurred "wall of decks" backdrop, like a streaming-service splash screen.
   // Purely decorative — the images are placeholders keyed off a fixed seed list,
@@ -80,6 +87,13 @@ export default function LoginPage({ onLogin, notice }) {
     } catch (err) {
       setSubmitting(false)
       setDemoPending(null)
+      if (err.code === 'email_not_verified') {
+        // Not a credentials problem — the password was right. Offer the inbox,
+        // not another attempt at the form.
+        setNeedsVerify(true)
+        setPendingEmail(emailValue.trim().toLowerCase())
+        return
+      }
       // A wrong password is the user's problem to fix; anything else is ours
       // to explain, so it goes through the same humanizer as the rest of the app.
       fail(
@@ -94,10 +108,24 @@ export default function LoginPage({ onLogin, notice }) {
     e.preventDefault()
     if (submitting) return
 
-    // The backend has no public registration — accounts are provisioned by an
-    // admin. Guide the user to sign in instead.
     if (mode === 'signup') {
-      return fail('New accounts are created by an admin. Ask your admin to add you, then sign in.')
+      if (!name.trim()) return fail('Enter your name.')
+      if (!EMAIL_RE.test(email.trim())) return fail('Enter a valid email address.')
+      if (password.length < 8) return fail('Use at least 8 characters for your password.')
+
+      setError('')
+      setSubmitting(true)
+      try {
+        await api.register(name.trim(), email.trim().toLowerCase(), password)
+        // No token comes back: the account is real but unusable until the
+        // address is verified, so we show the inbox screen instead of signing in.
+        setPendingEmail(email.trim().toLowerCase())
+      } catch (err) {
+        fail(humanizeError(err, { action: 'create your account' }).message)
+      } finally {
+        setSubmitting(false)
+      }
+      return
     }
 
     if (!EMAIL_RE.test(email.trim())) return fail('Enter a valid email address.')
@@ -115,6 +143,25 @@ export default function LoginPage({ onLogin, notice }) {
     await doLogin(account.email, account.password)
   }
 
+  const resendVerification = async () => {
+    if (!pendingEmail) return
+    try {
+      await api.resendVerification(pendingEmail)
+    } catch {
+      // The endpoint answers 204 for every address by design; a transport
+      // hiccup shouldn't contradict that with a scary message.
+    }
+    setResent(true)
+  }
+
+  const backToSignIn = () => {
+    setPendingEmail(null)
+    setNeedsVerify(false)
+    setResent(false)
+    setMode('signin')
+    setPassword('')
+  }
+
   const continueAsGuest = () => {
     if (submitting) return
     setSubmitting(true)
@@ -128,6 +175,64 @@ export default function LoginPage({ onLogin, notice }) {
   const switchMode = (next) => {
     setMode(next)
     setError('')
+  }
+
+  // Registration succeeded, or a sign-in was refused because the address is
+  // unproven. Both land here: the account exists and the only useful next step
+  // is the inbox, so showing the form again would just invite a retry that
+  // cannot work.
+  if (pendingEmail) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center px-6 bg-deck-bg text-white">
+        <div className="w-full max-w-md text-center animate-scale-in">
+          <span className="text-deck-accent font-black text-3xl tracking-tighter">WIT</span>
+
+          <span className="mt-8 mx-auto flex items-center justify-center w-14 h-14 rounded-full bg-deck-accent/15 text-deck-accent">
+            <MailIcon size={26} />
+          </span>
+
+          <h1 className="text-2xl font-black tracking-tight mt-4">
+            {needsVerify ? 'Verify your email to continue' : 'Check your inbox'}
+          </h1>
+          <p className="text-sm text-deck-muted mt-2 leading-relaxed">
+            {needsVerify
+              ? 'That password is right — this account just needs its email confirmed first. We sent a link to'
+              : 'We sent a verification link to'}{' '}
+            <span className="text-white font-semibold">{pendingEmail}</span>. Open it to activate
+            your account.
+          </p>
+
+          <div className="mt-6 rounded-xl bg-white/5 border border-deck-border p-4 text-left">
+            <div className="text-[11px] uppercase tracking-widest font-bold text-deck-muted mb-1">
+              Not there?
+            </div>
+            <p className="text-xs text-white/60 leading-relaxed">
+              Give it a minute, then check spam. The link is good for 24 hours.
+            </p>
+          </div>
+
+          {resent ? (
+            <p className="text-sm text-emerald-400 mt-4 animate-fade-in">
+              Sent — a new link is on its way.
+            </p>
+          ) : (
+            <button
+              onClick={resendVerification}
+              className="mt-4 w-full px-4 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-bold transition-colors"
+            >
+              Resend the link
+            </button>
+          )}
+
+          <button
+            onClick={backToSignIn}
+            className="mt-4 text-sm text-white/60 hover:text-white underline underline-offset-4 transition-colors"
+          >
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
