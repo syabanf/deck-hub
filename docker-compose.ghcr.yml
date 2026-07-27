@@ -1,0 +1,94 @@
+services:
+  frontend:
+    image: ${GHCR_IMAGE_PREFIX:-ghcr.io/syabanf/deck-hub}-frontend:${IMAGE_TAG:-latest}
+    pull_policy: always
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - public
+      - private
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  backend:
+    image: ${GHCR_IMAGE_PREFIX:-ghcr.io/syabanf/deck-hub}-backend:${IMAGE_TAG:-latest}
+    pull_policy: always
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-wit}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      DB_NAME: ${DB_NAME:-wit}
+      DB_SSLMODE: disable
+      HTTP_PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      JWT_TTL: ${JWT_TTL:-24h}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - private
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  migrate:
+    image: ${GHCR_IMAGE_PREFIX:-ghcr.io/syabanf/deck-hub}-backend:${IMAGE_TAG:-latest}
+    pull_policy: always
+    entrypoint: ["/usr/local/bin/migrate"]
+    command:
+      - -path=/app/migrations
+      - -database=postgres://${DB_USER:-wit}:${DB_PASSWORD:?DB_PASSWORD must be set}@db:5432/${DB_NAME:-wit}?sslmode=disable
+      - up
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - private
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-wit}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      POSTGRES_DB: ${DB_NAME:-wit}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - private
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  public:
+  private:
+    internal: true
+
+volumes:
+  postgres_data:
+  uploads_data:

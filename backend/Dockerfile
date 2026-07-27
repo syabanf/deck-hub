@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+FROM migrate/migrate:v4.18.3 AS migrate
+
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 
@@ -19,6 +21,8 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 
 WORKDIR /app
 COPY --from=build --chown=app:app /out/api ./api
+COPY --from=migrate /usr/local/bin/migrate /usr/local/bin/migrate
+COPY --chown=app:app migrations ./migrations
 
 ENV HTTP_PORT=8080 \
     UPLOAD_DIR=/app/uploads
