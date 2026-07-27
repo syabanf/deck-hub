@@ -23,8 +23,12 @@ export const isOffline = () => typeof navigator !== 'undefined' && navigator.onL
 
 // A 401 mid-session means the 24h JWT lapsed — the person is still "signed in"
 // as far as the UI knows, but every request will now fail.
+//
+// email_not_verified is also a 401 but is not an expiry: the account was never
+// usable, and telling someone their session expired would send them to re-login
+// instead of to their inbox.
 export const isSessionExpired = (err) =>
-  err?.code === 'unauthorized' || err?.status === 401
+  err?.code !== 'email_not_verified' && (err?.code === 'unauthorized' || err?.status === 401)
 
 /**
  * humanizeError(err, { action }) → { title, message }
@@ -57,6 +61,16 @@ export function humanizeError(err, { action = 'finish that' } = {}) {
     return {
       title: "Can't reach WIT",
       message: 'The server isn’t responding. It may be restarting — try again in a moment.',
+    }
+  }
+
+  // Right password, real account — the address just isn't proven yet. Handled
+  // before the generic 401 because the fix is completely different: check your
+  // inbox, not check your password.
+  if (code === 'email_not_verified') {
+    return {
+      title: 'Verify your email first',
+      message: 'We sent you a link when you signed up. Open it to activate your account — or have us send another.',
     }
   }
 

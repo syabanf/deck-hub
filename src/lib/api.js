@@ -195,6 +195,18 @@ export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: { email, password } }),
 
+  // Self-service sign-up. Returns the pending user but no token — the account
+  // cannot sign in until the address is verified.
+  register: (name, email, password) =>
+    request('/auth/register', { method: 'POST', body: { name, email, password } }),
+
+  // Redeeming a token also signs the user in, so this returns { token, user }.
+  verifyEmail: (token) =>
+    request('/auth/verify', { method: 'POST', body: { token } }),
+
+  resendVerification: (email) =>
+    request('/auth/resend-verification', { method: 'POST', body: { email } }),
+
   // Every listing is paged. The server applies a default limit even when none
   // is given, so there is no longer a call that can pull the whole catalog.
   listDecks: (params = {}) => {

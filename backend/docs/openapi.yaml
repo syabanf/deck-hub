@@ -36,8 +36,9 @@ info:
     { "error": { "code": "not_found", "message": "deck not found" } }
     ```
 
-    Codes: `invalid_input` (400), `unauthorized` (401), `forbidden` (403),
-    `not_found` (404), `conflict` (409), `internal` (500).
+    Codes: `invalid_input` (400), `unauthorized` (401), `email_not_verified`
+    (401), `forbidden` (403), `not_found` (404), `conflict` (409),
+    `internal` (500).
 
     ## Paging
 
@@ -110,9 +111,135 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401":
           description: |
-            Wrong password, unknown email, or a suspended account. Deliberately
-            indistinguishable — telling them apart would confirm which emails
-            have accounts.
+            Wrong password, unknown email, or a suspended account — deliberately
+            indistinguishable, since telling them apart would confirm which
+            emails have accounts.
+
+            A correct password on an unverified account returns `401` with code
+            `email_not_verified` instead. That is checked *after* the password,
+            so it never reveals whether an address is registered; clients turn
+            it into "check your inbox" with a resend button.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new account
+      security: []
+      description: |
+        Creates an unverified `viewer` and emails a verification link.
+
+        **Role and status are not read from the body.** An unauthenticated caller
+        choosing their own role would be a straight privilege escalation, so a
+        `"role": "admin"` in the request is silently ignored and the account is
+        always created as `viewer`.
+
+        No token is returned: the account cannot sign in until the address is
+        verified, so issuing one here would defeat the point. A duplicate email
+        is a plain `409` — address enumeration is not defensible while
+        `GET /users` is public and lists every address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:     { type: string, example: Ada Lovelace }
+                email:    { type: string, format: email, example: ada@wit.id }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        "201":
+          description: |
+            Account created, verification email sent. Also returned when the
+            account was created but the email failed to send — the account
+            already exists at that point, and failing the request would strand
+            an address nobody can verify. The client offers "resend".
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:    { $ref: "#/components/schemas/User" }
+                  message: { type: string }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/verify:
+    post:
+      tags: [Auth]
+      summary: Redeem a verification token
+      security: []
+      description: |
+        Marks the address proven and signs the user straight in — they have just
+        demonstrated control of the address and chose a password minutes ago, so
+        asking them to retype it adds friction without adding a check.
+
+        Tokens are single-use and expire after 24 hours. Verifying also burns
+        every other outstanding token for that user, so a link from an earlier
+        resend cannot be replayed later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: The value from the `token` query parameter of the emailed link }
+      responses:
+        "200":
+          description: Verified and signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: JWT }
+                  user:  { $ref: "#/components/schemas/User" }
+        "400":
+          description: |
+            Missing, unknown, already-used, or expired token. Expiry is reported
+            distinctly from invalid — an expired link means the account is real
+            and a resend will work, which is worth telling someone.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Send a fresh verification link
+      security: []
+      description: |
+        Always returns `204`, whether or not the address is registered and
+        whether or not it is already verified. Unlike register this takes only
+        an address, so a truthful "no such account" would turn it into an oracle
+        for any address — and unlike register there is no usability cost,
+        because someone who just signed up knows they did.
+
+        Limited to 5 verification emails per account per hour. Each one is
+        outbound mail to an address that may not belong to the requester.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "204": { description: Handled — no information about the address is returned }
+        "400":
+          description: Malformed email, or the hourly resend limit was reached
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -524,7 +651,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_input, unauthorized, forbidden, not_found, conflict, internal]
+              enum: [invalid_input, unauthorized, email_not_verified, forbidden, not_found, conflict, internal]
             message:
               type: string
               description: |
@@ -539,6 +666,14 @@ components:
         email:     { type: string, format: email }
         role:      { $ref: "#/components/schemas/Role" }
         status:    { $ref: "#/components/schemas/Status" }
+        emailVerifiedAt:
+          type: string
+          format: date-time
+          description: |
+            Absent while the address is unproven. A separate axis from `status`:
+            an admin suspending an account must not also destroy its
+            verification. Admin-created users are verified on creation — an
+            admin provisioning an account *is* the check.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/wit/wit-backend/internal/config"
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	logmailer "github.com/wit/wit-backend/internal/mailer/log"
 	"github.com/wit/wit-backend/internal/repository/postgres"
 	"github.com/wit/wit-backend/internal/storage/local"
 	"github.com/wit/wit-backend/internal/usecase"
@@ -51,6 +53,18 @@ func run() error {
 	deckUC := usecase.NewDeckUsecase(deckRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(favoriteRepo)
 
+	// Self-service registration. The log mailer prints the verification link to
+	// this terminal instead of sending mail, so the flow is exercisable without
+	// SMTP credentials; swap in another domain.Mailer to send for real.
+	verifyURL := strings.TrimRight(cfg.AppBaseURL, "/") + "/verify"
+	registrationUC := usecase.NewRegistrationUsecase(
+		userRepo,
+		postgres.NewEmailVerificationRepository(pool),
+		logmailer.New(),
+		verifyURL,
+	)
+	log.Printf("registration open; verification links point at %s", verifyURL)
+
 	// --- Infrastructure: file storage (local disk for now) ---
 	fileStore, err := local.New(cfg.UploadDir, "/uploads")
 	if err != nil {
@@ -62,6 +76,7 @@ func run() error {
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
 		Auth:        httpdelivery.NewAuthHandler(userUC, tokens),
+		Register:    httpdelivery.NewRegistrationHandler(registrationUC, tokens),
 		Users:       httpdelivery.NewUserHandler(userUC),
 		Decks:       httpdelivery.NewDeckHandler(deckUC),
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),

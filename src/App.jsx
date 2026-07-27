@@ -35,6 +35,7 @@ import IndustriesPage from './components/IndustriesPage.jsx'
 import OfflineBanner from './components/OfflineBanner.jsx'
 import LoadMore from './components/LoadMore.jsx'
 import LoginPage from './components/LoginPage.jsx'
+import VerifyPage from './components/VerifyPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
 import AutoDemo from './components/AutoDemo.jsx'
@@ -102,6 +103,13 @@ export default function App() {
   // Survives the sign-out that unmounts the whole signed-in tree (toast included),
   // so the login screen can explain why the person is suddenly back here.
   const [signedOutReason, setSignedOutReason] = useState(null)
+  // The app has no router, so the verification link's path is read straight off
+  // the URL. Held in state so leaving the page doesn't need a reload.
+  const [verifyToken, setVerifyToken] = useState(() =>
+    window.location.pathname === '/verify'
+      ? new URLSearchParams(window.location.search).get('token') || ''
+      : null,
+  )
   // Catalog aggregates (counts per category/industry) come from the server now;
   // they used to be derived by counting a full in-memory catalog.
   const [stats, setStats] = useState(null)
@@ -444,6 +452,28 @@ export default function App() {
   )
 
   // ─────────── Sign-in gate ───────────
+  // Before the login gate: someone arriving from their inbox clicked a link to
+  // finish signing up, not to log in, so a sign-in form would be the wrong page.
+  if (verifyToken !== null) {
+    const leave = () => {
+      // Drop ?token= from the address bar — it is single-use and already spent,
+      // and leaving it there means a refresh reports a failure.
+      window.history.replaceState({}, '', '/')
+      setVerifyToken(null)
+    }
+    return (
+      <VerifyPage
+        token={verifyToken}
+        onVerified={(profile) => {
+          saveAuth(profile)
+          leave()
+          setUser(profile)
+        }}
+        onDone={leave}
+      />
+    )
+  }
+
   if (!user) {
     return (
       <LoginPage
