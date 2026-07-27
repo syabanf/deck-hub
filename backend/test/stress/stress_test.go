@@ -99,12 +99,18 @@ func TestMain(m *testing.M) {
 	// Clean schema, then load it up with a realistic amount of data. Drop
 	// favorites first so a leftover FK from an e2e run can't block the reset.
 	for _, f := range []string{
+		// Anything with a foreign key into users or decks has to go before
+		// 000001 can drop those tables.
+		"000007_email_verification.down.sql",
 		"000004_favorites.down.sql",
 		"000001_init.down.sql",
 		"000001_init.up.sql",
 		// The perf indexes are part of the schema under test — without them
 		// these numbers would measure an unindexed table, not production.
 		"000005_deck_indexes.up.sql",
+		// Re-create what was dropped above. Without this, users has no
+		// email_verified_at column and every authenticated call fails.
+		"000007_email_verification.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)

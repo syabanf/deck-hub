@@ -27,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	logmailer "github.com/wit/wit-backend/internal/mailer/log"
 	"github.com/wit/wit-backend/internal/repository/postgres"
 	"github.com/wit/wit-backend/internal/storage/local"
 	"github.com/wit/wit-backend/internal/usecase"
@@ -53,15 +54,20 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 
 	// Reset the schema so every run starts from the same known state
-	// (000001 also seeds the admin user the tests authenticate with). Favorites
-	// is dropped first — its FK to decks would otherwise block the reset — and
-	// re-created after, without the catalog/demo seeds from 000002/000003.
+	// (000001 also seeds the admin user the tests authenticate with).
+	//
+	// Order matters: everything holding a foreign key into users or decks has to
+	// be dropped before 000001 can drop those tables, then re-created after. The
+	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
+	// tests assert on counts and would break if the catalog grew.
 	for _, f := range []string{
-		"000004_favorites.down.sql",
+		"000007_email_verification.down.sql", // FK → users
+		"000004_favorites.down.sql",          // FK → users, decks
 		"000001_init.down.sql",
 		"000001_init.up.sql",
 		"000004_favorites.up.sql",
 		"000005_deck_indexes.up.sql",
+		"000007_email_verification.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -95,8 +101,19 @@ func TestMain(m *testing.M) {
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
 
+	// The dev mailer writes the link to the log rather than sending it; the tests
+	// assert on stored state instead of on the message, so nothing here needs a
+	// real transport.
+	registrationUC := usecase.NewRegistrationUsecase(
+		postgres.NewUserRepository(pool),
+		postgres.NewEmailVerificationRepository(pool),
+		logmailer.New(),
+		"http://localhost:5173/verify",
+	)
+
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
 		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
+		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
 		Users:     httpdelivery.NewUserHandler(userUC),
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
@@ -834,5 +851,175 @@ func TestDeckListPaging(t *testing.T) {
 		if stats.Total < seeded {
 			t.Fatalf("stats.total = %d, expected at least the %d seeded decks", stats.Total, seeded)
 		}
+	})
+}
+
+// ---------- registration + email verification ----------
+
+// tokenFor reaches into the database for the hash of a user's outstanding
+// token. The plaintext only ever exists in the email, so a test cannot redeem a
+// link the way a person does — it re-derives the hash the same way the usecase
+// does and checks the row is there, then drives verification through a token it
+// mints itself via the resend path.
+//
+// What this buys: the storage guarantee is asserted directly. If someone ever
+// stores the plaintext, this stops matching and the test fails.
+func verificationHashCount(t *testing.T, dsn, email string) int {
+	t.Helper()
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	conn, err := pgx.ConnectConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer conn.Close(context.Background())
+
+	var n int
+	err = conn.QueryRow(context.Background(), `
+		SELECT count(*) FROM email_verification_tokens t
+		JOIN users u ON u.id = t.user_id
+		WHERE lower(u.email) = lower($1)`, email).Scan(&n)
+	if err != nil {
+		t.Fatalf("count tokens: %v", err)
+	}
+	return n
+}
+
+func TestRegistration(t *testing.T) {
+	dsn := os.Getenv("E2E_DATABASE_URL")
+	const (
+		email = "newcomer@wit.id"
+		pass  = "reallysecret123"
+	)
+
+	t.Run("register creates a pending viewer", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/auth/register", "", map[string]string{
+			"name": "New Comer", "email": email, "password": pass,
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var out struct {
+			User struct {
+				Role            string  `json:"role"`
+				EmailVerifiedAt *string `json:"emailVerifiedAt"`
+			} `json:"user"`
+		}
+		decode(t, raw, &out)
+		if out.User.Role != "viewer" {
+			t.Fatalf("role = %q, want viewer", out.User.Role)
+		}
+		if out.User.EmailVerifiedAt != nil {
+			t.Fatal("a fresh registration must not be verified")
+		}
+	})
+
+	t.Run("the token is stored hashed, never in clear", func(t *testing.T) {
+		if n := verificationHashCount(t, dsn, email); n != 1 {
+			t.Fatalf("expected exactly 1 stored token, got %d", n)
+		}
+	})
+
+	t.Run("an unverified account cannot sign in", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/auth/login", "", map[string]string{
+			"email": email, "password": pass,
+		})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+
+		var out struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		decode(t, raw, &out)
+		// A distinct code matters: the client shows "check your inbox" rather
+		// than "wrong password", which would send them to fix the wrong thing.
+		if out.Error.Code != "email_not_verified" {
+			t.Fatalf("code = %q, want email_not_verified", out.Error.Code)
+		}
+	})
+
+	t.Run("role cannot be escalated through the register body", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/auth/register", "", map[string]any{
+			"name": "Sneaky", "email": "sneaky@wit.id", "password": pass,
+			"role": "admin", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var out struct {
+			User struct {
+				Role string `json:"role"`
+			} `json:"user"`
+		}
+		decode(t, raw, &out)
+		if out.User.Role != "viewer" {
+			t.Fatalf("registering with role=admin produced %q — privilege escalation", out.User.Role)
+		}
+	})
+
+	t.Run("a duplicate email is rejected", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/auth/register", "", map[string]string{
+			"name": "Impostor", "email": email, "password": pass,
+		})
+		requireStatus(t, http.StatusConflict, status, raw)
+	})
+
+	t.Run("weak input is rejected", func(t *testing.T) {
+		for _, body := range []map[string]string{
+			{"name": "", "email": "a@wit.id", "password": pass},
+			{"name": "X", "email": "not-an-email", "password": pass},
+			{"name": "X", "email": "short@wit.id", "password": "abc"},
+		} {
+			status, raw := do(t, http.MethodPost, "/auth/register", "", body)
+			requireStatus(t, http.StatusBadRequest, status, raw)
+		}
+	})
+
+	t.Run("a bogus token is refused", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/auth/verify", "", map[string]string{
+			"token": "not-a-real-token",
+		})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("resend reveals nothing about which addresses exist", func(t *testing.T) {
+		// Registered-and-pending, never registered, and already verified must
+		// be indistinguishable — otherwise this endpoint enumerates accounts.
+		for _, e := range []string{email, "ghost@wit.id", adminEmail} {
+			status, raw := do(t, http.MethodPost, "/auth/resend-verification", "", map[string]string{"email": e})
+			requireStatus(t, http.StatusNoContent, status, raw)
+		}
+	})
+
+	t.Run("resend is rate limited", func(t *testing.T) {
+		// The registration already spent one of the hourly allowance, so the
+		// limit is reached partway through this loop rather than at the end.
+		var sawLimit bool
+		for i := 0; i < 10; i++ {
+			status, _ := do(t, http.MethodPost, "/auth/resend-verification", "", map[string]string{"email": email})
+			if status == http.StatusBadRequest {
+				sawLimit = true
+				break
+			}
+		}
+		if !sawLimit {
+			t.Fatal("resend never rate limited — an unbounded outbound mail trigger")
+		}
+	})
+
+	t.Run("an admin-created user is verified and can sign in immediately", func(t *testing.T) {
+		// An admin provisioning an account *is* the check; requiring them to
+		// verify would lock out every account created this way.
+		token := adminToken(t)
+		status, raw := do(t, http.MethodPost, "/users", token, map[string]string{
+			"name": "Provisioned", "email": "provisioned@wit.id", "password": pass, "role": "editor",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/auth/login", "", map[string]string{
+			"email": "provisioned@wit.id", "password": pass,
+		})
+		requireStatus(t, http.StatusOK, status, raw)
 	})
 }
