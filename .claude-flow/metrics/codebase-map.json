@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-07-27T04:46:22.536Z",
+  "projectRoot": "/home/stealth/WORK/github.com/deck-hub",
+  "structure": {
+    "hasPackageJson": true,
+    "hasTsConfig": false,
+    "hasClaudeConfig": true,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1785127582536
+}
