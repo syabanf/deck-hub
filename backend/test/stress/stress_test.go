@@ -101,6 +101,7 @@ func TestMain(m *testing.M) {
 	for _, f := range []string{
 		// Anything with a foreign key into users or decks has to go before
 		// 000001 can drop those tables.
+		"000008_viewing_progress.down.sql",
 		"000007_email_verification.down.sql",
 		"000004_favorites.down.sql",
 		"000001_init.down.sql",
@@ -111,6 +112,7 @@ func TestMain(m *testing.M) {
 		// Re-create what was dropped above. Without this, users has no
 		// email_verified_at column and every authenticated call fails.
 		"000007_email_verification.up.sql",
+		"000008_viewing_progress.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)

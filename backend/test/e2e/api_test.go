@@ -61,6 +61,7 @@ func TestMain(m *testing.M) {
 	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
 	// tests assert on counts and would break if the catalog grew.
 	for _, f := range []string{
+		"000008_viewing_progress.down.sql", // FK → users, decks
 		"000007_email_verification.down.sql", // FK → users
 		"000004_favorites.down.sql",          // FK → users, decks
 		"000001_init.down.sql",
@@ -68,6 +69,7 @@ func TestMain(m *testing.M) {
 		"000004_favorites.up.sql",
 		"000005_deck_indexes.up.sql",
 		"000007_email_verification.up.sql",
+		"000008_viewing_progress.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -99,6 +101,7 @@ func TestMain(m *testing.M) {
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool))
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
+	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
 
 	// The dev mailer writes the link to the log rather than sending it; the tests
@@ -118,6 +121,7 @@ func TestMain(m *testing.M) {
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
+		Progress:  httpdelivery.NewProgressHandler(progressUC),
 		Tokens:    tokens,
 		UploadDir: store.Dir(),
 	})
@@ -1021,5 +1025,149 @@ func TestRegistration(t *testing.T) {
 			"email": "provisioned@wit.id", "password": pass,
 		})
 		requireStatus(t, http.StatusOK, status, raw)
+	})
+}
+
+// ---------- viewing progress ("Continue watching") ----------
+
+func TestViewingProgress(t *testing.T) {
+	token := adminToken(t)
+
+	// A deck to record progress against.
+	status, raw := do(t, http.MethodPost, "/decks", token, newDeckBody("Progress subject"))
+	requireStatus(t, http.StatusCreated, status, raw)
+	var deck deckPayload
+	decode(t, raw, &deck)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+deck.ID, token, nil) })
+
+	type progressItem struct {
+		DeckID       string `json:"deckId"`
+		CurrentSlide int    `json:"currentSlide"`
+		TotalSlides  int    `json:"totalSlides"`
+		ViewedAt     string `json:"viewedAt"`
+	}
+	list := func() []progressItem {
+		t.Helper()
+		status, raw := do(t, http.MethodGet, "/progress", token, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		var out struct {
+			Items []progressItem `json:"items"`
+		}
+		decode(t, raw, &out)
+		return out.Items
+	}
+
+	t.Run("requires a token", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/progress", "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("save then read back", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 3, "totalSlides": 10})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				if it.CurrentSlide != 3 || it.TotalSlides != 10 {
+					t.Fatalf("got slide %d/%d, want 3/10", it.CurrentSlide, it.TotalSlides)
+				}
+				if it.ViewedAt == "" {
+					t.Fatal("viewedAt not stamped server-side")
+				}
+				return
+			}
+		}
+		t.Fatal("saved deck missing from the progress list")
+	})
+
+	t.Run("saving again updates rather than duplicating", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 7, "totalSlides": 10})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		var seen int
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				seen++
+				if it.CurrentSlide != 7 {
+					t.Fatalf("currentSlide = %d, want the updated 7", it.CurrentSlide)
+				}
+			}
+		}
+		if seen != 1 {
+			t.Fatalf("deck appears %d times — the upsert is inserting duplicates", seen)
+		}
+	})
+
+	t.Run("an out-of-range position is clamped, not rejected", func(t *testing.T) {
+		// The player sends this fire-and-forget; rejecting would be invisible.
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 999, "totalSlides": 10})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		for _, it := range list() {
+			if it.DeckID == deck.ID && it.CurrentSlide != 9 {
+				t.Fatalf("currentSlide = %d, want it clamped to 9", it.CurrentSlide)
+			}
+		}
+	})
+
+	t.Run("progress for a missing deck is 404", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/11111111-1111-1111-1111-111111111111",
+			token, map[string]int{"currentSlide": 1, "totalSlides": 2})
+		requireStatus(t, http.StatusNotFound, status, raw)
+	})
+
+	t.Run("progress is private to the user", func(t *testing.T) {
+		// Created here rather than reusing a seeded account: this harness runs
+		// 000001 only, so the demo users from 000003 do not exist.
+		const otherEmail, otherPass = "progress-peer@wit.id", "peerpass123"
+		status, raw := do(t, http.MethodPost, "/users", token, map[string]string{
+			"name": "Progress Peer", "email": otherEmail, "password": otherPass, "role": "viewer",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		other := login(t, otherEmail, otherPass)
+		status, raw = do(t, http.MethodGet, "/progress", other, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var out struct {
+			Items []progressItem `json:"items"`
+		}
+		decode(t, raw, &out)
+		for _, it := range out.Items {
+			if it.DeckID == deck.ID {
+				t.Fatal("one user's progress is visible to another")
+			}
+		}
+	})
+
+	t.Run("delete forgets the row", func(t *testing.T) {
+		status, raw := do(t, http.MethodDelete, "/progress/"+deck.ID, token, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				t.Fatal("row still present after delete")
+			}
+		}
+		// Idempotent.
+		status, raw = do(t, http.MethodDelete, "/progress/"+deck.ID, token, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+	})
+
+	t.Run("deleting the deck cascades its progress", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 1, "totalSlides": 5})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		status, raw = do(t, http.MethodDelete, "/decks/"+deck.ID, token, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				t.Fatal("progress outlived its deck — the FK cascade is missing")
+			}
+		}
 	})
 }

@@ -47,11 +47,13 @@ func run() error {
 	userRepo := postgres.NewUserRepository(pool)
 	deckRepo := postgres.NewDeckRepository(pool)
 	favoriteRepo := postgres.NewFavoriteRepository(pool)
+	progressRepo := postgres.NewProgressRepository(pool)
 
 	// --- Usecases (depend only on domain interfaces) ---
 	userUC := usecase.NewUserUsecase(userRepo)
 	deckUC := usecase.NewDeckUsecase(deckRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(favoriteRepo)
+	progressUC := usecase.NewProgressUsecase(progressRepo)
 
 	// Self-service registration. The log mailer prints the verification link to
 	// this terminal instead of sending mail, so the flow is exercisable without
@@ -81,6 +83,7 @@ func run() error {
 		Decks:       httpdelivery.NewDeckHandler(deckUC),
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
 		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
+		Progress:    httpdelivery.NewProgressHandler(progressUC),
 		Tokens:      tokens,
 		UploadDir:   fileStore.Dir(),
 		CORSOrigins: cfg.CORSOrigins,

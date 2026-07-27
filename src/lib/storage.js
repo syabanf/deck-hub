@@ -36,24 +36,51 @@ const safeParse = (raw, fallback) => {
 }
 
 // ─────────── Viewing history (client-side) ───────────
-// Per-slide resume position powers "Continue watching". The backend tracks a
-// global viewCount per deck, but not per-user progress — that stays local.
+// Per-slide resume position powers "Continue watching".
+//
+// Signed-in users sync it to the backend so the shelf follows the account;
+// guests keep it here only. The local copy is always the render source, with
+// the server treated as the durable store behind it.
 export const loadHistory = () =>
   safeParse(localStorage.getItem(HISTORY_KEY), {})
 
 export const saveHistory = (history) =>
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history))
 
+// Where progress gets written for a signed-in user. Set by App on sign-in so
+// this module stays free of an import cycle back into the api client.
+let remoteRecorder = null
+export const setProgressRecorder = (fn) => {
+  remoteRecorder = fn
+}
+
 export const recordView = (deckId, currentSlide, totalSlides) => {
+  // Always write locally, even when signed in: the local copy is what renders
+  // the shelf on the next paint, and it keeps the row if the request fails.
   const history = loadHistory()
-  const prev = history[deckId] || {}
-  history[deckId] = {
-    deckId,
-    currentSlide,
-    totalSlides,
-    viewedAt: Date.now(),
+  history[deckId] = { deckId, currentSlide, totalSlides, viewedAt: Date.now() }
+  saveHistory(history)
+
+  // Fire-and-forget. Playback must not stall on a progress ping, and a dropped
+  // one only costs a slightly stale resume position.
+  remoteRecorder?.(deckId, currentSlide, totalSlides)
+}
+
+// Replace local history with the account's, on sign-in. Server rows win: they
+// are the ones that followed the user from another device.
+export const mergeRemoteHistory = (items) => {
+  const history = loadHistory()
+  for (const it of items || []) {
+    if (!it?.deckId) continue
+    history[it.deckId] = {
+      deckId: it.deckId,
+      currentSlide: it.currentSlide ?? 0,
+      totalSlides: it.totalSlides ?? 0,
+      viewedAt: it.viewedAt ? Date.parse(it.viewedAt) : Date.now(),
+    }
   }
   saveHistory(history)
+  return history
 }
 
 // ─────────── Auth (real JWT from the Go backend) ───────────

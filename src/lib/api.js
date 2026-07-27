@@ -236,6 +236,11 @@ export const api = {
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
 
+  // Viewing progress ("Continue watching") — private per-user history.
+  listProgress: () => request('/progress', { auth: true }),
+  saveProgress: (deckId, currentSlide, totalSlides) =>
+    request(`/progress/${deckId}`, { method: 'PUT', body: { currentSlide, totalSlides }, auth: true }),
+
   // Favorites ("My Library") — always scoped to the signed-in user.
   listFavorites: () => request('/favorites', { auth: true }),
   addFavorite: (deckId) => request(`/favorites/${deckId}`, { method: 'PUT', auth: true }),

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -62,21 +63,27 @@ func mountedRoutes(t *testing.T) map[string]bool {
 
 	// Handlers over nil dependencies: chi only needs something non-nil to mount,
 	// and no request is ever served here.
-	// Every optional handler must be supplied. Several routes are mounted only
-	// when their handler is non-nil, so a nil here would silently drop them
-	// from the comparison and let an undocumented route pass — which is exactly
-	// what this test exists to prevent.
-	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
+	//
+	// Every handler must be supplied. Several routes are mounted only when their
+	// handler is non-nil, so a nil here silently drops them from the comparison
+	// and lets an undocumented route pass — precisely what this test exists to
+	// prevent. That has now been missed three times, so requireAllHandlersSet
+	// below checks it by reflection instead of by remembering.
+	deps := httpdelivery.RouterDeps{
 		Auth:      httpdelivery.NewAuthHandler(nil, nil),
 		Register:  httpdelivery.NewRegistrationHandler(nil, nil),
 		Users:     httpdelivery.NewUserHandler(nil),
 		Decks:     httpdelivery.NewDeckHandler(nil),
 		Uploads:   httpdelivery.NewUploadHandler(nil, 0),
 		Favorites: httpdelivery.NewFavoriteHandler(nil),
+		Progress:  httpdelivery.NewProgressHandler(nil),
 		Tokens:    httpdelivery.NewTokenManager("test-secret", 0),
 		// Non-empty so the static /uploads/* route is mounted; never read from.
 		UploadDir: t.TempDir(),
-	})
+	}
+	requireAllHandlersSet(t, deps)
+
+	router := httpdelivery.NewRouter(deps)
 
 	mux, ok := router.(chi.Routes)
 	if !ok {
@@ -105,6 +112,28 @@ func mountedRoutes(t *testing.T) map[string]bool {
 		t.Fatalf("walk routes: %v", err)
 	}
 	return found
+}
+
+// requireAllHandlersSet fails if any pointer field of RouterDeps was left nil.
+//
+// Adding a handler to RouterDeps and forgetting it here would mount fewer routes
+// than production does, so this test would compare against an incomplete router
+// and pass while real routes went undocumented. Reflection means a new field is
+// caught the moment it is added, without anyone having to update this file.
+func requireAllHandlersSet(t *testing.T, deps httpdelivery.RouterDeps) {
+	t.Helper()
+
+	v := reflect.ValueOf(deps)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Type().Field(i)
+		if v.Field(i).Kind() != reflect.Ptr {
+			continue // UploadDir, CORSOrigins — not handlers
+		}
+		if v.Field(i).IsNil() {
+			t.Fatalf("RouterDeps.%s is nil in this test: routes guarded by it are not "+
+				"mounted, so undocumented ones would pass unnoticed. Construct it above.", f.Name)
+		}
+	}
 }
 
 // documentedRoutes reads the operations declared under `paths:`.

@@ -12,7 +12,10 @@ import {
 } from './lib/api.js'
 import { errorToast, humanizeError, isSessionExpired } from './lib/errors.js'
 import { useOnline } from './lib/useOnline.js'
-import { loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen } from './lib/storage.js'
+import {
+  loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen,
+  setProgressRecorder, mergeRemoteHistory,
+} from './lib/storage.js'
 import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
 import { FavoritesProvider } from './lib/favoritesContext.jsx'
 import { withViewTransition } from './lib/viewTransition.js'
@@ -220,6 +223,37 @@ export default function App() {
     onRight: () => navigateSection(-1),
     ignore: '.scroll-snap-x, input, textarea, select, [data-no-swipe]',
   })
+
+  // Route progress writes to the backend while signed in. Guests fall through to
+  // localStorage alone, exactly as before.
+  useEffect(() => {
+    if (!favBackend) {
+      setProgressRecorder(null)
+      return
+    }
+    setProgressRecorder((deckId, currentSlide, totalSlides) => {
+      // Non-fatal: the local copy already holds the position, so a failed ping
+      // costs a slightly stale resume point and nothing else.
+      api.saveProgress(deckId, currentSlide, totalSlides).catch(() => {})
+    })
+    return () => setProgressRecorder(null)
+  }, [favBackend, user])
+
+  // Pull the account's "Continue watching" on sign-in, so the shelf follows the
+  // user rather than the browser.
+  useEffect(() => {
+    if (!favBackend) return
+    let cancelled = false
+    api
+      .listProgress()
+      .then((res) => {
+        if (!cancelled) setHistory(mergeRemoteHistory(res?.items || []))
+      })
+      .catch(() => {}) // non-fatal; the local shelf still renders
+    return () => {
+      cancelled = true
+    }
+  }, [favBackend, user])
 
   // Pull the signed-in user's favorites from the backend; guests keep whatever
   // is in localStorage.

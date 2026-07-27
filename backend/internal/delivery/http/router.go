@@ -18,6 +18,7 @@ type RouterDeps struct {
 	Decks     *DeckHandler
 	Uploads   *UploadHandler
 	Favorites *FavoriteHandler
+	Progress  *ProgressHandler
 	Tokens    *TokenManager
 
 	// UploadDir is the directory uploaded files are served from. When empty,
@@ -119,6 +120,17 @@ func NewRouter(d RouterDeps) http.Handler {
 
 	// Favorites ("My Library") — always scoped to the authenticated user, so
 	// every route requires a token but no particular role (viewers can favorite).
+	// Viewing progress ("Continue watching") — private per-user history, so every
+	// route needs a token but no particular role.
+	if d.Progress != nil {
+		r.Route("/progress", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Progress.List)
+			r.Put("/{deckId}", d.Progress.Save)
+			r.Delete("/{deckId}", d.Progress.Delete)
+		})
+	}
+
 	if d.Favorites != nil {
 		r.Route("/favorites", func(r chi.Router) {
 			r.Use(d.Tokens.JWTAuth)

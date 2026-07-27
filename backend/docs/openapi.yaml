@@ -65,6 +65,7 @@ tags:
   - name: Decks
   - name: Users
   - name: Favorites
+  - name: Progress
   - name: Uploads
 
 paths:
@@ -514,6 +515,67 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /progress:
+    get:
+      tags: [Progress]
+      summary: The caller's resume positions ("Continue watching")
+      description: |
+        Private per-user history, always scoped to the token's user. Distinct
+        from `viewCount`, which is a public popularity counter anyone can
+        increment — mixing the two would either leak history into a public
+        number or make that number useless for ranking.
+
+        Capped at the 50 most recent. Returns deck ids only; hydrate them with
+        `GET /decks?ids=`.
+      responses:
+        "200":
+          description: Progress rows, most recently viewed first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ViewingProgress" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /progress/{deckId}:
+    parameters:
+      - { name: deckId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Progress]
+      summary: Record a resume position
+      description: |
+        Upsert. `viewedAt` is stamped server-side — a wrong or hostile client
+        clock would otherwise control the ordering of the shelf.
+
+        Out-of-range positions are clamped rather than rejected: the player
+        sends this fire-and-forget and does not wait on the response, so failing
+        it would be invisible anyway.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentSlide: { type: integer, minimum: 0, description: Zero-based }
+                totalSlides:  { type: integer, minimum: 0 }
+      responses:
+        "204": { description: Recorded }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Progress]
+      summary: Forget a deck's resume position
+      description: Idempotent — removing a deck that was never started is not an error.
+      responses:
+        "204": { description: Removed }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /favorites:
     get:
       tags: [Favorites]
@@ -592,7 +654,7 @@ paths:
                 type: object
                 properties:
                   url:         { type: string, example: /uploads/8f14e45f-ea3b-41d4-a716-446655440000.pdf }
-                  name:        { type: string, description: The client's original filename, echoed for display only }
+                  name:        { type: string, description: "The *stored* filename (the generated UUID plus extension), not the one you uploaded. The client's filename is never persisted." }
                   size:        { type: integer, format: int64 }
                   contentType: { type: string, example: application/pdf }
         "400":
@@ -676,6 +738,14 @@ components:
             admin provisioning an account *is* the check.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+
+    ViewingProgress:
+      type: object
+      properties:
+        deckId:       { type: string, format: uuid }
+        currentSlide: { type: integer, description: Zero-based slide index }
+        totalSlides:  { type: integer, description: What the client believed the deck length was }
+        viewedAt:     { type: string, format: date-time }
 
     DeckSource:
       type: object
