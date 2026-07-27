@@ -30,6 +30,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_TTL: ${JWT_TTL:-24h}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set}
       UPLOAD_DIR: /app/uploads
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
     volumes:
