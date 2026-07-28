@@ -73,6 +73,13 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			"unsupported file type: "+ext)
 		return
 	}
+	// A zero-byte upload is always a mistake — a truncated transfer or an empty
+	// file picked by accident. Accepting it produces a deck that can never
+	// render, and the failure would only surface later at playback.
+	if header.Size == 0 {
+		writeErrorMsg(w, http.StatusBadRequest, "invalid_input", "the uploaded file is empty")
+		return
+	}
 	if header.Size > h.maxBytes {
 		writeErrorMsg(w, http.StatusRequestEntityTooLarge, "invalid_input",
 			"file exceeds the maximum upload size")

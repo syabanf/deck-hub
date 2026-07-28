@@ -115,7 +115,15 @@ func NewRouter(d RouterDeps) http.Handler {
 	}
 	if d.UploadDir != "" {
 		fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir(d.UploadDir)))
-		r.Get("/uploads/*", fileServer.ServeHTTP)
+		r.Get("/uploads/*", func(w http.ResponseWriter, r *http.Request) {
+			// Uploads are attacker-supplied bytes served from the API's own
+			// origin. Content-Type is derived from the extension, so a file
+			// named .pdf holding HTML is already labelled application/pdf —
+			// but without nosniff a browser may ignore that label, sniff the
+			// HTML and execute its scripts against this origin.
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			fileServer.ServeHTTP(w, r)
+		})
 	}
 
 	// Favorites ("My Library") — always scoped to the authenticated user, so

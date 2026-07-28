@@ -72,6 +72,19 @@ func (r *DeckRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Dec
 	return d, nil
 }
 
+// escapeLike makes a user's search string literal.
+//
+// % and _ are ILIKE wildcards, so a search for "50%" or "a_b" would otherwise
+// match far more than the person typed — searching for "%" alone matched the
+// entire catalog. Backslash is escaped first, or it would corrupt the escapes
+// added after it.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	s = strings.ReplaceAll(s, "_", `\_`)
+	return s
+}
+
 func (r *DeckRepository) List(ctx context.Context, f domain.DeckFilter) ([]*domain.Deck, error) {
 	var (
 		conds []string
@@ -83,7 +96,7 @@ func (r *DeckRepository) List(ctx context.Context, f domain.DeckFilter) ([]*doma
 		conds = append(conds, fmt.Sprintf(
 			"(title ILIKE $%d OR subtitle ILIKE $%d OR author ILIKE $%d OR description ILIKE $%d)",
 			i, i, i, i))
-		args = append(args, "%"+f.Search+"%")
+		args = append(args, "%"+escapeLike(f.Search)+"%")
 		i++
 	}
 	if f.Category != "" {
@@ -229,7 +242,7 @@ func (r *DeckRepository) Count(ctx context.Context, f domain.DeckFilter) (int, e
 		conds = append(conds, fmt.Sprintf(
 			"(title ILIKE $%d OR subtitle ILIKE $%d OR author ILIKE $%d OR description ILIKE $%d)",
 			i, i, i, i))
-		args = append(args, "%"+f.Search+"%")
+		args = append(args, "%"+escapeLike(f.Search)+"%")
 		i++
 	}
 	if f.Category != "" {

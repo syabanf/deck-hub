@@ -18,6 +18,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1168,6 +1169,141 @@ func TestViewingProgress(t *testing.T) {
 			if it.DeckID == deck.ID {
 				t.Fatal("progress outlived its deck — the FK cascade is missing")
 			}
+		}
+	})
+}
+
+// ---------- hardening found by adversarial probing ----------
+
+func TestSearchTreatsWildcardsLiterally(t *testing.T) {
+	token := adminToken(t)
+
+	// Two decks: one with a literal % in the title, one without.
+	for _, title := range []string{"Discount 50% Off", "Plain Title"} {
+		status, raw := do(t, http.MethodPost, "/decks", token, newDeckBody(title))
+		requireStatus(t, http.StatusCreated, status, raw)
+		var d deckPayload
+		decode(t, raw, &d)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+d.ID, token, nil) })
+	}
+
+	search := func(q string) []deckPayload {
+		t.Helper()
+		status, raw := do(t, http.MethodGet, "/decks?search="+url.QueryEscape(q), "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		var out []deckPayload
+		decode(t, raw, &out)
+		return out
+	}
+
+	t.Run("a bare percent is not a wildcard", func(t *testing.T) {
+		// It used to return the whole catalog.
+		got := search("%")
+		for _, d := range got {
+			if !strings.Contains(d.Title, "%") {
+				t.Fatalf("searching %% returned %q, which contains no %% — the wildcard leaks", d.Title)
+			}
+		}
+	})
+
+	t.Run("a percent inside a phrase still matches literally", func(t *testing.T) {
+		got := search("50%")
+		var found bool
+		for _, d := range got {
+			if d.Title == "Discount 50% Off" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal(`searching "50%" did not find "Discount 50% Off"`)
+		}
+	})
+
+	t.Run("an underscore is not a single-character wildcard", func(t *testing.T) {
+		// "P_ain" would match "Plain" if _ were still a wildcard.
+		for _, d := range search("P_ain") {
+			if d.Title == "Plain Title" {
+				t.Fatal("underscore is still behaving as a wildcard")
+			}
+		}
+	})
+}
+
+func TestUploadHardening(t *testing.T) {
+	token := adminToken(t)
+
+	upload := func(t *testing.T, name string, body []byte) (int, []byte) {
+		t.Helper()
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, err := mw.CreateFormFile("file", name)
+		if err != nil {
+			t.Fatalf("form file: %v", err)
+		}
+		if _, err := fw.Write(body); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		mw.Close()
+
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/uploads", &buf)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		return res.StatusCode, raw
+	}
+
+	t.Run("an empty file is rejected", func(t *testing.T) {
+		// Accepting it produces a deck that can never render, and the failure
+		// would only surface later at playback.
+		status, raw := upload(t, "empty.pdf", nil)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("stored files are served with nosniff", func(t *testing.T) {
+		// The extension decides Content-Type, so a .pdf holding HTML is already
+		// labelled application/pdf — but without nosniff a browser may ignore
+		// that, sniff the HTML, and run its scripts against the API's origin.
+		status, raw := upload(t, "sniff.pdf", []byte("<html><script>alert(1)</script></html>"))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var out struct {
+			URL string `json:"url"`
+		}
+		decode(t, raw, &out)
+
+		res, err := http.Get(srv.URL + out.URL)
+		if err != nil {
+			t.Fatalf("fetch upload: %v", err)
+		}
+		defer res.Body.Close()
+
+		if got := res.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+		}
+		if ct := res.Header.Get("Content-Type"); strings.Contains(ct, "text/html") {
+			t.Errorf("Content-Type = %q — HTML would execute on this origin", ct)
+		}
+	})
+
+	t.Run("the client filename cannot escape the upload directory", func(t *testing.T) {
+		status, raw := upload(t, "../../evil.pdf", []byte("%PDF-1.4 test"))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var out struct {
+			URL string `json:"url"`
+		}
+		decode(t, raw, &out)
+		if strings.Contains(out.URL, "..") {
+			t.Fatalf("stored path %q still contains a traversal segment", out.URL)
 		}
 	})
 }
