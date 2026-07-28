@@ -19,6 +19,7 @@ type RouterDeps struct {
 	Uploads   *UploadHandler
 	Favorites *FavoriteHandler
 	Progress  *ProgressHandler
+	Docs      *DocsHandler
 	Tokens    *TokenManager
 
 	// UploadDir is the directory uploaded files are served from. When empty,
@@ -60,6 +61,13 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	// API reference. Public: it documents an API whose reads are public anyway,
+	// and a reference nobody can open is a reference nobody uses.
+	if d.Docs != nil {
+		r.Get("/docs", d.Docs.Page)
+		r.Get("/openapi.yaml", d.Docs.Spec)
+	}
 
 	// Auth (public). Self-service sign-up is mounted only when a registration
 	// handler is supplied, so a deployment can leave it off entirely.

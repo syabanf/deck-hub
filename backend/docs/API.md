@@ -8,6 +8,12 @@ Quick reference with runnable examples. The authoritative contract is
 make docs        # verify the spec matches the mounted routes
 ```
 
+**Browsable version:** the running API serves it at
+[`/docs`](http://localhost:8080/docs), with the raw contract at
+[`/openapi.yaml`](http://localhost:8080/openapi.yaml) for client generators and
+Postman/Insomnia imports. Both are compiled into the binary, so they always
+describe the server you are talking to.
+
 Base URL in development: `http://localhost:8080`.
 
 ## Contents

@@ -84,6 +84,7 @@ func run() error {
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
 		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:    httpdelivery.NewProgressHandler(progressUC),
+		Docs:        httpdelivery.NewDocsHandler(),
 		Tokens:      tokens,
 		UploadDir:   fileStore.Dir(),
 		CORSOrigins: cfg.CORSOrigins,

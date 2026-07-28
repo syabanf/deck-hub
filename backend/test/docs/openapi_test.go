@@ -77,6 +77,7 @@ func mountedRoutes(t *testing.T) map[string]bool {
 		Uploads:   httpdelivery.NewUploadHandler(nil, 0),
 		Favorites: httpdelivery.NewFavoriteHandler(nil),
 		Progress:  httpdelivery.NewProgressHandler(nil),
+		Docs:      httpdelivery.NewDocsHandler(),
 		Tokens:    httpdelivery.NewTokenManager("test-secret", 0),
 		// Non-empty so the static /uploads/* route is mounted; never read from.
 		UploadDir: t.TempDir(),

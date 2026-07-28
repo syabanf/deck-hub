@@ -174,6 +174,7 @@ Full reference — every endpoint, parameter, status code and curl example:
 
 | Document | For |
 | -------- | --- |
+| **`/docs`** on the running API | Browsing. Rendered reference — start the server and open <http://localhost:8080/docs>. |
 | [`docs/API.md`](docs/API.md) | Reading. Grouped by resource, with runnable examples. |
 | [`docs/openapi.yaml`](docs/openapi.yaml) | Tooling. OpenAPI 3.0 — client generation, Postman/Insomnia import, doc viewers. |
 

@@ -60,6 +60,7 @@ servers:
     description: Local development
 
 tags:
+  - name: Reference
   - name: Health
   - name: Auth
   - name: Decks
@@ -83,6 +84,38 @@ paths:
                 type: object
                 properties:
                   status: { type: string, example: ok }
+
+  /docs:
+    get:
+      tags: [Reference]
+      summary: Browsable API reference
+      security: []
+      description: |
+        Renders this specification as a documentation page. Public, because it
+        documents an API whose reads are public anyway — and a reference nobody
+        can open is a reference nobody uses.
+      responses:
+        "200":
+          description: The reference page
+          content:
+            text/html:
+              schema: { type: string }
+
+  /openapi.yaml:
+    get:
+      tags: [Reference]
+      summary: This specification, raw
+      security: []
+      description: |
+        The contract itself, for client generators and Postman/Insomnia imports.
+        Compiled into the binary, so it always describes the server serving it
+        rather than whatever happens to be on disk.
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema: { type: string }
 
   /auth/login:
     post:
