@@ -3,3 +3,13 @@ dist
 .DS_Store
 *.log
 .vite
+
+# Local environment. Only the .example templates are committed — a real .env
+# holds secrets, and the root one was unprotected until now.
+.env
+.env.*
+!.env.example
+
+# Conflict copies a file-sync service drops into the tree on its own. The Go
+# ones redeclare their package's types and break the build.
+* [0-9].*

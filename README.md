@@ -35,7 +35,7 @@ You need **Go 1.21+**, **Node 18+**, and **PostgreSQL 16+** (or Docker).
 # 1. Database
 cd backend && make docker-up          # or use your own Postgres
 
-# 2. Config — JWT_SECRET is required, the server refuses to start without it
+# 2. Config — every variable is pre-filled; only JWT_SECRET needs a real value
 cp .env.example .env && $EDITOR .env
 
 # 3. Schema + seed data
@@ -47,8 +47,40 @@ make run
 
 ```bash
 # 5. Frontend on :5173, in another terminal
+cp .env.example .env          # VITE_API_URL, pointing at the API above
 npm install && npm run dev
 ```
+
+### Environment variables
+
+Both `.env.example` files carry every variable the code reads, pre-filled with
+the default it already applies — copy, and only `JWT_SECRET` needs changing.
+The real `.env` files are gitignored; only the templates are committed.
+
+**Backend** — [`backend/.env.example`](backend/.env.example)
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `DB_HOST` `DB_PORT` | `localhost` `5432` | |
+| `DB_USER` `DB_PASSWORD` `DB_NAME` | `wit` `wit` `wit` | |
+| `DB_SSLMODE` | `disable` | `require` in production |
+| `HTTP_PORT` | `8080` | |
+| `JWT_SECRET` | — | **Required.** The server exits without it. `openssl rand -base64 48` |
+| `JWT_TTL` | `24h` | Go duration. Longer means a stolen token works longer |
+| `CORS_ORIGINS` | dev + preview origins | A wrong value fails silently in the browser, not the log |
+| `APP_BASE_URL` | `http://localhost:5173` | Where verification emails point — **not** the API's own address |
+| `UPLOAD_DIR` | `./uploads` | Not disposable; mount a volume |
+| `MAX_UPLOAD_MB` | `25` | Larger uploads get a 413 |
+
+**Frontend** — [`.env.example`](.env.example)
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `VITE_API_URL` | `http://localhost:8080` | Baked in at **build** time. `/api` in production |
+
+Only `VITE_`-prefixed variables reach the browser, and everything carrying that
+prefix is compiled into a public bundle — never put a secret in the frontend
+`.env`.
 
 Open <http://localhost:5173> and sign in with any account below. The API
 reference is at <http://localhost:8080/docs>.
