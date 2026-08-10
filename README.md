@@ -98,6 +98,11 @@ these published passwords, two of them admins. Bring them back for local work:
 cd backend && make seed-demo
 ```
 
+The target also marks them verified. Migrations `000003`/`000006` predate
+`000007`, so a plain re-insert leaves `email_verified_at` empty and every
+account is refused at login — and nobody can click a verification link for an
+address that only exists in a seed.
+
 | Email | Password | Role |
 | --- | --- | --- |
 | `admin@wit.id` | `admin1234` | Admin |

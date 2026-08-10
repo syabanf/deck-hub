@@ -82,6 +82,13 @@ seed-demo: ## Re-insert the demo accounts (editor/viewer/lead-*). LOCAL DEVELOPM
 	@echo "Seeding demo accounts into $(DB_NAME) — never run this against production."
 	$(PSQL) "$(DB_DSN)" -f migrations/000003_seed_demo_accounts.up.sql
 	$(PSQL) "$(DB_DSN)" -f migrations/000006_seed_team_accounts.up.sql
+	@# Those migrations predate 000007, so they leave email_verified_at NULL and
+	@# every seeded account is refused at login as unverified. Nobody can click a
+	@# link for an address that does not exist, so mark them proven here.
+	$(PSQL) "$(DB_DSN)" -c "UPDATE users SET email_verified_at = now() \
+	  WHERE email_verified_at IS NULL \
+	    AND lower(email) IN ('editor@wit.id','viewer@wit.id','lead-admin@wit.id','lead-editor@wit.id','lead-viewer@wit.id');"
+	@echo "Demo accounts ready — see README for the passwords."
 
 seed-dummy: ## Seed reversible dummy/test data (decks tagged 'sample', users @example.test).
 	$(PSQL) "$(DB_DSN)" -f scripts/seed_dummy.sql
