@@ -231,7 +231,10 @@ export const api = {
   deleteDeck: (id) => request(`/decks/${id}`, { method: 'DELETE', auth: true }),
   incrementViews: (id) => request(`/decks/${id}/views`, { method: 'POST' }),
 
-  listUsers: () => request('/users'),
+  // auth: true is not optional — /users is admin-only. Without it the call goes
+  // out unauthenticated, comes back 401, and the app reports it as an expired
+  // session on the very screen you just signed in from.
+  listUsers: () => request('/users', { auth: true }),
   createUser: (user) => request('/users', { method: 'POST', body: user, auth: true }),
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
