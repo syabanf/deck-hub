@@ -69,6 +69,9 @@ The real `.env` files are gitignored; only the templates are committed.
 | `JWT_TTL` | `24h` | Go duration. Longer means a stolen token works longer |
 | `CORS_ORIGINS` | dev + preview origins | A wrong value fails silently in the browser, not the log |
 | `APP_BASE_URL` | `http://localhost:5173` | Where verification emails point — **not** the API's own address |
+| `BOOTSTRAP_ADMIN_PASSWORD` | — | **Set in production.** Rotates the seeded admin, whose password is published here |
+| `SMTP_HOST` … `SMTP_FROM` | — | **Set in production.** Empty means verification links go to the log, not to users |
+| `AUTH_RATE_IP` `AUTH_RATE_ACCOUNT` | `10` `5` | Auth attempts per minute. Raise the first behind a shared NAT |
 | `UPLOAD_DIR` | `./uploads` | Not disposable; mount a volume |
 | `MAX_UPLOAD_MB` | `25` | Larger uploads get a 413 |
 
@@ -87,8 +90,13 @@ reference is at <http://localhost:8080/docs>.
 
 ## Demo accounts
 
-Seeded by migrations `000003` and `000006`. **Local development only** — the
-passwords are in plain text in a committed migration.
+**Local development only**, and no longer seeded automatically — migration
+`000009` removes them, because all six were once found live in production with
+these published passwords, two of them admins. Bring them back for local work:
+
+```bash
+cd backend && make seed-demo
+```
 
 | Email | Password | Role |
 | --- | --- | --- |
@@ -357,6 +365,20 @@ VITE_API_URL=/api npm run build
 The backend needs `JWT_SECRET` and refuses to start without one. `CORS_ORIGINS`
 must list the browser origins allowed to call it. Run `make migrate-up` **before**
 deploying a build that depends on a new migration.
+
+Four settings decide whether a deployment is actually safe, and the server tells
+you at boot when they are missing:
+
+| Setting | Without it |
+| --- | --- |
+| `BOOTSTRAP_ADMIN_PASSWORD` | The admin keeps the password published in migration `000001`. The log carries a `SECURITY WARNING` every boot |
+| `SMTP_HOST` | Verification emails go to the server log. Nobody can finish signing up |
+| `CORS_ORIGINS` | The browser blocks every call, with nothing in the server log to explain it |
+| `APP_BASE_URL` | Verification links point at the recipient's own machine |
+
+`/auth/*` is rate limited per address and per account. `/users` is admin-only —
+it returns every account's email and role, which is the target list an attacker
+wants before guessing anything.
 
 Verification emails are printed to the server log by the development mailer, so
 the flow works without SMTP credentials. Sending for real means writing another

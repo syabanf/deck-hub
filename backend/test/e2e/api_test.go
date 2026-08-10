@@ -22,9 +22,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
@@ -62,7 +64,7 @@ func TestMain(m *testing.M) {
 	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
 	// tests assert on counts and would break if the catalog grew.
 	for _, f := range []string{
-		"000008_viewing_progress.down.sql", // FK → users, decks
+		"000008_viewing_progress.down.sql",   // FK → users, decks
 		"000007_email_verification.down.sql", // FK → users
 		"000004_favorites.down.sql",          // FK → users, decks
 		"000001_init.down.sql",
@@ -125,6 +127,12 @@ func TestMain(m *testing.M) {
 		Progress:  httpdelivery.NewProgressHandler(progressUC),
 		Tokens:    tokens,
 		UploadDir: store.Dir(),
+		// Every request here comes from 127.0.0.1, so the production per-IP
+		// allowance would throttle the suite itself. Raised rather than disabled,
+		// so the middleware still runs on every call it wraps — a limiter that is
+		// switched off in tests is a limiter nobody tests.
+		AuthRateIP:      10000,
+		AuthRateAccount: 10000,
 	})
 
 	srv = httptest.NewServer(router)
@@ -229,7 +237,25 @@ func login(t *testing.T, email, password string) string {
 	return out.Token
 }
 
-func adminToken(t *testing.T) string { return login(t, adminEmail, adminPassword) }
+// adminToken caches the JWT across tests.
+//
+// Signing in once per test made the suite issue dozens of logins a minute from
+// one address, which the rate limiter correctly refused. A real client holds its
+// token, so the suite now behaves like one — and bcrypt runs once instead of
+// once per test, which is most of the suite's runtime.
+var (
+	adminTokenOnce  sync.Once
+	adminTokenValue string
+)
+
+func adminToken(t *testing.T) string {
+	t.Helper()
+	adminTokenOnce.Do(func() { adminTokenValue = login(t, adminEmail, adminPassword) })
+	if adminTokenValue == "" {
+		t.Fatal("admin login failed")
+	}
+	return adminTokenValue
+}
 
 type deckPayload struct {
 	ID        string `json:"id"`
@@ -1306,4 +1332,60 @@ func TestUploadHardening(t *testing.T) {
 			t.Fatalf("stored path %q still contains a traversal segment", out.URL)
 		}
 	})
+}
+
+// ---------- production hardening ----------
+
+func TestUsersRequireAdmin(t *testing.T) {
+	// The listing returns every account's email and role. Public, it handed an
+	// attacker the target list — including which addresses are admins — before
+	// they tried a single password.
+	t.Run("anonymous cannot list users", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/users", "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("anonymous cannot read one user", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/users/"+uuid.Nil.String(), "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a non-admin is forbidden", func(t *testing.T) {
+		token := adminToken(t)
+		const email, pass = "viewer-probe@wit.id", "viewerpass123"
+		status, raw := do(t, http.MethodPost, "/users", token, map[string]string{
+			"name": "Viewer Probe", "email": email, "password": pass, "role": "viewer",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		viewer := login(t, email, pass)
+		status, raw = do(t, http.MethodGet, "/users", viewer, nil)
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+
+	t.Run("an admin still can", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/users", adminToken(t), nil)
+		requireStatus(t, http.StatusOK, status, raw)
+	})
+}
+
+func TestAuthRateLimit(t *testing.T) {
+	// The suite raises the allowance so it can sign in freely; this exercises the
+	// middleware with its own limiter rather than trusting the raised one.
+	rl := httpdelivery.NewRateLimiter(3, time.Minute)
+
+	for i := 0; i < 3; i++ {
+		if !rl.Allow("ip:203.0.113.1") {
+			t.Fatalf("attempt %d refused while still inside the burst", i+1)
+		}
+	}
+	if rl.Allow("ip:203.0.113.1") {
+		t.Fatal("a fourth attempt was allowed — the burst is not enforced")
+	}
+
+	// One client's exhaustion must not lock anyone else out. Without a per-key
+	// bucket a single noisy address would deny the whole service.
+	if !rl.Allow("ip:203.0.113.9") {
+		t.Fatal("a different address was refused because of another's usage")
+	}
 }

@@ -35,6 +35,29 @@ type Config struct {
 	// must be where the browser can actually reach the app — not the API's own
 	// address.
 	AppBaseURL string
+
+	// BootstrapAdminEmail/Password rotate the seeded admin's credentials at
+	// startup. Migration 000001 ships a known password so a fresh checkout can
+	// sign in; in production that same password is public. Setting these is how
+	// a deployment takes ownership of the account without a manual SQL step.
+	BootstrapAdminEmail    string
+	BootstrapAdminPassword string
+
+	// SMTP. When SMTPHost is empty the API falls back to the log mailer, which
+	// prints verification links instead of sending them — right for development,
+	// and a broken sign-up flow in production.
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+
+	// Auth rate limits, per minute. Defaults suit a public deployment where each
+	// visitor has their own address. An office behind one NAT shares an IP, so
+	// AuthRateIP may need raising; a test suite signing in repeatedly needs it
+	// raised a lot.
+	AuthRateIP      int
+	AuthRateAccount int
 }
 
 // MaxUploadBytes returns the upload cap in bytes.
@@ -58,6 +81,18 @@ func Load() (*Config, error) {
 		JWTSecret:  getEnv("JWT_SECRET", ""),
 		UploadDir:  getEnv("UPLOAD_DIR", "./uploads"),
 		AppBaseURL: getEnv("APP_BASE_URL", "http://localhost:5173"),
+
+		BootstrapAdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", "admin@wit.id"),
+		BootstrapAdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
+
+		SMTPHost:     getEnv("SMTP_HOST", ""),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUsername: getEnv("SMTP_USERNAME", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", "WIT <no-reply@wit.id>"),
+
+		AuthRateIP:      atoiDefault(getEnv("AUTH_RATE_IP", "10"), 10),
+		AuthRateAccount: atoiDefault(getEnv("AUTH_RATE_ACCOUNT", "5"), 5),
 	}
 
 	// Comma-separated browser origins. Defaults cover the Vite dev server and
@@ -113,4 +148,14 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// atoiDefault parses an integer setting, falling back when it is unset or
+// malformed. A typo in a limit should not stop the server booting.
+func atoiDefault(s string, def int) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
 }

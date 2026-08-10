@@ -158,11 +158,16 @@ export default function App() {
     setStatus('loading')
     setError(null)
     try {
+      // The user directory is admin-only, and it sits in the same Promise.all as
+      // the catalog — so for anyone else a 403 here would fail the whole load and
+      // show the error screen instead of the app. Only ask when it's allowed.
+      const wantsUsers = !!user && !user.guest && user.role === 'admin'
+
       const [statsRes, heroRes, topRes, userList, ...rowRes] = await Promise.all([
         api.deckStats(),
         api.listDecks({ featured: 'true', limit: 1 }),
         api.listDecks({ sort: 'views', limit: 10 }),
-        api.listUsers(),
+        wantsUsers ? api.listUsers() : Promise.resolve([]),
         ...CATEGORIES.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
       ])
 
@@ -180,7 +185,8 @@ export default function App() {
       setError(e)
       setStatus('error')
     }
-  }, [])
+  // user matters: whether the directory is fetched depends on their role.
+  }, [user])
 
   // Counts live on the server now, so any mutation that changes them needs a
   // refresh — otherwise the admin summary drifts from the catalog.

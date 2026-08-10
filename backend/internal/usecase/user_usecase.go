@@ -228,3 +228,52 @@ func (uc *UserUsecase) Authenticate(ctx context.Context, email, password string)
 	}
 	return u, nil
 }
+
+// EnsureBootstrapAdmin sets the bootstrap admin's password from configuration.
+//
+// Migration 000001 seeds an admin with a password published in the repository,
+// so a fresh checkout can sign in immediately. In production that same password
+// is public knowledge — it was found live on the deployed site. Deleting the
+// account in a migration would lock a running deployment out of its own admin
+// screen, so the password is rotated here instead.
+//
+// Returns whether the account exists and whether it still accepts the seeded
+// password, so the caller can warn about a deployment that set nothing.
+func (uc *UserUsecase) EnsureBootstrapAdmin(ctx context.Context, email, password string) (rotated bool, err error) {
+	u, err := uc.repo.GetByEmail(ctx, email)
+	if err != nil {
+		// No such account is not a failure: a deployment may have removed it, or
+		// renamed the admin entirely.
+		return false, nil
+	}
+
+	if password == "" {
+		return false, nil
+	}
+
+	// Skip the write when the password already matches, so restarts do not
+	// churn the row or invalidate anything unnecessarily.
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil {
+		return false, nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return false, fmt.Errorf("hash bootstrap admin password: %w", err)
+	}
+	u.PasswordHash = string(hash)
+	if err := uc.repo.Update(ctx, u); err != nil {
+		return false, fmt.Errorf("update bootstrap admin: %w", err)
+	}
+	return true, nil
+}
+
+// UsesSeededPassword reports whether an account still accepts the password
+// shipped in migration 000001. Used only to warn at startup.
+func (uc *UserUsecase) UsesSeededPassword(ctx context.Context, email, seeded string) bool {
+	u, err := uc.repo.GetByEmail(ctx, email)
+	if err != nil {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(seeded)) == nil
+}

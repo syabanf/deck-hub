@@ -13,7 +13,9 @@ import (
 
 	"github.com/wit/wit-backend/internal/config"
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	"github.com/wit/wit-backend/internal/domain"
 	logmailer "github.com/wit/wit-backend/internal/mailer/log"
+	smtpmailer "github.com/wit/wit-backend/internal/mailer/smtp"
 	"github.com/wit/wit-backend/internal/repository/postgres"
 	"github.com/wit/wit-backend/internal/storage/local"
 	"github.com/wit/wit-backend/internal/usecase"
@@ -55,6 +57,40 @@ func run() error {
 	favoriteUC := usecase.NewFavoriteUsecase(favoriteRepo)
 	progressUC := usecase.NewProgressUsecase(progressRepo)
 
+	// Take ownership of the seeded admin. Migration 000001 ships a published
+	// password so a fresh checkout works; production must not keep it.
+	if rotated, err := userUC.EnsureBootstrapAdmin(ctx, cfg.BootstrapAdminEmail, cfg.BootstrapAdminPassword); err != nil {
+		log.Printf("warning: could not rotate the bootstrap admin password: %v", err)
+	} else if rotated {
+		log.Printf("bootstrap admin %s: password set from BOOTSTRAP_ADMIN_PASSWORD", cfg.BootstrapAdminEmail)
+	}
+
+	// Warn loudly rather than refusing to start: a deployment that cannot sign
+	// in is worse than one that is told it is exposed.
+	if userUC.UsesSeededPassword(ctx, cfg.BootstrapAdminEmail, "admin1234") {
+		log.Printf("SECURITY WARNING: %s still accepts the password published in "+
+			"migration 000001. Anyone who can read this repository is an admin. "+
+			"Set BOOTSTRAP_ADMIN_PASSWORD and restart.", cfg.BootstrapAdminEmail)
+	}
+
+	// Pick the transport. Falling back to the log mailer keeps a fresh checkout
+	// working without SMTP credentials, but says so — a production deployment
+	// that lands here has a sign-up flow nobody can complete.
+	var mailer domain.Mailer = logmailer.New()
+	if cfg.SMTPHost != "" {
+		mailer = smtpmailer.New(smtpmailer.Config{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		})
+		log.Printf("email: sending via %s:%s as %s", cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom)
+	} else {
+		log.Printf("email: SMTP_HOST not set — verification links go to this log, " +
+			"not to recipients. Sign-up cannot be completed by a real user.")
+	}
+
 	// Self-service registration. The log mailer prints the verification link to
 	// this terminal instead of sending mail, so the flow is exercisable without
 	// SMTP credentials; swap in another domain.Mailer to send for real.
@@ -62,7 +98,7 @@ func run() error {
 	registrationUC := usecase.NewRegistrationUsecase(
 		userRepo,
 		postgres.NewEmailVerificationRepository(pool),
-		logmailer.New(),
+		mailer,
 		verifyURL,
 	)
 	log.Printf("registration open; verification links point at %s", verifyURL)

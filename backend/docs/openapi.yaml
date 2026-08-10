@@ -38,7 +38,18 @@ info:
 
     Codes: `invalid_input` (400), `unauthorized` (401), `email_not_verified`
     (401), `forbidden` (403), `not_found` (404), `conflict` (409),
-    `internal` (500).
+    `rate_limited` (429), `internal` (500).
+
+    ## Rate limiting
+
+    `/auth/*` is limited on two axes at once — per calling address, and per
+    account named in the body. Either alone leaves a hole: per-IP misses a
+    botnet against one admin, per-account misses one host spraying a password
+    across every address it found.
+
+    Exceeding either returns `429` with `Retry-After`. Defaults are 10 per
+    minute per address and 5 per account (`AUTH_RATE_IP`, `AUTH_RATE_ACCOUNT`) —
+    raise the first for an office behind a single NAT.
 
     ## Paging
 
@@ -447,8 +458,10 @@ paths:
     get:
       tags: [Users]
       summary: List users
-      security: []
-      description: Password hashes are never serialised.
+      description: |
+        Requires `admin`. This was public until it was found returning every
+        account's email and role to anyone — the target list an attacker needs
+        before guessing a single password. Password hashes are never serialised.
       responses:
         "200":
           description: All users
@@ -495,7 +508,7 @@ paths:
     get:
       tags: [Users]
       summary: Fetch one user
-      security: []
+      description: Requires `admin`.
       responses:
         "200":
           description: The user

@@ -151,6 +151,12 @@ func TestMain(m *testing.M) {
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Tokens:    tokens,
 		UploadDir: store.Dir(),
+		// This suite measures backend capacity, and every request comes from one
+		// address — the production auth allowance would turn the login scenario
+		// into a measurement of the rate limiter instead of bcrypt. Raised here;
+		// the limiter's own behaviour is asserted in the e2e suite.
+		AuthRateIP:      1_000_000,
+		AuthRateAccount: 1_000_000,
 	}))
 	defer srv.Close()
 
