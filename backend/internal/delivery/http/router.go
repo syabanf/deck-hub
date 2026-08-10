@@ -18,6 +18,8 @@ type RouterDeps struct {
 	Decks     *DeckHandler
 	Uploads   *UploadHandler
 	Favorites *FavoriteHandler
+	Progress  *ProgressHandler
+	Docs      *DocsHandler
 	Tokens    *TokenManager
 
 	// UploadDir is the directory uploaded files are served from. When empty,
@@ -27,6 +29,11 @@ type RouterDeps struct {
 	// CORSOrigins are the browser origins allowed to call the API. Empty falls
 	// back to the Vite dev origin.
 	CORSOrigins []string
+
+	// AuthRateIP/AuthRateAccount are the per-minute auth allowances. Zero uses
+	// the defaults.
+	AuthRateIP      int
+	AuthRateAccount int
 }
 
 // NewRouter builds the chi router with middleware and all mounted routes.
@@ -46,9 +53,9 @@ func NewRouter(d RouterDeps) http.Handler {
 		origins = []string{"http://localhost:5173"}
 	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   origins,
-		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
+		AllowedOrigins: origins,
+		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
 		// Paging metadata is unreadable from JS unless it is exposed here.
 		ExposedHeaders:   []string{"X-Request-Id", "X-Total-Count", "X-Limit", "X-Offset"},
 		AllowCredentials: true,
@@ -60,9 +67,35 @@ func NewRouter(d RouterDeps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Auth (public). Self-service sign-up is mounted only when a registration
-	// handler is supplied, so a deployment can leave it off entirely.
+	// API reference. Public: it documents an API whose reads are public anyway,
+	// and a reference nobody can open is a reference nobody uses.
+	if d.Docs != nil {
+		r.Get("/docs", d.Docs.Page)
+		r.Get("/openapi.yaml", d.Docs.Spec)
+	}
+
+	// Auth (public), rate limited on two axes at once — see ratelimit.go.
+	//
+	// The numbers are chosen so a person who fatfingers a password never notices
+	// while a script does. 10 attempts/minute from one address covers a few typos
+	// and a password-manager retry; 5/minute against one account is more than any
+	// human needs and far less than a guessing run.
+	ipBurst, accountBurst := d.AuthRateIP, d.AuthRateAccount
+	if ipBurst <= 0 {
+		ipBurst = 10
+	}
+	if accountBurst <= 0 {
+		accountBurst = 5
+	}
+	ipLimiter := NewRateLimiter(ipBurst, time.Minute)
+	accountLimiter := NewRateLimiter(accountBurst, time.Minute)
+
+	// Self-service sign-up is mounted only when a registration handler is
+	// supplied, so a deployment can leave it off entirely.
 	r.Route("/auth", func(r chi.Router) {
+		r.Use(RateLimit(ipLimiter, ByIP))
+		r.Use(RateLimit(accountLimiter, ByEmail))
+
 		r.Post("/login", d.Auth.Login)
 		if d.Register != nil {
 			r.Post("/register", d.Register.Register)
@@ -71,18 +104,20 @@ func NewRouter(d RouterDeps) http.Handler {
 		}
 	})
 
-	// Users: reads are public-ish; mutations require admin.
+	// Users: admin only, reads included.
+	//
+	// The listing used to be public. It returns every account's email and role,
+	// which hands an attacker the exact target list — including which addresses
+	// are admins — before they try a single password. Nothing outside the admin
+	// screen needs it.
 	r.Route("/users", func(r chi.Router) {
+		r.Use(d.Tokens.JWTAuth)
+		r.Use(RequireRole("admin"))
 		r.Get("/", d.Users.List)
 		r.Get("/{id}", d.Users.Get)
-
-		r.Group(func(r chi.Router) {
-			r.Use(d.Tokens.JWTAuth)
-			r.Use(RequireRole("admin"))
-			r.Post("/", d.Users.Create)
-			r.Put("/{id}", d.Users.Update)
-			r.Delete("/{id}", d.Users.Delete)
-		})
+		r.Post("/", d.Users.Create)
+		r.Put("/{id}", d.Users.Update)
+		r.Delete("/{id}", d.Users.Delete)
 	})
 
 	// Decks: reads + view increment are public; create/update/delete require
@@ -114,11 +149,30 @@ func NewRouter(d RouterDeps) http.Handler {
 	}
 	if d.UploadDir != "" {
 		fileServer := http.StripPrefix("/uploads/", http.FileServer(http.Dir(d.UploadDir)))
-		r.Get("/uploads/*", fileServer.ServeHTTP)
+		r.Get("/uploads/*", func(w http.ResponseWriter, r *http.Request) {
+			// Uploads are attacker-supplied bytes served from the API's own
+			// origin. Content-Type is derived from the extension, so a file
+			// named .pdf holding HTML is already labelled application/pdf —
+			// but without nosniff a browser may ignore that label, sniff the
+			// HTML and execute its scripts against this origin.
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			fileServer.ServeHTTP(w, r)
+		})
 	}
 
 	// Favorites ("My Library") — always scoped to the authenticated user, so
 	// every route requires a token but no particular role (viewers can favorite).
+	// Viewing progress ("Continue watching") — private per-user history, so every
+	// route needs a token but no particular role.
+	if d.Progress != nil {
+		r.Route("/progress", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Progress.List)
+			r.Put("/{deckId}", d.Progress.Save)
+			r.Delete("/{deckId}", d.Progress.Delete)
+		})
+	}
+
 	if d.Favorites != nil {
 		r.Route("/favorites", func(r chi.Router) {
 			r.Use(d.Tokens.JWTAuth)

@@ -8,13 +8,19 @@ Quick reference with runnable examples. The authoritative contract is
 make docs        # verify the spec matches the mounted routes
 ```
 
+**Browsable version:** the running API serves it at
+[`/docs`](http://localhost:8080/docs), with the raw contract at
+[`/openapi.yaml`](http://localhost:8080/openapi.yaml) for client generators and
+Postman/Insomnia imports. Both are compiled into the binary, so they always
+describe the server you are talking to.
+
 Base URL in development: `http://localhost:8080`.
 
 ## Contents
 
 - [Authentication](#authentication) · [Roles](#roles) · [Errors](#errors)
 - [Paging](#paging)
-- [Decks](#decks) · [Favorites](#favorites) · [Users](#users) · [Uploads](#uploads)
+- [Decks](#decks) · [Favorites](#favorites) · [Continue watching](#continue-watching) · [Users](#users) · [Uploads](#uploads)
 
 ---
 
@@ -67,6 +73,7 @@ Enforced at the router, so an unauthorized call never reaches a handler.
 | `/users`              | public   | `admin`              |
 | `/uploads`            | public   | `admin`, `editor`    |
 | `/favorites`          | any signed-in user (scoped to them) |
+| `/progress`           | any signed-in user (scoped to them) |
 
 `POST /decks/{id}/views` is public and unauthenticated — view counts are a
 global signal, not per-user history.
@@ -204,6 +211,29 @@ curl -s -X DELETE localhost:8080/favorites/$ID -H "Authorization: Bearer $TOKEN"
 Both writes are idempotent. The list returns ids only — hydrate them with
 `GET /decks?ids=`.
 
+## Continue watching
+
+Per-user resume positions. Private to the token's user — distinct from
+`viewCount`, which is a public popularity counter anyone can increment.
+
+```bash
+curl -s localhost:8080/progress -H "Authorization: Bearer $TOKEN"
+# {"items":[{"deckId":"…","currentSlide":7,"totalSlides":24,"viewedAt":"…"}]}
+
+curl -s -X PUT localhost:8080/progress/$ID -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"currentSlide":7,"totalSlides":24}'   # 204
+
+curl -s -X DELETE localhost:8080/progress/$ID -H "Authorization: Bearer $TOKEN"  # 204
+```
+
+`viewedAt` is stamped server-side — a wrong or hostile client clock would
+otherwise control the ordering of the shelf. Out-of-range positions are clamped
+rather than rejected: the player sends this fire-and-forget and never waits on
+the response, so a rejection would be invisible anyway.
+
+Capped at the 50 most recent. Returns deck ids only; hydrate with
+`GET /decks?ids=`.
+
 ## Users
 
 Reads are public and never include password hashes. Mutations require `admin`;
@@ -230,7 +260,7 @@ curl -s localhost:8080/uploads -H "Authorization: Bearer $TOKEN" -F file=@deck.p
 
 The stored filename is a generated UUID plus the extension — the client's
 filename never becomes part of the path, so it cannot traverse directories or
-overwrite an existing file. `name` is echoed back for display only.
+overwrite an existing file. `name` is the *stored* filename, not the one you uploaded — your filename is never persisted anywhere.
 
 Persist the returned `url` (server-relative) on the deck rather than an absolute
 one, so stored decks survive an origin change.

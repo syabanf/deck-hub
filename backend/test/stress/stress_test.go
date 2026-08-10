@@ -101,6 +101,7 @@ func TestMain(m *testing.M) {
 	for _, f := range []string{
 		// Anything with a foreign key into users or decks has to go before
 		// 000001 can drop those tables.
+		"000008_viewing_progress.down.sql",
 		"000007_email_verification.down.sql",
 		"000004_favorites.down.sql",
 		"000001_init.down.sql",
@@ -111,6 +112,7 @@ func TestMain(m *testing.M) {
 		// Re-create what was dropped above. Without this, users has no
 		// email_verified_at column and every authenticated call fails.
 		"000007_email_verification.up.sql",
+		"000008_viewing_progress.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)
@@ -149,6 +151,12 @@ func TestMain(m *testing.M) {
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Tokens:    tokens,
 		UploadDir: store.Dir(),
+		// This suite measures backend capacity, and every request comes from one
+		// address — the production auth allowance would turn the login scenario
+		// into a measurement of the rate limiter instead of bcrypt. Raised here;
+		// the limiter's own behaviour is asserted in the e2e suite.
+		AuthRateIP:      1_000_000,
+		AuthRateAccount: 1_000_000,
 	}))
 	defer srv.Close()
 

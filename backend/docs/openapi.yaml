@@ -38,7 +38,18 @@ info:
 
     Codes: `invalid_input` (400), `unauthorized` (401), `email_not_verified`
     (401), `forbidden` (403), `not_found` (404), `conflict` (409),
-    `internal` (500).
+    `rate_limited` (429), `internal` (500).
+
+    ## Rate limiting
+
+    `/auth/*` is limited on two axes at once — per calling address, and per
+    account named in the body. Either alone leaves a hole: per-IP misses a
+    botnet against one admin, per-account misses one host spraying a password
+    across every address it found.
+
+    Exceeding either returns `429` with `Retry-After`. Defaults are 10 per
+    minute per address and 5 per account (`AUTH_RATE_IP`, `AUTH_RATE_ACCOUNT`) —
+    raise the first for an office behind a single NAT.
 
     ## Paging
 
@@ -60,11 +71,13 @@ servers:
     description: Local development
 
 tags:
+  - name: Reference
   - name: Health
   - name: Auth
   - name: Decks
   - name: Users
   - name: Favorites
+  - name: Progress
   - name: Uploads
 
 paths:
@@ -82,6 +95,38 @@ paths:
                 type: object
                 properties:
                   status: { type: string, example: ok }
+
+  /docs:
+    get:
+      tags: [Reference]
+      summary: Browsable API reference
+      security: []
+      description: |
+        Renders this specification as a documentation page. Public, because it
+        documents an API whose reads are public anyway — and a reference nobody
+        can open is a reference nobody uses.
+      responses:
+        "200":
+          description: The reference page
+          content:
+            text/html:
+              schema: { type: string }
+
+  /openapi.yaml:
+    get:
+      tags: [Reference]
+      summary: This specification, raw
+      security: []
+      description: |
+        The contract itself, for client generators and Postman/Insomnia imports.
+        Compiled into the binary, so it always describes the server serving it
+        rather than whatever happens to be on disk.
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema: { type: string }
 
   /auth/login:
     post:
@@ -413,8 +458,10 @@ paths:
     get:
       tags: [Users]
       summary: List users
-      security: []
-      description: Password hashes are never serialised.
+      description: |
+        Requires `admin`. This was public until it was found returning every
+        account's email and role to anyone — the target list an attacker needs
+        before guessing a single password. Password hashes are never serialised.
       responses:
         "200":
           description: All users
@@ -461,7 +508,7 @@ paths:
     get:
       tags: [Users]
       summary: Fetch one user
-      security: []
+      description: Requires `admin`.
       responses:
         "200":
           description: The user
@@ -513,6 +560,67 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /progress:
+    get:
+      tags: [Progress]
+      summary: The caller's resume positions ("Continue watching")
+      description: |
+        Private per-user history, always scoped to the token's user. Distinct
+        from `viewCount`, which is a public popularity counter anyone can
+        increment — mixing the two would either leak history into a public
+        number or make that number useless for ranking.
+
+        Capped at the 50 most recent. Returns deck ids only; hydrate them with
+        `GET /decks?ids=`.
+      responses:
+        "200":
+          description: Progress rows, most recently viewed first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ViewingProgress" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /progress/{deckId}:
+    parameters:
+      - { name: deckId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Progress]
+      summary: Record a resume position
+      description: |
+        Upsert. `viewedAt` is stamped server-side — a wrong or hostile client
+        clock would otherwise control the ordering of the shelf.
+
+        Out-of-range positions are clamped rather than rejected: the player
+        sends this fire-and-forget and does not wait on the response, so failing
+        it would be invisible anyway.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentSlide: { type: integer, minimum: 0, description: Zero-based }
+                totalSlides:  { type: integer, minimum: 0 }
+      responses:
+        "204": { description: Recorded }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Progress]
+      summary: Forget a deck's resume position
+      description: Idempotent — removing a deck that was never started is not an error.
+      responses:
+        "204": { description: Removed }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /favorites:
     get:
@@ -592,7 +700,7 @@ paths:
                 type: object
                 properties:
                   url:         { type: string, example: /uploads/8f14e45f-ea3b-41d4-a716-446655440000.pdf }
-                  name:        { type: string, description: The client's original filename, echoed for display only }
+                  name:        { type: string, description: "The *stored* filename (the generated UUID plus extension), not the one you uploaded. The client's filename is never persisted." }
                   size:        { type: integer, format: int64 }
                   contentType: { type: string, example: application/pdf }
         "400":
@@ -676,6 +784,14 @@ components:
             admin provisioning an account *is* the check.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+
+    ViewingProgress:
+      type: object
+      properties:
+        deckId:       { type: string, format: uuid }
+        currentSlide: { type: integer, description: Zero-based slide index }
+        totalSlides:  { type: integer, description: What the client believed the deck length was }
+        viewedAt:     { type: string, format: date-time }
 
     DeckSource:
       type: object

@@ -6,6 +6,10 @@ stay independent of frameworks and the database.
 
 Module: `github.com/wit/wit-backend` · Go 1.21 · chi · pgx/v5 · JWT · bcrypt
 
+> Looking for the whole system — quick start, API summary, accounts, deploy?
+> Start at the [project README](../README.md). This file is the backend's own
+> internals: architecture, environment, and make targets.
+
 ---
 
 ## Architecture
@@ -174,6 +178,7 @@ Full reference — every endpoint, parameter, status code and curl example:
 
 | Document | For |
 | -------- | --- |
+| **`/docs`** on the running API | Browsing. Rendered reference — start the server and open <http://localhost:8080/docs>. |
 | [`docs/API.md`](docs/API.md) | Reading. Grouped by resource, with runnable examples. |
 | [`docs/openapi.yaml`](docs/openapi.yaml) | Tooling. OpenAPI 3.0 — client generation, Postman/Insomnia import, doc viewers. |
 
@@ -298,30 +303,23 @@ laptop (10 cores, local Postgres, 50 workers):
 
 | Scenario                  |     RPS | p50    | p99    |
 | ------------------------- | ------: | ------ | ------ |
-| `GET /healthz`            | 110,000 | 0.3 ms | 1.7 ms |
-| `GET /decks/{id}`         |  41,700 | 1.1 ms | 2.3 ms |
-| `GET /decks?category=`    |  17,500 | 2.8 ms | 5.3 ms |
-| `GET /decks` (304 decks)  |   4,970 | 9.3 ms | 23 ms  |
-| mixed browse (80/15/5)    |   6,000 | 7.9 ms | 15 ms  |
-| `POST /decks/{id}/views`  |  11,800 | 3.7 ms | 13 ms  |
-| `POST /decks`             |  25,900 | 1.7 ms | 6.5 ms |
-| `POST /auth/login`        |     155 | 62 ms  | 88 ms  |
+| `GET /healthz`            | 110,600 | 0.3 ms | 1.7 ms |
+| `GET /decks/{id}`         |  48,000 | 1.0 ms | 1.8 ms |
+| `GET /decks?category=`    |  14,500 | 3.4 ms | 4.8 ms |
+| `GET /decks` (full list)  |  12,900 | 3.7 ms | 6.7 ms |
+| mixed browse (80/15/5)    |  14,900 | 3.5 ms | 7.6 ms |
+| `POST /decks/{id}/views`  |  10,700 | 3.9 ms | 15 ms  |
+| `POST /decks`             |  15,800 | 3.1 ms | 7.2 ms |
+| `POST /auth/login`        |     159 | 60 ms  | 111 ms |
 
-`/auth/login` is intentionally ~400× slower than a read — that's bcrypt doing
+`/auth/login` is intentionally ~700× slower than a read — that's bcrypt doing
 its job. Budget for it (and cache the JWT client-side) rather than "fixing" it.
 
-**Known scaling limit.** `GET /decks` applies `LIMIT` only when `?limit` is
-passed, so by default it serialises the whole table. The `5-large-table` phase
-quantifies this at ~78k decks:
-
-| Request              |  RPS | p50    | Payload    |
-| -------------------- | ---: | ------ | ---------- |
-| `GET /decks`         |   27 | 1.66 s | 26.8 MB    |
-| `GET /decks?limit=50`|  941 | 50 ms  | 0.017 MB   |
-
-That's a **35× throughput difference**. Fine at today's catalog size (the
-frontend fetches once and filters client-side), but a default page size — plus
-frontend pagination — is required before the catalog grows large.
+**Default page size.** `GET /decks` used to apply `LIMIT` only when `?limit`
+was passed, so by default it serialised the whole table — 25 MB at 34 req/s
+against 73k rows. The usecase now applies a default of 50 (ceiling 200), so an
+omitted limit costs the same as an explicit one, and the `5-large-table` phase
+fails the build if a no-limit response ever exceeds 1 MB again.
 
 The CORS handler allows the Vite dev origin `http://localhost:5173`, so the
 existing React frontend can call this API directly.

@@ -18,12 +18,15 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
@@ -61,6 +64,7 @@ func TestMain(m *testing.M) {
 	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
 	// tests assert on counts and would break if the catalog grew.
 	for _, f := range []string{
+		"000008_viewing_progress.down.sql",   // FK → users, decks
 		"000007_email_verification.down.sql", // FK → users
 		"000004_favorites.down.sql",          // FK → users, decks
 		"000001_init.down.sql",
@@ -68,6 +72,7 @@ func TestMain(m *testing.M) {
 		"000004_favorites.up.sql",
 		"000005_deck_indexes.up.sql",
 		"000007_email_verification.up.sql",
+		"000008_viewing_progress.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -99,6 +104,7 @@ func TestMain(m *testing.M) {
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool))
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
+	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
 
 	// The dev mailer writes the link to the log rather than sending it; the tests
@@ -118,8 +124,15 @@ func TestMain(m *testing.M) {
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
+		Progress:  httpdelivery.NewProgressHandler(progressUC),
 		Tokens:    tokens,
 		UploadDir: store.Dir(),
+		// Every request here comes from 127.0.0.1, so the production per-IP
+		// allowance would throttle the suite itself. Raised rather than disabled,
+		// so the middleware still runs on every call it wraps — a limiter that is
+		// switched off in tests is a limiter nobody tests.
+		AuthRateIP:      10000,
+		AuthRateAccount: 10000,
 	})
 
 	srv = httptest.NewServer(router)
@@ -224,7 +237,25 @@ func login(t *testing.T, email, password string) string {
 	return out.Token
 }
 
-func adminToken(t *testing.T) string { return login(t, adminEmail, adminPassword) }
+// adminToken caches the JWT across tests.
+//
+// Signing in once per test made the suite issue dozens of logins a minute from
+// one address, which the rate limiter correctly refused. A real client holds its
+// token, so the suite now behaves like one — and bcrypt runs once instead of
+// once per test, which is most of the suite's runtime.
+var (
+	adminTokenOnce  sync.Once
+	adminTokenValue string
+)
+
+func adminToken(t *testing.T) string {
+	t.Helper()
+	adminTokenOnce.Do(func() { adminTokenValue = login(t, adminEmail, adminPassword) })
+	if adminTokenValue == "" {
+		t.Fatal("admin login failed")
+	}
+	return adminTokenValue
+}
 
 type deckPayload struct {
 	ID        string `json:"id"`
@@ -1022,4 +1053,339 @@ func TestRegistration(t *testing.T) {
 		})
 		requireStatus(t, http.StatusOK, status, raw)
 	})
+}
+
+// ---------- viewing progress ("Continue watching") ----------
+
+func TestViewingProgress(t *testing.T) {
+	token := adminToken(t)
+
+	// A deck to record progress against.
+	status, raw := do(t, http.MethodPost, "/decks", token, newDeckBody("Progress subject"))
+	requireStatus(t, http.StatusCreated, status, raw)
+	var deck deckPayload
+	decode(t, raw, &deck)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+deck.ID, token, nil) })
+
+	type progressItem struct {
+		DeckID       string `json:"deckId"`
+		CurrentSlide int    `json:"currentSlide"`
+		TotalSlides  int    `json:"totalSlides"`
+		ViewedAt     string `json:"viewedAt"`
+	}
+	list := func() []progressItem {
+		t.Helper()
+		status, raw := do(t, http.MethodGet, "/progress", token, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		var out struct {
+			Items []progressItem `json:"items"`
+		}
+		decode(t, raw, &out)
+		return out.Items
+	}
+
+	t.Run("requires a token", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/progress", "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("save then read back", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 3, "totalSlides": 10})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				if it.CurrentSlide != 3 || it.TotalSlides != 10 {
+					t.Fatalf("got slide %d/%d, want 3/10", it.CurrentSlide, it.TotalSlides)
+				}
+				if it.ViewedAt == "" {
+					t.Fatal("viewedAt not stamped server-side")
+				}
+				return
+			}
+		}
+		t.Fatal("saved deck missing from the progress list")
+	})
+
+	t.Run("saving again updates rather than duplicating", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 7, "totalSlides": 10})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		var seen int
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				seen++
+				if it.CurrentSlide != 7 {
+					t.Fatalf("currentSlide = %d, want the updated 7", it.CurrentSlide)
+				}
+			}
+		}
+		if seen != 1 {
+			t.Fatalf("deck appears %d times — the upsert is inserting duplicates", seen)
+		}
+	})
+
+	t.Run("an out-of-range position is clamped, not rejected", func(t *testing.T) {
+		// The player sends this fire-and-forget; rejecting would be invisible.
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 999, "totalSlides": 10})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		for _, it := range list() {
+			if it.DeckID == deck.ID && it.CurrentSlide != 9 {
+				t.Fatalf("currentSlide = %d, want it clamped to 9", it.CurrentSlide)
+			}
+		}
+	})
+
+	t.Run("progress for a missing deck is 404", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/11111111-1111-1111-1111-111111111111",
+			token, map[string]int{"currentSlide": 1, "totalSlides": 2})
+		requireStatus(t, http.StatusNotFound, status, raw)
+	})
+
+	t.Run("progress is private to the user", func(t *testing.T) {
+		// Created here rather than reusing a seeded account: this harness runs
+		// 000001 only, so the demo users from 000003 do not exist.
+		const otherEmail, otherPass = "progress-peer@wit.id", "peerpass123"
+		status, raw := do(t, http.MethodPost, "/users", token, map[string]string{
+			"name": "Progress Peer", "email": otherEmail, "password": otherPass, "role": "viewer",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		other := login(t, otherEmail, otherPass)
+		status, raw = do(t, http.MethodGet, "/progress", other, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var out struct {
+			Items []progressItem `json:"items"`
+		}
+		decode(t, raw, &out)
+		for _, it := range out.Items {
+			if it.DeckID == deck.ID {
+				t.Fatal("one user's progress is visible to another")
+			}
+		}
+	})
+
+	t.Run("delete forgets the row", func(t *testing.T) {
+		status, raw := do(t, http.MethodDelete, "/progress/"+deck.ID, token, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				t.Fatal("row still present after delete")
+			}
+		}
+		// Idempotent.
+		status, raw = do(t, http.MethodDelete, "/progress/"+deck.ID, token, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+	})
+
+	t.Run("deleting the deck cascades its progress", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/progress/"+deck.ID, token,
+			map[string]int{"currentSlide": 1, "totalSlides": 5})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		status, raw = do(t, http.MethodDelete, "/decks/"+deck.ID, token, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		for _, it := range list() {
+			if it.DeckID == deck.ID {
+				t.Fatal("progress outlived its deck — the FK cascade is missing")
+			}
+		}
+	})
+}
+
+// ---------- hardening found by adversarial probing ----------
+
+func TestSearchTreatsWildcardsLiterally(t *testing.T) {
+	token := adminToken(t)
+
+	// Two decks: one with a literal % in the title, one without.
+	for _, title := range []string{"Discount 50% Off", "Plain Title"} {
+		status, raw := do(t, http.MethodPost, "/decks", token, newDeckBody(title))
+		requireStatus(t, http.StatusCreated, status, raw)
+		var d deckPayload
+		decode(t, raw, &d)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+d.ID, token, nil) })
+	}
+
+	search := func(q string) []deckPayload {
+		t.Helper()
+		status, raw := do(t, http.MethodGet, "/decks?search="+url.QueryEscape(q), "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		var out []deckPayload
+		decode(t, raw, &out)
+		return out
+	}
+
+	t.Run("a bare percent is not a wildcard", func(t *testing.T) {
+		// It used to return the whole catalog.
+		got := search("%")
+		for _, d := range got {
+			if !strings.Contains(d.Title, "%") {
+				t.Fatalf("searching %% returned %q, which contains no %% — the wildcard leaks", d.Title)
+			}
+		}
+	})
+
+	t.Run("a percent inside a phrase still matches literally", func(t *testing.T) {
+		got := search("50%")
+		var found bool
+		for _, d := range got {
+			if d.Title == "Discount 50% Off" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal(`searching "50%" did not find "Discount 50% Off"`)
+		}
+	})
+
+	t.Run("an underscore is not a single-character wildcard", func(t *testing.T) {
+		// "P_ain" would match "Plain" if _ were still a wildcard.
+		for _, d := range search("P_ain") {
+			if d.Title == "Plain Title" {
+				t.Fatal("underscore is still behaving as a wildcard")
+			}
+		}
+	})
+}
+
+func TestUploadHardening(t *testing.T) {
+	token := adminToken(t)
+
+	upload := func(t *testing.T, name string, body []byte) (int, []byte) {
+		t.Helper()
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, err := mw.CreateFormFile("file", name)
+		if err != nil {
+			t.Fatalf("form file: %v", err)
+		}
+		if _, err := fw.Write(body); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		mw.Close()
+
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/uploads", &buf)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		return res.StatusCode, raw
+	}
+
+	t.Run("an empty file is rejected", func(t *testing.T) {
+		// Accepting it produces a deck that can never render, and the failure
+		// would only surface later at playback.
+		status, raw := upload(t, "empty.pdf", nil)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("stored files are served with nosniff", func(t *testing.T) {
+		// The extension decides Content-Type, so a .pdf holding HTML is already
+		// labelled application/pdf — but without nosniff a browser may ignore
+		// that, sniff the HTML, and run its scripts against the API's origin.
+		status, raw := upload(t, "sniff.pdf", []byte("<html><script>alert(1)</script></html>"))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var out struct {
+			URL string `json:"url"`
+		}
+		decode(t, raw, &out)
+
+		res, err := http.Get(srv.URL + out.URL)
+		if err != nil {
+			t.Fatalf("fetch upload: %v", err)
+		}
+		defer res.Body.Close()
+
+		if got := res.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+		}
+		if ct := res.Header.Get("Content-Type"); strings.Contains(ct, "text/html") {
+			t.Errorf("Content-Type = %q — HTML would execute on this origin", ct)
+		}
+	})
+
+	t.Run("the client filename cannot escape the upload directory", func(t *testing.T) {
+		status, raw := upload(t, "../../evil.pdf", []byte("%PDF-1.4 test"))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var out struct {
+			URL string `json:"url"`
+		}
+		decode(t, raw, &out)
+		if strings.Contains(out.URL, "..") {
+			t.Fatalf("stored path %q still contains a traversal segment", out.URL)
+		}
+	})
+}
+
+// ---------- production hardening ----------
+
+func TestUsersRequireAdmin(t *testing.T) {
+	// The listing returns every account's email and role. Public, it handed an
+	// attacker the target list — including which addresses are admins — before
+	// they tried a single password.
+	t.Run("anonymous cannot list users", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/users", "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("anonymous cannot read one user", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/users/"+uuid.Nil.String(), "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a non-admin is forbidden", func(t *testing.T) {
+		token := adminToken(t)
+		const email, pass = "viewer-probe@wit.id", "viewerpass123"
+		status, raw := do(t, http.MethodPost, "/users", token, map[string]string{
+			"name": "Viewer Probe", "email": email, "password": pass, "role": "viewer",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		viewer := login(t, email, pass)
+		status, raw = do(t, http.MethodGet, "/users", viewer, nil)
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+
+	t.Run("an admin still can", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/users", adminToken(t), nil)
+		requireStatus(t, http.StatusOK, status, raw)
+	})
+}
+
+func TestAuthRateLimit(t *testing.T) {
+	// The suite raises the allowance so it can sign in freely; this exercises the
+	// middleware with its own limiter rather than trusting the raised one.
+	rl := httpdelivery.NewRateLimiter(3, time.Minute)
+
+	for i := 0; i < 3; i++ {
+		if !rl.Allow("ip:203.0.113.1") {
+			t.Fatalf("attempt %d refused while still inside the burst", i+1)
+		}
+	}
+	if rl.Allow("ip:203.0.113.1") {
+		t.Fatal("a fourth attempt was allowed — the burst is not enforced")
+	}
+
+	// One client's exhaustion must not lock anyone else out. Without a per-key
+	// bucket a single noisy address would deny the whole service.
+	if !rl.Allow("ip:203.0.113.9") {
+		t.Fatal("a different address was refused because of another's usage")
+	}
 }

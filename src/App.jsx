@@ -12,7 +12,10 @@ import {
 } from './lib/api.js'
 import { errorToast, humanizeError, isSessionExpired } from './lib/errors.js'
 import { useOnline } from './lib/useOnline.js'
-import { loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen } from './lib/storage.js'
+import {
+  loadHistory, loadAuth, saveAuth, clearAuth, hasSeenTour, markTourSeen,
+  setProgressRecorder, mergeRemoteHistory,
+} from './lib/storage.js'
 import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
 import { FavoritesProvider } from './lib/favoritesContext.jsx'
 import { withViewTransition } from './lib/viewTransition.js'
@@ -155,11 +158,16 @@ export default function App() {
     setStatus('loading')
     setError(null)
     try {
+      // The user directory is admin-only, and it sits in the same Promise.all as
+      // the catalog — so for anyone else a 403 here would fail the whole load and
+      // show the error screen instead of the app. Only ask when it's allowed.
+      const wantsUsers = !!user && !user.guest && user.role === 'admin'
+
       const [statsRes, heroRes, topRes, userList, ...rowRes] = await Promise.all([
         api.deckStats(),
         api.listDecks({ featured: 'true', limit: 1 }),
         api.listDecks({ sort: 'views', limit: 10 }),
-        api.listUsers(),
+        wantsUsers ? api.listUsers() : Promise.resolve([]),
         ...CATEGORIES.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
       ])
 
@@ -177,7 +185,8 @@ export default function App() {
       setError(e)
       setStatus('error')
     }
-  }, [])
+  // user matters: whether the directory is fetched depends on their role.
+  }, [user])
 
   // Counts live on the server now, so any mutation that changes them needs a
   // refresh — otherwise the admin summary drifts from the catalog.
@@ -220,6 +229,37 @@ export default function App() {
     onRight: () => navigateSection(-1),
     ignore: '.scroll-snap-x, input, textarea, select, [data-no-swipe]',
   })
+
+  // Route progress writes to the backend while signed in. Guests fall through to
+  // localStorage alone, exactly as before.
+  useEffect(() => {
+    if (!favBackend) {
+      setProgressRecorder(null)
+      return
+    }
+    setProgressRecorder((deckId, currentSlide, totalSlides) => {
+      // Non-fatal: the local copy already holds the position, so a failed ping
+      // costs a slightly stale resume point and nothing else.
+      api.saveProgress(deckId, currentSlide, totalSlides).catch(() => {})
+    })
+    return () => setProgressRecorder(null)
+  }, [favBackend, user])
+
+  // Pull the account's "Continue watching" on sign-in, so the shelf follows the
+  // user rather than the browser.
+  useEffect(() => {
+    if (!favBackend) return
+    let cancelled = false
+    api
+      .listProgress()
+      .then((res) => {
+        if (!cancelled) setHistory(mergeRemoteHistory(res?.items || []))
+      })
+      .catch(() => {}) // non-fatal; the local shelf still renders
+    return () => {
+      cancelled = true
+    }
+  }, [favBackend, user])
 
   // Pull the signed-in user's favorites from the backend; guests keep whatever
   // is in localStorage.
