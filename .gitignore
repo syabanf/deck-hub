@@ -3,13 +3,18 @@ dist
 .DS_Store
 *.log
 .vite
+.vercel
 
 # Local environment. Only the .example templates are committed — a real .env
 # holds secrets, and the root one was unprotected until now.
+#
+# The negation matters: .env.* alone would swallow .env.example too, leaving
+# newcomers with no template and no hint that one ever existed.
 .env
 .env.*
 !.env.example
 
 # Conflict copies a file-sync service drops into the tree on its own. The Go
-# ones redeclare their package's types and break the build.
+# ones redeclare their package's types and break the build; it has also renamed
+# node_modules binaries out from under the bundler.
 * [0-9].*

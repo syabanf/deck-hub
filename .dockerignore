@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+.claude-flow
+node_modules
+dist
+backend
+*.log
+.env
+.env.*
+!.env.example

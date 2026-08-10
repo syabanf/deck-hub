@@ -1,0 +1,10 @@
+.git
+bin
+hashpw
+uploads
+.env
+*.log
+README.md
+docs
+scripts
+test
