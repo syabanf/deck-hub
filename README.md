@@ -304,6 +304,32 @@ Four things protect this path:
 Persist the returned `url` — it is **server-relative**, so stored decks survive
 an origin change. The frontend resolves it against the API base at render time.
 
+### Uploading without the UI
+
+Publishing a deck takes three calls — sign in, upload, create — and the middle
+result has to be passed through verbatim. One command does all three:
+
+```bash
+cd backend
+./scripts/upload-deck.sh slides.pdf --title "Q4 Review" --category iconic
+make upload FILE=slides.pdf TITLE="Q4 Review"      # same thing
+```
+
+It points at `http://localhost:8080` as `admin@wit.id` unless told otherwise:
+
+```bash
+API=https://deckflix.wit.id/api EMAIL=editor@wit.id PASSWORD=… \
+  ./scripts/upload-deck.sh demo.mp4
+```
+
+The source type is derived from the extension, so a `.mp4` becomes a video deck
+and a `.pdf` a document one — get that wrong by hand and the deck plays as the
+wrong thing. Afterwards it fetches the file back and reports the status: a deck
+whose file 404s looks fine in the catalog until somebody opens it.
+
+Unlike the Add-deck form, which only accepts PDFs, this takes anything the API
+does.
+
 ---
 
 ## Testing

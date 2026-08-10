@@ -31,7 +31,7 @@ PSQL ?= psql
 
 BINARY := bin/api
 
-.PHONY: help run build tidy test test-e2e stress docs seed-demo vet hash migrate-up migrate-down migrate-force seed-dummy unseed-dummy docker-up docker-down
+.PHONY: help run build tidy test test-e2e stress docs seed-demo upload vet hash migrate-up migrate-down migrate-force seed-dummy unseed-dummy docker-up docker-down
 
 help: ## Show this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -77,6 +77,14 @@ migrate-down: ## Roll back the last migration (requires golang-migrate CLI).
 
 migrate-force: ## Force the schema_migrations version. Usage: make migrate-force V=1
 	migrate -path migrations -database "$(DB_DSN)" force $(V)
+
+upload: ## Upload a file and publish it as a deck. Usage: make upload FILE=deck.pdf [TITLE="..."]
+	@test -n "$(FILE)" || { echo "Usage: make upload FILE=deck.pdf [TITLE=\"My deck\"] [CATEGORY=iconic]"; exit 1; }
+	@./scripts/upload-deck.sh "$(FILE)" \
+	  $(if $(TITLE),--title "$(TITLE)") \
+	  $(if $(CATEGORY),--category "$(CATEGORY)") \
+	  $(if $(INDUSTRY),--industry "$(INDUSTRY)") \
+	  $(if $(AUTHOR),--author "$(AUTHOR)")
 
 seed-demo: ## Re-insert the demo accounts (editor/viewer/lead-*). LOCAL DEVELOPMENT ONLY.
 	@echo "Seeding demo accounts into $(DB_NAME) — never run this against production."
