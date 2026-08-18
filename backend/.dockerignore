@@ -5,6 +5,11 @@ uploads
 .env
 *.log
 README.md
-docs
+# docs/ carries Go code now, not just prose: docs.go embeds openapi.yaml so the
+# binary can serve /docs and /openapi.yaml without the file existing on disk.
+# Excluding the whole directory broke the build — the package simply vanished.
+# Only the prose is skipped.
+docs/*.md
+docs/*.csv
 scripts
 test
