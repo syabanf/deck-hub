@@ -13,6 +13,7 @@ dist
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Conflict copies a file-sync service drops into the tree on its own. The Go
 # ones redeclare their package's types and break the build; it has also renamed

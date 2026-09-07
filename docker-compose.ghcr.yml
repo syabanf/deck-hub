@@ -31,6 +31,22 @@ services:
       JWT_TTL: ${JWT_TTL:-24h}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
       APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set}
+      # Migration 000001 seeds an admin whose password is published in this
+      # repository. Required, not defaulted: without it every deployment ships
+      # with a public admin password, and the only sign is a warning in a log
+      # nobody reads.
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@wit.id}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?BOOTSTRAP_ADMIN_PASSWORD must be set}
+      # Registration is open, so verification mail has to leave the server. With
+      # SMTP_HOST empty the links are printed to the container log instead and
+      # nobody who signs up can finish.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-WIT <no-reply@wit.id>}
+      AUTH_RATE_IP: ${AUTH_RATE_IP:-10}
+      AUTH_RATE_ACCOUNT: ${AUTH_RATE_ACCOUNT:-5}
       UPLOAD_DIR: /app/uploads
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
     volumes:

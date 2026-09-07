@@ -414,3 +414,47 @@ wants before guessing anything.
 Verification emails are printed to the server log by the development mailer, so
 the flow works without SMTP credentials. Sending for real means writing another
 `domain.Mailer` — nothing above that layer changes.
+
+### Environments
+
+Three tiers, and the only difference between the last two is where the images
+come from — same compose shape, same nginx, same Postgres major.
+
+| Tier | Host | Brought up with | Origin |
+| --- | --- | --- | --- |
+| Development | a developer's laptop | `npm run dev` + `go run ./cmd/api` | `:5173`, API on `:8080` |
+| Staging | the same laptop | `docker compose --env-file .env.staging up -d --build` | `:8081` |
+| Production | the deploy host | `docker compose -f docker-compose.ghcr.yml up -d` | `https://paparan.reddie.id` |
+
+Development is deliberately *not* containerised: Vite's HMR and `go run` are
+what make the edit loop quick, and a container in the middle only slows it.
+Staging exists to catch what that speed hides — nginx's MIME types, the `/api`
+proxy, `VITE_API_URL=/api` baked at build time, and a real Postgres 16. Every
+production bug this project has had so far lived in exactly that gap.
+
+Staging builds from the working tree, production pulls tagged images that CI
+already built. Nothing is ever built on the production host.
+
+### Releasing
+
+```
+branch ──▶ make test && make docs && npm run build   # gate
+       ──▶ staging, opened and clicked through       # proof
+       ──▶ PR ──▶ main                               # CI: :latest and :sha-<sha> to GHCR
+       ──▶ tag vX.Y.Z                                # CI: :vX.Y.Z, :X.Y
+       ──▶ production: IMAGE_TAG=vX.Y.Z docker compose … up -d
+```
+
+Production pins `IMAGE_TAG` to a version tag rather than `latest`. A rollback is
+then editing one variable and running `up -d` again, instead of finding out
+which digest `latest` pointed at last Tuesday.
+
+`migrate` runs as its own service and the backend waits for it
+(`service_completed_successfully`), so a deploy carrying a new migration applies
+it before any request is served. A failed migration stops the deploy rather than
+starting an API against a half-built schema.
+
+The production host also needs a TLS terminator in front — the frontend
+container serves plain HTTP on `8080` as an unprivileged user, by design, and
+knows nothing about certificates. `APP_BASE_URL` and `CORS_ORIGINS` must both
+name the public `https://` origin, not the container's port.
