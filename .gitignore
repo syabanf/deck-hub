@@ -19,3 +19,6 @@ dist
 # ones redeclare their package's types and break the build; it has also renamed
 # node_modules binaries out from under the bundler.
 * [0-9].*
+
+# Staging run directory: generated nginx config, pids, logs, uploads.
+staging/.run/
