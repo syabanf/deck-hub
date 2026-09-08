@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { INDUSTRIES } from '../data/decks.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 
 // Source types after normalization (api.js maps gslides/embed → url).
 const SOURCE_OPTIONS = [
@@ -22,6 +22,7 @@ const DEFAULTS = { industry: 'all', year: 'all', source: 'all', sort: 'views' }
 // useDeckFilters owns the filter state and derives the filtered/sorted list.
 // The companion <DeckFilters> component renders the controls.
 export function useDeckFilters(decks = []) {
+  const { industries } = useTaxonomy()
   const [industry, setIndustry] = useState(DEFAULTS.industry)
   const [year, setYear] = useState(DEFAULTS.year)
   const [source, setSource] = useState(DEFAULTS.source)
@@ -30,7 +31,7 @@ export function useDeckFilters(decks = []) {
   // Only offer options that actually exist in this deck set.
   const availableIndustries = useMemo(() => {
     const present = new Set(decks.map((d) => d.industry).filter(Boolean))
-    return INDUSTRIES.filter((i) => present.has(i.id))
+    return industries.filter((i) => present.has(i.id))
   }, [decks])
 
   const availableYears = useMemo(

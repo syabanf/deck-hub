@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { CATEGORIES, INDUSTRIES } from './data/decks.js'
+import { useTaxonomy } from './lib/taxonomy.jsx'
 import {
   api,
   normalizeDecks,
@@ -83,6 +83,7 @@ const matchesQuery = (deck, q) => {
 }
 
 export default function App() {
+  const { categories, industries } = useTaxonomy()
   const [user, setUser] = useState(() => loadAuth())
   const [decks, setDecks] = useState([])
   const [users, setUsers] = useState([])
@@ -168,7 +169,7 @@ export default function App() {
         api.listDecks({ featured: 'true', limit: 1 }),
         api.listDecks({ sort: 'views', limit: 10 }),
         wantsUsers ? api.listUsers() : Promise.resolve([]),
-        ...CATEGORIES.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
+        ...categories.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
       ])
 
       const hero = normalizeDecks(heroRes.data || [])
@@ -186,7 +187,9 @@ export default function App() {
       setStatus('error')
     }
   // user matters: whether the directory is fetched depends on their role.
-  }, [user])
+  // categories matters too: this fetches one row per category, so the home page
+  // would keep the compiled-in six after the real list arrives.
+  }, [user, categories])
 
   // Counts live on the server now, so any mutation that changes them needs a
   // refresh — otherwise the admin summary drifts from the catalog.
@@ -330,12 +333,12 @@ export default function App() {
   }, [history, decks])
 
   const byCategory = useMemo(() => {
-    const map = Object.fromEntries(CATEGORIES.map((c) => [c.id, []]))
+    const map = Object.fromEntries(categories.map((c) => [c.id, []]))
     for (const d of decks) {
       if (map[d.category]) map[d.category].push(d)
     }
     return map
-  }, [decks])
+  }, [decks, categories])
 
   const mostViewed = useMemo(
     () => topTenIds.map((id) => byId.get(id)).filter(Boolean),
@@ -692,7 +695,7 @@ export default function App() {
   let body
   if (isSearching) {
     const industryLabel = activeIndustry
-      ? INDUSTRIES.find((i) => i.id === activeIndustry)?.title
+      ? industries.find((i) => i.id === activeIndustry)?.title
       : null
     body = (
       <SearchResults
@@ -847,7 +850,7 @@ export default function App() {
           onClose={() => setSearchModalOpen(false)}
           query={query}
           onQueryChange={setQuery}
-          industries={INDUSTRIES}
+          industries={industries}
           activeIndustry={activeIndustry}
           onIndustryClick={setActiveIndustry}
           allDecks={decks}

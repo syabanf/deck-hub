@@ -7,7 +7,7 @@ import { humanizeError } from '../lib/errors.js'
 import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
 import { detectAttachment } from '../lib/attachments.js'
 import { useClosable } from '../lib/useClosable.js'
-import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 
 const PALETTES = [
   { name: 'Ember', from: '#ff5f6d', to: '#ffc371', text: '#1a0d00' },
@@ -84,6 +84,7 @@ const FieldLabel = ({ children, hint }) => (
 )
 
 export default function AddDeckModal({ onClose, onAdd }) {
+  const { categories, industries } = useTaxonomy()
   const { closing, requestClose } = useClosable(onClose)
   const [tab, setTab] = useState('upload')
   const [dragOver, setDragOver] = useState(false)
@@ -423,7 +424,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       className="w-full px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
                     >
                       <option value="mine">My Library</option>
-                      {CATEGORIES.map((c) => (
+                      {categories.map((c) => (
                         <option key={c.id} value={c.id}>{c.title}</option>
                       ))}
                     </select>
@@ -436,7 +437,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       className="w-full px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
                     >
                       <option value="">— None —</option>
-                      {INDUSTRIES.map((i) => (
+                      {industries.map((i) => (
                         <option key={i.id} value={i.id}>{i.title}</option>
                       ))}
                     </select>

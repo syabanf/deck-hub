@@ -239,6 +239,21 @@ export const api = {
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
 
+  // Taxonomy — the master lists the catalog is browsed by. Reads are public;
+  // writes are admin-only, so `auth: true` on all four.
+  //
+  // `activeOnly` is what browse screens want and the admin screen must not
+  // pass: retiring a term you can no longer see is a one-way door.
+  listTerms: (kind, { activeOnly = false } = {}) =>
+    request(`/taxonomy/${kind}${activeOnly ? '?active=true' : ''}`),
+  unknownTerms: (kind) => request(`/taxonomy/${kind}/unknown`),
+  createTerm: (kind, term) =>
+    request(`/taxonomy/${kind}`, { method: 'POST', body: term, auth: true }),
+  updateTerm: (kind, slug, patch) =>
+    request(`/taxonomy/${kind}/${slug}`, { method: 'PUT', body: patch, auth: true }),
+  deleteTerm: (kind, slug) =>
+    request(`/taxonomy/${kind}/${slug}`, { method: 'DELETE', auth: true }),
+
   // Viewing progress ("Continue watching") — private per-user history.
   listProgress: () => request('/progress', { auth: true }),
   saveProgress: (deckId, currentSlide, totalSlides) =>

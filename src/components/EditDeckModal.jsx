@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { useClosable } from '../lib/useClosable.js'
 import { CloseIcon, CheckIcon, LinkIcon } from '../lib/icons.jsx'
 
@@ -26,6 +26,7 @@ const parseTags = (raw) =>
     .filter(Boolean)
 
 export default function EditDeckModal({ deck, onSave, onClose, saving = false, error = null }) {
+  const { categories, industries } = useTaxonomy()
   const { closing, requestClose } = useClosable(onClose)
 
   // The form is seeded from the deck's *stored* values. source.raw is the
@@ -168,7 +169,7 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Category">
               <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-                {CATEGORIES.map((c) => (
+                {categories.map((c) => (
                   <option key={c.id} value={c.id} className="bg-deck-card">
                     {c.title}
                   </option>
@@ -179,7 +180,7 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
             <Field label="Industry">
               <select value={industry} onChange={(e) => setIndustry(e.target.value)} className={inputCls}>
                 <option value="" className="bg-deck-card">— none —</option>
-                {INDUSTRIES.map((i) => (
+                {industries.map((i) => (
                   <option key={i.id} value={i.id} className="bg-deck-card">
                     {i.title}
                   </option>

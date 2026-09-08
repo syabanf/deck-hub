@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ROLES, USER_STATUSES } from '../lib/storage.js'
 import { PlusIcon, TrashIcon, UserIcon, CloseIcon } from '../lib/icons.jsx'
 import ManagePage from './ManagePage.jsx'
+import TaxonomyManager from './TaxonomyManager.jsx'
 
 const ROLE_META = {
   admin: { label: 'Admin', color: '#fb7185' },
@@ -46,13 +47,16 @@ export default function SettingsPage({
           Users
           <span className="ml-2 text-[11px] font-bold text-deck-muted">{users.length}</span>
         </TabButton>
+        <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
+          Catalog
+        </TabButton>
         <TabButton active={tab === 'data'} onClick={() => setTab('data')}>
           Master Data
         </TabButton>
       </div>
 
       <div className="mt-6">
-        {tab === 'users' ? (
+        {tab === 'users' && (
           <UsersManager
             users={users}
             currentEmail={currentEmail}
@@ -61,9 +65,11 @@ export default function SettingsPage({
             onUpdate={onUpdateUser}
             onRemove={onRemoveUser}
           />
-        ) : (
-          <ManagePage embedded {...manageProps} />
         )}
+        {/* The deck table used to sit under "Master Data", which is what the
+            catalog is filed *by*, not the catalog itself. */}
+        {tab === 'catalog' && <ManagePage embedded {...manageProps} />}
+        {tab === 'data' && <TaxonomyManager canManage={canManageUsers} />}
       </div>
     </div>
   )
