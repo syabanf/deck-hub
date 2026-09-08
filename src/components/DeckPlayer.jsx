@@ -94,7 +94,7 @@ const UrlStage = ({ deck }) => {
   const url = deck.source.value
   const embedUrl = toEmbedUrl(url)
   return (
-    <div className="aspect-[16/9] w-full max-w-[1600px] mx-auto rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10 bg-black">
+    <div className="relative aspect-[16/9] w-full max-w-[1600px] mx-auto rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10 bg-black">
       <iframe
         src={embedUrl}
         title={deck.title}
@@ -102,6 +102,19 @@ const UrlStage = ({ deck }) => {
         allow="autoplay; fullscreen"
         allowFullScreen
       />
+      {/* A host that refuses to be framed renders the browser's own error page
+          in here, and nothing in this app can detect that: the load event fires
+          either way and the document is cross-origin. So the way out is always
+          offered rather than offered on failure — it costs a corner of the
+          frame, and without it a refused embed is a dead end. */}
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-black/60 hover:bg-black/80 border border-white/15 hover:border-white/35 text-[11px] font-semibold text-white/80 hover:text-white backdrop-blur-sm transition-colors"
+      >
+        Open in a new tab ↗
+      </a>
     </div>
   )
 }
