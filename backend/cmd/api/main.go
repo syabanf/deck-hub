@@ -122,6 +122,7 @@ func run() error {
 
 	// --- Transport: token manager + handlers ---
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
+
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
 		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
 		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
@@ -151,12 +152,26 @@ func run() error {
 		CORSOrigins: cfg.CORSOrigins,
 	})
 
+	// Timeouts sized for the largest thing that crosses this server: a 25 MB
+	// deck, in either direction.
+	//
+	// They were 15s read / 30s write, which is fine on a laptop and wrong on
+	// the internet. A read timeout covers the whole request body, so 15s meant
+	// an upload had to sustain ~14 Mbps or the connection was cut mid-transfer
+	// — and the frontend already allows two minutes for one. The write timeout
+	// covers the whole response, so 30s meant serving that same PDF back
+	// needed ~7 Mbps. Both failures look like "it just stops", and only on a
+	// slow link, which is exactly where nobody is testing.
+	//
+	// ReadHeaderTimeout stays short: that is the slowloris defence, and it is
+	// unaffected by how long a legitimate body takes. Size is bounded
+	// separately by MaxBytesReader.
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 
