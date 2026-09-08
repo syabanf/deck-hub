@@ -310,6 +310,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favoriteIds, history, status])
 
+  // The catch-all for section changes that do not go through a transition —
+  // signing out, and searching from the details modal. Navigations scroll
+  // inside the transition itself; see withViewTransition for why doing it here
+  // made the animation play against the old scroll position.
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
