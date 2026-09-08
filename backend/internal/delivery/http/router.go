@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -8,23 +9,36 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
+
+	"github.com/wit/wit-backend/internal/domain"
 )
 
 // RouterDeps bundles everything the router needs to wire its routes. Handlers
 // depend on narrow usecase interfaces, not concrete types or repositories.
 type RouterDeps struct {
-	Auth      *AuthHandler
-	Register  *RegistrationHandler
-	Users     *UserHandler
-	Decks     *DeckHandler
-	Taxonomy  *TaxonomyHandler
-	Settings  *SettingsHandler
-	Me        *MeHandler
-	Uploads   *UploadHandler
-	Favorites *FavoriteHandler
-	Progress  *ProgressHandler
-	Docs      *DocsHandler
-	Tokens    *TokenManager
+	Auth     *AuthHandler
+	Register *RegistrationHandler
+	Users    *UserHandler
+	Decks    *DeckHandler
+	Taxonomy *TaxonomyHandler
+	Settings *SettingsHandler
+	Me       *MeHandler
+	AuditLog *AuditHandler
+
+	// AuditRepo records every write. Nil turns recording off; the log endpoint
+	// is mounted separately, so a deployment can read history it is no longer
+	// adding to.
+	AuditRepo domain.AuditRepository
+
+	// ActorEmail resolves the account behind a token, so the log keeps a name
+	// even after that account is deleted.
+	ActorEmail func(context.Context, uuid.UUID) string
+	Uploads    *UploadHandler
+	Favorites  *FavoriteHandler
+	Progress   *ProgressHandler
+	Docs       *DocsHandler
+	Tokens     *TokenManager
 
 	// UploadDir is the directory uploaded files are served from. When empty,
 	// the static /uploads/* route is not mounted.
@@ -79,6 +93,9 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
+
+	// Before the routes, so every write is covered by having been routed.
+	r.Use(Audit(d.AuditRepo, d.ActorEmail))
 
 	// CORS for the browser frontend (dev server, preview, or deployed PWA).
 	origins := d.CORSOrigins
@@ -145,6 +162,17 @@ func NewRouter(d RouterDeps) http.Handler {
 			r.Use(d.Tokens.JWTAuth)
 			r.Get("/", d.Me.Get)
 			r.Put("/password", d.Me.ChangePassword)
+		})
+	}
+
+	// The activity log. Admin only: it names every account and what they
+	// changed, which is precisely the picture an attacker wants and nobody
+	// else needs.
+	if d.AuditLog != nil {
+		r.Route("/audit", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Use(RequireRole("admin"))
+			r.Get("/", d.AuditLog.List)
 		})
 	}
 

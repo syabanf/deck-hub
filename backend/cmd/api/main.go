@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/wit/wit-backend/internal/config"
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
 	"github.com/wit/wit-backend/internal/domain"
@@ -52,6 +54,7 @@ func run() error {
 	progressRepo := postgres.NewProgressRepository(pool)
 	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
 	settingsRepo := postgres.NewSettingsRepository(pool)
+	auditRepo := postgres.NewAuditRepository(pool)
 
 	// --- Usecases (depend only on domain interfaces) ---
 	userUC := usecase.NewUserUsecase(userRepo)
@@ -60,6 +63,7 @@ func run() error {
 	progressUC := usecase.NewProgressUsecase(progressRepo)
 	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
 	settingsUC := usecase.NewSettingsUsecase(settingsRepo)
+	auditUC := usecase.NewAuditUsecase(auditRepo)
 
 	// Take ownership of the seeded admin. Migration 000001 ships a published
 	// password so a fresh checkout works; production must not keep it.
@@ -117,13 +121,24 @@ func run() error {
 	// --- Transport: token manager + handlers ---
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
-		Auth:        httpdelivery.NewAuthHandler(userUC, tokens),
-		Register:    httpdelivery.NewRegistrationHandler(registrationUC, tokens),
-		Users:       httpdelivery.NewUserHandler(userUC),
-		Decks:       httpdelivery.NewDeckHandler(deckUC),
-		Taxonomy:    httpdelivery.NewTaxonomyHandler(taxonomyUC),
-		Settings:    httpdelivery.NewSettingsHandler(settingsUC),
-		Me:          httpdelivery.NewMeHandler(userUC, deckUC),
+		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
+		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
+		Users:     httpdelivery.NewUserHandler(userUC),
+		Decks:     httpdelivery.NewDeckHandler(deckUC),
+		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
+		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
+		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
+		AuditRepo: auditRepo,
+		// The email is copied into each entry at the time, so a deleted account
+		// does not erase its own history.
+		ActorEmail: func(ctx context.Context, id uuid.UUID) string {
+			u, err := userUC.GetByID(ctx, id)
+			if err != nil {
+				return ""
+			}
+			return u.Email
+		},
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
 		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:    httpdelivery.NewProgressHandler(progressUC),

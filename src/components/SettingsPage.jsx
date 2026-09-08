@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ROLES, USER_STATUSES } from '../lib/storage.js'
 import { PlusIcon, TrashIcon, UserIcon, CloseIcon } from '../lib/icons.jsx'
 import ManagePage from './ManagePage.jsx'
+import ActivityLog from './ActivityLog.jsx'
 import ProfilePage from './ProfilePage.jsx'
 import TaxonomyManager from './TaxonomyManager.jsx'
 
@@ -60,6 +61,11 @@ export default function SettingsPage({
         <TabButton active={tab === 'data'} onClick={() => setTab('data')}>
           Master Data
         </TabButton>
+        {canManageUsers && (
+          <TabButton active={tab === 'activity'} onClick={() => setTab('activity')}>
+            Activity
+          </TabButton>
+        )}
       </div>
 
       <div className="mt-6">
@@ -78,6 +84,7 @@ export default function SettingsPage({
             catalog is filed *by*, not the catalog itself. */}
         {tab === 'catalog' && <ManagePage embedded {...manageProps} />}
         {tab === 'data' && <TaxonomyManager canManage={canManageUsers} />}
+        {tab === 'activity' && canManageUsers && <ActivityLog />}
       </div>
     </div>
   )

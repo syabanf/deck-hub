@@ -101,6 +101,8 @@ func TestMain(m *testing.M) {
 	for _, f := range []string{
 		// Anything with a foreign key into users or decks has to go before
 		// 000001 can drop those tables.
+		// audit_log references users, so it has to go before 000001 drops them.
+		"000015_audit_log.down.sql",
 		"000010_taxonomy_terms.down.sql",
 		"000008_viewing_progress.down.sql",
 		"000007_email_verification.down.sql",
@@ -124,6 +126,7 @@ func TestMain(m *testing.M) {
 		"000012_deck_cover_image.up.sql",
 		"000013_app_settings.up.sql",
 		"000014_deck_owner.up.sql",
+		"000015_audit_log.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)

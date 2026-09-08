@@ -96,6 +96,9 @@ func (tm *TokenManager) JWTAuth(next http.Handler) http.Handler {
 
 		ctx := context.WithValue(r.Context(), ctxKeyUserID, claims.Subject)
 		ctx = context.WithValue(ctx, ctxKeyRole, claims.Role)
+		// The audit middleware sits outside this one and never sees the
+		// context built here, so the account is handed back to it explicitly.
+		noteActor(r.Context(), claims.Subject, claims.Role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

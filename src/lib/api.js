@@ -239,6 +239,17 @@ export const api = {
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
 
+  // The activity log. Admin only, and paged like the catalog — it is the one
+  // table that only grows.
+  listAudit: (params = {}) => {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, v)
+    }
+    const q = qs.toString()
+    return request(`/audit${q ? `?${q}` : ''}`, { auth: true, meta: true })
+  },
+
   // The signed-in account's own record. Any role; /users is the admin path.
   getMe: () => request('/me', { auth: true }),
   changePassword: (currentPassword, newPassword) =>
