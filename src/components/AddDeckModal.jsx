@@ -670,7 +670,15 @@ export default function AddDeckModal({ onClose, onAdd }) {
                 )}
               </div>
 
-              <div className="space-y-3">
+              {/* Sticky from md up, where it is a real second column. `self-start`
+                  is what makes it work at all: a grid item stretches to the row
+                  height by default, and an element as tall as its scroll
+                  container never has anywhere to stick to.
+
+                  Below md the grid collapses to one column and this sits under
+                  the form, where sticking it would pin the preview over the
+                  fields somebody is still filling in. */}
+              <div className="space-y-3 md:sticky md:top-0 md:self-start">
                 <div className="text-xs uppercase tracking-widest text-deck-muted">Preview</div>
                 <div className="aspect-deck rounded-lg overflow-hidden ring-1 ring-deck-border shadow-2xl">
                   <Cover deck={previewDeck} sizeClass="text-xs" />
