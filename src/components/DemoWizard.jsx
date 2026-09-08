@@ -13,11 +13,13 @@ import {
   CheckIcon,
 } from '../lib/icons.jsx'
 
-// Role chips reused by the last step.
-const DEMO_ACCOUNTS = [
-  { role: 'Admin', creds: 'admin@wit.id · admin1234', can: 'Decks + users', color: '#fb7185' },
-  { role: 'Editor', creds: 'editor@wit.id · editor1234', can: 'Add & remove decks', color: '#60a5fa' },
-  { role: 'Viewer', creds: 'viewer@wit.id · viewer1234', can: 'Browse only', color: '#8a8a99' },
+// Role chips reused by the last step. They describe what each role can do;
+// the accounts themselves are provisioned by an admin, so no credentials
+// appear here.
+const ROLE_CHIPS = [
+  { role: 'Admin', can: 'Decks + users', color: '#fb7185' },
+  { role: 'Editor', can: 'Add & remove decks', color: '#60a5fa' },
+  { role: 'Viewer', can: 'Browse only', color: '#8a8a99' },
 ]
 
 const STEPS = [
@@ -159,11 +161,10 @@ export default function DemoWizard({ onClose, onStartDemo }) {
 
           {s.accounts && (
             <div className="mt-3 grid grid-cols-3 gap-2">
-              {DEMO_ACCOUNTS.map((a) => (
+              {ROLE_CHIPS.map((a) => (
                 <div
                   key={a.role}
                   className="rounded-lg bg-white/5 border border-white/10 px-2 py-2 text-center"
-                  title={a.creds}
                 >
                   <div className="flex items-center justify-center gap-1.5 text-sm font-bold">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: a.color }} />

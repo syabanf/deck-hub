@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react'
 import { ROLES, USER_STATUSES } from '../lib/storage.js'
 import { PlusIcon, TrashIcon, UserIcon, CloseIcon } from '../lib/icons.jsx'
 import ManagePage from './ManagePage.jsx'
+import ActivityLog from './ActivityLog.jsx'
+import ProfilePage from './ProfilePage.jsx'
+import TaxonomyManager from './TaxonomyManager.jsx'
 
 const ROLE_META = {
   admin: { label: 'Admin', color: '#fb7185' },
@@ -18,6 +21,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export default function SettingsPage({
   manageProps,
+  user,
   users,
   currentEmail,
   canManageUsers = false,
@@ -25,7 +29,9 @@ export default function SettingsPage({
   onUpdateUser,
   onRemoveUser,
 }) {
-  const [tab, setTab] = useState('users')
+  // Profile first: it is the one tab every role can use, and the only one a
+  // viewer has any business on.
+  const [tab, setTab] = useState(canManageUsers ? 'users' : 'profile')
 
   return (
     <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">
@@ -41,18 +47,33 @@ export default function SettingsPage({
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-deck-border">
+      {/* Scrolls sideways rather than wrapping. On a phone the row wrapped and
+          pushed the last tab off the bottom edge, where nothing suggested it
+          was still there. */}
+      <div className="flex items-center gap-1 border-b border-deck-border overflow-x-auto no-scrollbar">
+        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>
+          Profile
+        </TabButton>
         <TabButton active={tab === 'users'} onClick={() => setTab('users')}>
           Users
           <span className="ml-2 text-[11px] font-bold text-deck-muted">{users.length}</span>
         </TabButton>
+        <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
+          Catalog
+        </TabButton>
         <TabButton active={tab === 'data'} onClick={() => setTab('data')}>
           Master Data
         </TabButton>
+        {canManageUsers && (
+          <TabButton active={tab === 'activity'} onClick={() => setTab('activity')}>
+            Activity
+          </TabButton>
+        )}
       </div>
 
       <div className="mt-6">
-        {tab === 'users' ? (
+        {tab === 'profile' && <ProfilePage user={user} />}
+        {tab === 'users' && (
           <UsersManager
             users={users}
             currentEmail={currentEmail}
@@ -61,9 +82,12 @@ export default function SettingsPage({
             onUpdate={onUpdateUser}
             onRemove={onRemoveUser}
           />
-        ) : (
-          <ManagePage embedded {...manageProps} />
         )}
+        {/* The deck table used to sit under "Master Data", which is what the
+            catalog is filed *by*, not the catalog itself. */}
+        {tab === 'catalog' && <ManagePage embedded {...manageProps} />}
+        {tab === 'data' && <TaxonomyManager canManage={canManageUsers} />}
+        {tab === 'activity' && canManageUsers && <ActivityLog />}
       </div>
     </div>
   )
@@ -73,7 +97,7 @@ function TabButton({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`relative px-4 py-2.5 text-sm font-semibold transition-colors ${
+      className={`relative shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-semibold transition-colors ${
         active ? 'text-white' : 'text-white/55 hover:text-white/85'
       }`}
     >
@@ -110,6 +134,11 @@ function Badge({ meta }) {
 const blankUser = { name: '', email: '', password: '', role: 'viewer', status: 'invited' }
 
 function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemove }) {
+  // Asked in the row, not through window.confirm. A browser that has been told
+  // to stop showing dialogs for this page answers every later confirm() with
+  // false without displaying anything — so the delete button quietly stopped
+  // working, which is exactly what was reported from production.
+  const [confirmingId, setConfirmingId] = useState(null)
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -262,7 +291,8 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
 
       {/* Table */}
       <div className="rounded-xl border border-deck-border overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[520px]">
           <thead className="bg-white/5 text-[10px] uppercase tracking-widest text-deck-muted">
             <tr>
               <th className="text-left px-3 py-2 font-bold">User</th>
@@ -339,23 +369,43 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
                   <td className="px-3 py-2 text-xs text-deck-muted hidden lg:table-cell tabular-nums">
                     {u.createdAt || '—'}
                   </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      disabled={isSelf || !canManage}
-                      onClick={() => {
-                        if (confirm(`Remove ${u.name} (${u.email})?`)) onRemove(u.id)
-                      }}
-                      className="w-7 h-7 rounded inline-flex items-center justify-center bg-white/5 hover:bg-red-500/30 text-white/70 hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5 disabled:hover:text-white/70"
-                      title={isSelf ? "You can't remove yourself" : !canManage ? 'Admin only' : 'Remove user'}
-                    >
-                      <TrashIcon size={13} />
-                    </button>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    {confirmingId === u.id ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="text-xs text-white/60">Remove?</span>
+                        <button
+                          onClick={() => {
+                            setConfirmingId(null)
+                            onRemove(u.id)
+                          }}
+                          className="text-xs font-bold px-2 py-1 rounded bg-red-500/80 hover:bg-red-500"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => setConfirmingId(null)}
+                          className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        disabled={isSelf || !canManage}
+                        onClick={() => setConfirmingId(u.id)}
+                        className="w-7 h-7 rounded inline-flex items-center justify-center bg-white/5 hover:bg-red-500/30 text-white/70 hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/5 disabled:hover:text-white/70"
+                        title={isSelf ? "You can't remove yourself" : !canManage ? 'Admin only' : 'Remove user'}
+                      >
+                        <TrashIcon size={13} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="mt-4 text-xs text-deck-muted flex items-center gap-2">

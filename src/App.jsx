@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
-import { CATEGORIES, INDUSTRIES } from './data/decks.js'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useTaxonomy } from './lib/taxonomy.jsx'
+import { clearDemoPin } from './lib/demoPin.js'
+import { sharedDeckId, syncDeckUrl } from './lib/share.js'
 import {
   api,
   normalizeDecks,
@@ -18,7 +20,7 @@ import {
 } from './lib/storage.js'
 import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
 import { FavoritesProvider } from './lib/favoritesContext.jsx'
-import { withViewTransition } from './lib/viewTransition.js'
+import { withPageFade } from './lib/pageFade.js'
 import { useSwipe } from './lib/useSwipe.js'
 import Navbar from './components/Navbar.jsx'
 import MobileNav from './components/MobileNav.jsx'
@@ -39,22 +41,24 @@ import OfflineBanner from './components/OfflineBanner.jsx'
 import LoadMore from './components/LoadMore.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import VerifyPage from './components/VerifyPage.jsx'
+import ConfirmDialog from './components/ConfirmDialog.jsx'
+import DemoCenter from './components/DemoCenter.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
 import AutoDemo from './components/AutoDemo.jsx'
 
 // Left/right order for swiping between browse sections on touch devices.
 // Settings is intentionally excluded — it's reached by tap, not by swiping.
-const SWIPE_SECTIONS = [
-  'home',
-  'company-profile',
-  'industries',
-  'iconic',
-  'design',
-  'engineering',
-  'strategy',
-  'keynotes',
-  'mine',
+// Sections a swipe steps through, and — via pageQuery below — the set of
+// values that count as a browsable category at all. It used to be this list,
+// hardcoded, which meant a category added in Master Data had no page: the
+// listing query returned null and its grid stayed empty for good.
+const APP_SECTIONS_BEFORE = ['home']
+const APP_SECTIONS_AFTER = ['industries', 'mine']
+const swipeSections = (categoryIds) => [
+  ...APP_SECTIONS_BEFORE,
+  ...categoryIds,
+  ...APP_SECTIONS_AFTER,
 ]
 
 // Bounded fetch sizes. The home page needs a handful of decks per row, not the
@@ -83,7 +87,17 @@ const matchesQuery = (deck, q) => {
 }
 
 export default function App() {
-  const [user, setUser] = useState(() => loadAuth())
+  const { categories, industries } = useTaxonomy()
+  // A link shared with a client has to open the deck, not a sign-in form.
+  // Reads are public at the API already, so the link is the access — which is
+  // what the share menu says on it.
+  //
+  // Not persisted: this guest lasts as long as the tab. Someone who came for
+  // one deck should not silently acquire a lasting account on the catalog.
+  const [sharedId] = useState(() => sharedDeckId())
+  const [user, setUser] = useState(
+    () => loadAuth() || (sharedDeckId() ? { name: 'Guest', email: null, guest: true, since: Date.now() } : null),
+  )
   const [decks, setDecks] = useState([])
   const [users, setUsers] = useState([])
   const [status, setStatus] = useState('loading') // 'loading' | 'ready' | 'error'
@@ -93,6 +107,10 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState('home')
   const [detailsDeck, setDetailsDeck] = useState(null)
   const [playing, setPlaying] = useState(null) // { deck, startIndex }
+  // The deck waiting on a confirmation. Declared here with the rest of the
+  // state: below the sign-in early return it would be a hook that only exists
+  // for signed-in renders, and React counts them.
+  const [pendingRemoval, setPendingRemoval] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   // The deck currently open in the editor, plus its in-flight save state.
   const [editingDeck, setEditingDeck] = useState(null)
@@ -168,7 +186,7 @@ export default function App() {
         api.listDecks({ featured: 'true', limit: 1 }),
         api.listDecks({ sort: 'views', limit: 10 }),
         wantsUsers ? api.listUsers() : Promise.resolve([]),
-        ...CATEGORIES.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
+        ...categories.map((c) => api.listDecks({ category: c.id, limit: HOME_ROW_LIMIT })),
       ])
 
       const hero = normalizeDecks(heroRes.data || [])
@@ -186,7 +204,9 @@ export default function App() {
       setStatus('error')
     }
   // user matters: whether the directory is fetched depends on their role.
-  }, [user])
+  // categories matters too: this fetches one row per category, so the home page
+  // would keep the compiled-in six after the real list arrives.
+  }, [user, categories])
 
   // Counts live on the server now, so any mutation that changes them needs a
   // refresh — otherwise the admin summary drifts from the catalog.
@@ -215,20 +235,31 @@ export default function App() {
   // means a swipe that starts on a row carousel scrolls the row instead.
   const navigateSection = (dir) => {
     if (query.trim() || activeIndustry) return // not while searching/filtering
-    const i = SWIPE_SECTIONS.indexOf(activeCategory)
+    const sections = swipeSections(categories.map((c) => c.id))
+    const i = sections.indexOf(activeCategory)
     if (i < 0) return
     const j = i + dir
-    if (j < 0 || j >= SWIPE_SECTIONS.length) return
-    withViewTransition(() => {
-      setActiveCategory(SWIPE_SECTIONS[j])
+    if (j < 0 || j >= sections.length) return
+    withPageFade(() => {
+      setActiveCategory(sections[j])
       setQuery('')
-    })
+    }, contentEl.current)
   }
-  const contentRef = useSwipe({
+  const swipeRef = useSwipe({
     onLeft: () => navigateSection(1),
     onRight: () => navigateSection(-1),
     ignore: '.scroll-snap-x, input, textarea, select, [data-no-swipe]',
   })
+  // useSwipe hands back a callback ref, which has no `.current` to read the
+  // node from — the fade needs the element itself, so keep our own alongside.
+  const contentEl = useRef(null)
+  const contentRef = useCallback(
+    (node) => {
+      contentEl.current = node
+      swipeRef(node)
+    },
+    [swipeRef],
+  )
 
   // Route progress writes to the backend while signed in. Guests fall through to
   // localStorage alone, exactly as before.
@@ -307,9 +338,36 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favoriteIds, history, status])
 
+  // The catch-all for section changes that do not go through a fade — signing
+  // out, and searching from the details modal. Navigations scroll inside
+  // withPageFade, synchronously with the state change.
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
+
+  // Open the deck a shared link names. Fetched by id rather than looked up in
+  // the catalog: the link may point at a deck no home row happens to carry.
+  const openedShared = useRef(false)
+  useEffect(() => {
+    if (!sharedId || openedShared.current || status !== 'ready') return
+    openedShared.current = true
+    api
+      .listDecksByIds([sharedId])
+      .then((res) => {
+        const [deck] = normalizeDecks(res.data || [])
+        if (deck) setPlaying({ deck, startIndex: 0 })
+        else setToast({ type: 'error', title: 'That deck is gone', message: 'The link points at a deck that no longer exists.' })
+      })
+      .catch(() => {
+        setToast({ type: 'error', title: "Couldn't open that deck", message: 'The link looks right, but the catalog did not answer.' })
+      })
+  }, [sharedId, status])
+
+  // Keep the address bar on whatever is open, so copying from the browser
+  // gives the same link the share menu does.
+  useEffect(() => {
+    syncDeckUrl(playing?.deck || detailsDeck || null)
+  }, [playing, detailsDeck])
 
   const byId = useMemo(() => new Map(decks.map((d) => [d.id, d])), [decks])
 
@@ -330,12 +388,12 @@ export default function App() {
   }, [history, decks])
 
   const byCategory = useMemo(() => {
-    const map = Object.fromEntries(CATEGORIES.map((c) => [c.id, []]))
+    const map = Object.fromEntries(categories.map((c) => [c.id, []]))
     for (const d of decks) {
       if (map[d.category]) map[d.category].push(d)
     }
     return map
-  }, [decks])
+  }, [decks, categories])
 
   const mostViewed = useMemo(
     () => topTenIds.map((id) => byId.get(id)).filter(Boolean),
@@ -347,12 +405,13 @@ export default function App() {
   const pageQuery = useMemo(() => {
     if (query.trim()) return { search: query.trim(), industry: activeIndustry || undefined }
     if (activeIndustry) return { industry: activeIndustry }
-    if (SWIPE_SECTIONS.includes(activeCategory) && activeCategory !== 'home' && activeCategory !== 'mine'
-        && activeCategory !== 'industries') {
+    // Any category Master Data knows about is browsable. Checking against the
+    // list rather than a hardcoded set is what lets a new one have a page.
+    if (categories.some((c) => c.id === activeCategory)) {
       return { category: activeCategory }
     }
     return null
-  }, [query, activeIndustry, activeCategory])
+  }, [query, activeIndustry, activeCategory, categories])
 
   const pageKey = pageQuery ? JSON.stringify(pageQuery) : null
 
@@ -412,10 +471,31 @@ export default function App() {
       })
   }, [pageQuery, pageKey, page.loading, page.ids.length, page.total])
 
-  const pageDecks = useMemo(
-    () => page.ids.map((id) => byId.get(id)).filter(Boolean),
-    [page.ids, byId],
-  )
+  // While a listing is loading, show what is already in memory for that
+  // category rather than nothing.
+  //
+  // The fetch clears page.ids before it starts, and for one frame the grid
+  // renders its empty state — "no decks here yet" — under the new heading.
+  // Measured on a warm localhost it lasts about 15ms, which would be invisible
+  // except that the view transition snapshots the new page in exactly that
+  // frame. The cross-fade then plays from the old grid to an empty page, and
+  // the real cards appear after it finishes.
+  //
+  // The decks are already loaded: the home rows fetch 20 per category at
+  // startup, which is why navigating to Home never showed this. Only plain
+  // category listings can be answered from memory — a search or an industry
+  // filter has no cached equivalent, and there the empty frame is honest.
+  const pageDecks = useMemo(() => {
+    // Two frames have to be covered, and they need different tests. Straight
+    // after the click the ids still belong to the page being left, so the new
+    // heading would sit above the old page's cards; `page.key` catches that.
+    // A moment later the effect clears the ids and sets the key to the new
+    // listing, so the key matches while the grid is empty; only the emptiness
+    // catches that one.
+    const fresh = page.key === pageKey ? page.ids.map((id) => byId.get(id)).filter(Boolean) : []
+    if (fresh.length) return fresh
+    return pageQuery?.category ? byCategory[pageQuery.category] || [] : fresh
+  }, [page.ids, page.key, pageKey, pageQuery, byId, byCategory])
 
   // ---- admin catalog table (Settings → Master Data) ----
   const isSettingsTab = activeCategory === 'settings'
@@ -542,6 +622,10 @@ export default function App() {
 
   const handleLogout = () => {
     clearAuth()
+    // The PIN belongs to whoever typed it, not to the machine. Leaving it
+    // behind let the next person to sign in walk straight into the Demo
+    // Center without being asked.
+    clearDemoPin()
     setUser(null)
     setActiveCategory('home')
     setQuery('')
@@ -614,9 +698,12 @@ export default function App() {
     }
   }
 
-  const handleRemove = async (deck) => {
+  const handleRemove = (deck) => {
     if (!canEdit) return
-    if (!confirm(`Remove "${deck.title}" from the catalog? This can't be undone.`)) return
+    setPendingRemoval(deck)
+  }
+
+  const removeDeck = async (deck) => {
     try {
       await api.deleteDeck(deck.id)
       setDecks((prev) => prev.filter((d) => d.id !== deck.id))
@@ -680,19 +767,20 @@ export default function App() {
     }
   }
 
-  // Every navigation goes through the View Transitions cross-fade.
-  const goTo = (update) => withViewTransition(update)
+  // Every navigation fades the content region and lands at the top of it.
+  const goTo = (update) => withPageFade(update, contentEl.current)
 
   const isSearching = !!query.trim() || !!activeIndustry
   const isHome = activeCategory === 'home' && !isSearching
   const isSettings = activeCategory === 'settings'
+  const isDemos = activeCategory === 'demos'
   const isIndustries = activeCategory === 'industries' && !isSearching
-  const showCategory = !isHome && !isSearching && !isSettings && !isIndustries
+  const showCategory = !isHome && !isSearching && !isSettings && !isIndustries && !isDemos
 
   let body
   if (isSearching) {
     const industryLabel = activeIndustry
-      ? INDUSTRIES.find((i) => i.id === activeIndustry)?.title
+      ? industries.find((i) => i.id === activeIndustry)?.title
       : null
     body = (
       <SearchResults
@@ -718,6 +806,7 @@ export default function App() {
   } else if (isSettings) {
     body = (
       <SettingsPage
+        user={user}
         users={users}
         currentEmail={user?.email}
         canManageUsers={isAdmin}
@@ -741,6 +830,8 @@ export default function App() {
         }}
       />
     )
+  } else if (isDemos) {
+    body = <DemoCenter canEdit={canEdit} onNotify={setToast} />
   } else if (showCategory) {
     const isLibrary = activeCategory === 'mine'
     body = (
@@ -815,6 +906,7 @@ export default function App() {
           onClose={() => setDetailsDeck(null)}
           onPlay={handlePlay}
           onRemove={canEdit ? handleRemove : undefined}
+          onNotify={setToast}
           isFavorite={favSet.has(detailsDeck.id)}
           onToggleFavorite={() => toggleFavorite(detailsDeck)}
           onSearch={(q) => {
@@ -827,6 +919,19 @@ export default function App() {
           })}
         />
       )}
+
+      <ConfirmDialog
+        open={!!pendingRemoval}
+        title="Remove this deck?"
+        message={
+          pendingRemoval
+            ? `"${pendingRemoval.title}" will be taken out of the catalog. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Remove"
+        onConfirm={() => removeDeck(pendingRemoval)}
+        onClose={() => setPendingRemoval(null)}
+      />
 
       {playing && (
         <DeckPlayer
@@ -847,7 +952,7 @@ export default function App() {
           onClose={() => setSearchModalOpen(false)}
           query={query}
           onQueryChange={setQuery}
-          industries={INDUSTRIES}
+          industries={industries}
           activeIndustry={activeIndustry}
           onIndustryClick={setActiveIndustry}
           allDecks={decks}
@@ -986,6 +1091,13 @@ function HomeRows({
   onAddClick,
   onCategoryNav,
 }) {
+  const { categories } = useTaxonomy()
+  // The six the rows above cover by hand.
+  const curated = ['company-profile', 'iconic', 'design', 'engineering', 'strategy', 'keynotes']
+  const extraCategories = categories.filter(
+    (c) => !curated.includes(c.id) && (byCategory[c.id]?.length ?? 0) > 0,
+  )
+
   return (
     <>
       <Row
@@ -1077,6 +1189,25 @@ function HomeRows({
         onTitleClick={() => onCategoryNav('keynotes')}
         onCategoryClick={onCategoryNav}
       />
+
+      {/* Anything added in Master Data since. The rows above are editorial —
+          hand-written subtitles, interleaved with Most Viewed and Continue
+          watching, one of them a Top Ten — so they are not generated from the
+          list. But a category with no row of its own was invisible on the home
+          page entirely, which made adding one feel like nothing happened. An
+          empty one still gets no row: a title over a blank strip is worse than
+          no title. */}
+      {extraCategories.map((c) => (
+        <Row
+          key={c.id}
+          title={c.title}
+          decks={byCategory[c.id]}
+          onPlay={onPlay}
+          onDetails={onDetails}
+          onTitleClick={() => onCategoryNav(c.id)}
+          onCategoryClick={onCategoryNav}
+        />
+      ))}
 
       <Footer onAddClick={onAddClick} />
     </>

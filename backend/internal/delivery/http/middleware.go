@@ -26,17 +26,41 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// AccountLookup answers, for the account a token names, whether it may still
+// act and what it may do. See TokenManager.SetAccountLookup.
+type AccountLookup func(ctx context.Context, id string) (role string, ok bool)
+
 // TokenManager signs and parses JWTs. It lives in the delivery layer because
 // JWTs are a transport-level concern.
 type TokenManager struct {
 	secret []byte
 	ttl    time.Duration
+
+	// account, when set, is consulted on every authenticated request.
+	account AccountLookup
 }
 
 // NewTokenManager builds a TokenManager.
 func NewTokenManager(secret string, ttl time.Duration) *TokenManager {
 	return &TokenManager{secret: []byte(secret), ttl: ttl}
 }
+
+// SetAccountLookup makes every authenticated request check the account behind
+// the token, instead of trusting what the token says about it.
+//
+// A JWT is a snapshot of the moment it was signed, and nothing about deleting
+// an account, suspending it, or demoting an admin to viewer reaches a token
+// already in someone's browser. With a 24-hour lifetime that is a full day in
+// which "remove this user" removes nothing — which is precisely the situation
+// an admin reaches for that button in.
+//
+// So the claim is treated as a hint and the database as the answer: gone or
+// suspended is refused, and the role that governs the request is the current
+// one. One indexed lookup per authenticated call.
+//
+// Optional. Left unset — as the docs and stress harnesses do — the token's own
+// claims stand, which is the previous behaviour.
+func (tm *TokenManager) SetAccountLookup(fn AccountLookup) { tm.account = fn }
 
 // Generate issues a signed JWT for the given user.
 func (tm *TokenManager) Generate(u *domain.User) (string, error) {
@@ -94,8 +118,21 @@ func (tm *TokenManager) JWTAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		role := claims.Role
+		if tm.account != nil {
+			current, ok := tm.account(r.Context(), claims.Subject)
+			if !ok {
+				writeError(w, fmt.Errorf("%w: this account is no longer active", domain.ErrUnauthorized))
+				return
+			}
+			role = current
+		}
+
 		ctx := context.WithValue(r.Context(), ctxKeyUserID, claims.Subject)
-		ctx = context.WithValue(ctx, ctxKeyRole, claims.Role)
+		ctx = context.WithValue(ctx, ctxKeyRole, role)
+		// The audit middleware sits outside this one and never sees the
+		// context built here, so the account is handed back to it explicitly.
+		noteActor(r.Context(), claims.Subject, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

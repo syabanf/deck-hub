@@ -92,6 +92,7 @@ type deckResponse struct {
 	Tags        []string      `json:"tags"`
 	Source      deckSourceDTO `json:"source"`
 	Description string        `json:"description"`
+	CoverImage  string        `json:"coverImage"`
 	Featured    bool          `json:"featured"`
 	ViewCount   int           `json:"viewCount"`
 	CreatedAt   time.Time     `json:"createdAt"`
@@ -114,6 +115,7 @@ func toDeckResponse(d *domain.Deck) deckResponse {
 		Tags:        tags,
 		Source:      deckSourceDTO{Type: d.Source.Type, Value: d.Source.Value},
 		Description: d.Description,
+		CoverImage:  d.CoverImage,
 		Featured:    d.Featured,
 		ViewCount:   d.ViewCount,
 		CreatedAt:   d.CreatedAt,
@@ -139,6 +141,7 @@ type createDeckRequest struct {
 	Tags        []string      `json:"tags"`
 	Source      deckSourceDTO `json:"source"`
 	Description string        `json:"description"`
+	CoverImage  string        `json:"coverImage"`
 	Featured    bool          `json:"featured"`
 }
 
@@ -153,5 +156,156 @@ type updateDeckRequest struct {
 	Tags        *[]string      `json:"tags"`
 	Source      *deckSourceDTO `json:"source"`
 	Description *string        `json:"description"`
+	CoverImage  *string        `json:"coverImage"`
 	Featured    *bool          `json:"featured"`
+}
+
+// ----- taxonomy -----
+
+// termResponse is one entry in a master list. deckCount rides along because
+// every screen that shows these also needs to know what is safe to remove.
+type termResponse struct {
+	Kind      string `json:"kind"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	SortOrder int    `json:"sortOrder"`
+	Active    bool   `json:"active"`
+	Accent    string `json:"accent"`
+	Secondary string `json:"secondary"`
+	DeckCount int    `json:"deckCount"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+func toTermResponse(t *domain.TaxonomyTerm) termResponse {
+	return termResponse{
+		Kind:      string(t.Kind),
+		Slug:      t.Slug,
+		Title:     t.Title,
+		SortOrder: t.SortOrder,
+		Active:    t.Active,
+		Accent:    t.Accent,
+		Secondary: t.Secondary,
+		DeckCount: t.DeckCount,
+		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt: t.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func toTermResponses(terms []*domain.TaxonomyTerm) []termResponse {
+	out := make([]termResponse, 0, len(terms))
+	for _, t := range terms {
+		out = append(out, toTermResponse(t))
+	}
+	return out
+}
+
+// createTermRequest carries the slug because it is chosen once, on create.
+type createTermRequest struct {
+	Slug      string  `json:"slug"`
+	Title     string  `json:"title"`
+	SortOrder *int    `json:"sortOrder"`
+	Active    *bool   `json:"active"`
+	Accent    *string `json:"accent"`
+	Secondary *string `json:"secondary"`
+}
+
+// updateTermRequest has no slug: renaming it would orphan every deck storing
+// the old value. Everything else is a pointer, so an omitted field is left
+// alone and a zero one is applied — sortOrder 0 and an empty colour are both
+// edits somebody meant to make.
+type updateTermRequest struct {
+	Title     string  `json:"title"`
+	SortOrder *int    `json:"sortOrder"`
+	Active    *bool   `json:"active"`
+	Accent    *string `json:"accent"`
+	Secondary *string `json:"secondary"`
+}
+
+// ----- me -----
+
+// meResponse is the signed-in account plus what a profile page reports about
+// it. Embedded rather than duplicated, so the two never drift.
+type meResponse struct {
+	userResponse
+	DeckCount int `json:"deckCount"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+// ----- demos -----
+
+// demoResponse carries the password in clear. That is the point of the
+// feature — it is copied into somebody else's login form — and it is why
+// reading a demo requires an account.
+type demoResponse struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"`
+	Environment string    `json:"environment"`
+	Status      string    `json:"status"`
+	URL         string    `json:"url"`
+	Username    string    `json:"username"`
+	Password    string    `json:"password"`
+	Notes       string    `json:"notes"`
+	SortOrder   int       `json:"sortOrder"`
+	Active      bool      `json:"active"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+func toDemoResponse(d *domain.Demo) demoResponse {
+	return demoResponse{
+		ID:          d.ID.String(),
+		Name:        d.Name,
+		Category:    d.Category,
+		Environment: d.Environment,
+		Status:      d.Status,
+		URL:         d.URL,
+		Username:    d.Username,
+		Password:    d.Password,
+		Notes:       d.Notes,
+		SortOrder:   d.SortOrder,
+		Active:      d.Active,
+		CreatedAt:   d.CreatedAt,
+		UpdatedAt:   d.UpdatedAt,
+	}
+}
+
+func toDemoResponses(demos []*domain.Demo) []demoResponse {
+	out := make([]demoResponse, 0, len(demos))
+	for _, d := range demos {
+		out = append(out, toDemoResponse(d))
+	}
+	return out
+}
+
+type createDemoRequest struct {
+	Name        string `json:"name"`
+	Category    string `json:"category"`
+	Environment string `json:"environment"`
+	Status      string `json:"status"`
+	URL         string `json:"url"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Notes       string `json:"notes"`
+	SortOrder   int    `json:"sortOrder"`
+	Active      *bool  `json:"active"`
+}
+
+// updateDemoRequest is partial; an omitted field keeps its value.
+type updateDemoRequest struct {
+	Name        *string `json:"name"`
+	Category    *string `json:"category"`
+	Environment *string `json:"environment"`
+	Status      *string `json:"status"`
+	URL         *string `json:"url"`
+	Username    *string `json:"username"`
+	Password    *string `json:"password"`
+	Notes       *string `json:"notes"`
+	SortOrder   *int    `json:"sortOrder"`
+	Active      *bool   `json:"active"`
 }

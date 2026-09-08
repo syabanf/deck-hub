@@ -20,7 +20,7 @@ function CircleBtn({ children, onClick, title, filled = false, active = false })
       className={`flex items-center justify-center rounded-full transition-[transform,background-color,border-color] duration-150 ease-out hover:scale-110 active:scale-95 ${
         filled
           ? 'w-9 h-9 bg-white text-black hover:bg-white/90 shadow-lg'
-          : `w-8 h-8 border text-white backdrop-blur ${
+          : `w-8 h-8 border text-white ${
               active
                 ? 'border-white bg-white/20'
                 : 'border-white/40 bg-black/40 hover:border-white'

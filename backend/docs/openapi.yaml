@@ -24,8 +24,18 @@ info:
     | `editor` | create/update/delete decks, upload files  |
     | `viewer` | read, and manage their own favourites     |
 
-    Reads on `/decks` and `/users` are public. A 401 on an authenticated call
-    means the token is missing, malformed, or expired.
+    Reads on `/decks` are public; `/users` is admin-only.
+
+    A 401 on an authenticated call means the token is missing, malformed,
+    expired — **or that the account behind it no longer exists or has been
+    suspended**. Every authenticated request re-reads that account, and the
+    role that governs the request is the one in the database, not the one in
+    the token. A JWT is a snapshot of the moment it was signed; without that
+    check, deleting a user would do nothing until their token happened to
+    expire, which is a whole day at the default `JWT_TTL`.
+
+    So a client cannot treat a 401 as "sign in again and it will work". It
+    might, or the account may be gone.
 
     ## Errors
 
@@ -51,6 +61,12 @@ info:
     minute per address and 5 per account (`AUTH_RATE_IP`, `AUTH_RATE_ACCOUNT`) —
     raise the first for an office behind a single NAT.
 
+    Two other places verify a secret and are limited for the same reasons:
+    `PUT /me/password`, per account, and the Demo Center's `X-Demo-Pin`, five
+    *wrong* PINs per account per minute. A correct PIN spends nothing, so the
+    app calling `/demos` on every page load never meets the limit — but a
+    four-digit PIN stops being ten thousand cheap guesses.
+
     ## Paging
 
     `GET /decks` is always paged. Omitting `limit` applies the default of 50
@@ -75,6 +91,11 @@ tags:
   - name: Health
   - name: Auth
   - name: Decks
+  - name: Demos
+  - name: Activity
+  - name: Profile
+  - name: Settings
+  - name: Taxonomy
   - name: Users
   - name: Favorites
   - name: Progress
@@ -454,6 +475,361 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /audit:
+    get:
+      tags: [Activity]
+      summary: Who changed what
+      description: |
+        Requires `admin`. The log names every account and what they changed,
+        which is the picture an attacker wants and nobody else needs.
+
+        Every write is recorded, and only writes — reads would bury them and
+        the interesting question is what changed. Refused requests are left
+        out: an attempt that changed nothing is not a change, and recording
+        every one of them makes the real ones hard to find.
+
+        The actor's email is copied into each entry when it is written rather
+        than joined on read, so deleting an account does not erase its own
+        history.
+
+        Paged like `/decks`: the body is a plain array and the total rides in
+        `X-Total-Count`.
+      parameters:
+        - name: entity
+          in: query
+          schema: { type: string, enum: [deck, user, taxonomy, settings, upload, profile, auth, favorites, progress] }
+        - name: action
+          in: query
+          schema: { type: string, enum: [create, update, delete] }
+        - name: actorId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: One page of entries, newest first
+          headers:
+            X-Total-Count:
+              schema: { type: integer }
+              description: Entries matching the filter, ignoring paging
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:         { type: integer, format: int64 }
+                    at:         { type: string, format: date-time }
+                    actorId:    { type: string, format: uuid, nullable: true }
+                    actorEmail: { type: string, description: Copied when written, so it survives the account }
+                    actorRole:  { type: string }
+                    action:     { type: string, enum: [create, update, delete] }
+                    entity:     { type: string }
+                    entityId:   { type: string }
+                    route:      { type: string, description: "The matched route, e.g. PUT /decks/{id}" }
+                    status:     { type: integer }
+                    ip:         { type: string }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /me:
+    get:
+      tags: [Profile]
+      summary: The signed-in account
+      description: |
+        Any signed-in role. Separate from `/users`, which is admin only and
+        returns everybody: a viewer has every right to read their own record
+        and no business reading anyone else's.
+
+        `deckCount` counts decks created by this account. Decks added before
+        `created_by` existed are attributed to nobody, so an established
+        catalog can show a count of zero for someone who did in fact add to it.
+      responses:
+        "200":
+          description: The account, with the numbers a profile page shows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/User"
+                  - type: object
+                    properties:
+                      deckCount: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/password:
+    put:
+      tags: [Profile]
+      summary: Change your own password
+      description: |
+        Requires the current password. Deliberately not the same path as an
+        admin resetting somebody else's through `PUT /users/{id}`: an admin has
+        no current password to offer, and a person changing their own must not
+        be able to skip proving they know it. Without that step a stolen token
+        could replace the password outright, which is the difference between
+        losing a session and losing an account.
+
+        Rate limited per account, like signing in and for the same two
+        reasons: verifying the current password makes this an oracle for
+        guessing it, and each attempt costs the server a bcrypt comparison
+        that any authenticated client could otherwise demand on repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword:     { type: string, format: password, minLength: 8 }
+      responses:
+        "204": { description: Changed }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401":
+          description: Missing token, or the current password is wrong
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Read the application settings
+      description: |
+        Public. The navigation reads these before anyone has signed in, and
+        none of the values are secret.
+
+        Always complete: every known key is returned with its default filled
+        in, so a client never has to know which keys exist in order to read
+        them.
+      responses:
+        "200":
+          description: Every setting, defaults applied
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: string }
+              example:
+                nav_max_categories: "5"
+    put:
+      tags: [Settings]
+      summary: Change settings
+      description: |
+        Requires `admin`. Partial: keys left out keep their current value.
+
+        Unknown keys are refused rather than stored. A key nothing reads is a
+        setting somebody believes they changed, and the failure would be
+        silent. Values are validated against what their key means, and the
+        whole body is checked before any of it is written — a half-applied
+        batch leaves the settings in a state nobody asked for.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+              properties:
+                nav_max_categories:
+                  type: string
+                  description: |
+                    How many categories the header shows before the rest move
+                    into its "More" menu. A whole number from 1 to 20; the
+                    frontend still drops any that do not fit the window.
+      responses:
+        "200":
+          description: The settings after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: string }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /taxonomy/{kind}:
+    parameters:
+      - $ref: "#/components/parameters/TaxonomyKind"
+    get:
+      tags: [Taxonomy]
+      summary: List the terms of one master list
+      description: |
+        Public. These are the lists the catalog is browsed by; they were
+        compiled into the frontend bundle until migration `000010` moved them
+        here, so changing one meant a deploy.
+
+        Retired terms are included by default. Pass `active=true` for the
+        browse UI; the admin screen needs the full list, because a term you
+        cannot see is a term you cannot bring back.
+      parameters:
+        - name: active
+          in: query
+          schema: { type: string, enum: ["true"] }
+          description: Only terms still offered for new decks.
+      responses:
+        "200":
+          description: Terms, ordered by `sortOrder` then `slug`
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Taxonomy]
+      summary: Add a term
+      description: |
+        Requires `admin`. Editors create decks and pick from these lists;
+        changing the lists changes the site's own navigation.
+
+        Omitting `sortOrder` places the term at the end rather than at zero,
+        which would silently reorder the home page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, title]
+              properties:
+                slug:
+                  type: string
+                  pattern: "^[a-z0-9][a-z0-9-]{0,63}$"
+                  description: |
+                    What decks store. Chosen once — it cannot be edited later,
+                    because every deck referring to the old value would be
+                    orphaned with nothing to notice.
+                title:     { type: string, maxLength: 120 }
+                sortOrder: { type: integer }
+                active:    { type: boolean, default: true }
+                accent:    { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+                secondary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A term with this slug already exists for this kind
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /taxonomy/{kind}/unknown:
+    parameters:
+      - $ref: "#/components/parameters/TaxonomyKind"
+    get:
+      tags: [Taxonomy]
+      summary: Values in use that no term defines
+      description: |
+        `decks.category`, `decks.industry` and `decks.source_type` are plain
+        text with no foreign key, so a deck can carry a value no list contains
+        — invisible to every filter that would otherwise find it. This is how
+        those are found and reconciled deliberately, rather than by a migration
+        that fails.
+      responses:
+        "200":
+          description: Unknown values, most used first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    value:     { type: string }
+                    deckCount: { type: integer }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /taxonomy/{kind}/{slug}:
+    parameters:
+      - $ref: "#/components/parameters/TaxonomyKind"
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Taxonomy]
+      summary: Fetch one term
+      responses:
+        "200":
+          description: The term
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Taxonomy]
+      summary: Edit a term
+      description: |
+        Requires `admin`. Everything except the slug, which is the identity
+        decks store. Set `active: false` to retire a term: decks already using
+        it keep working, and it stops being offered for new ones.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:     { type: string, maxLength: 120 }
+                sortOrder:
+                  type: integer
+                  description: |
+                    Omitted leaves the order alone; 0 is a real value that puts
+                    the term first.
+                active:    { type: boolean }
+                accent:
+                  type: string
+                  description: |
+                    Empty string clears the gradient. Omitted leaves it alone.
+                    Accent and secondary are always written as a pair.
+                secondary: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Taxonomy]
+      summary: Remove a term
+      description: |
+        Requires `admin`, and refused while any deck still refers to it. There
+        is no foreign key to stop that, so deleting would leave those decks
+        unreachable from the filter that used to find them. Retire it instead,
+        or move the decks first.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Decks still use this term; the message carries the count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /users:
     get:
       tags: [Users]
@@ -622,6 +998,156 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /demos/pin:
+    put:
+      tags: [Demos]
+      summary: Replace the Demo Center PIN
+      description: |
+        Requires `admin`, and deliberately not behind the PIN itself — this is
+        how a forgotten one gets replaced.
+
+        Write-only. The PIN is stored as a bcrypt hash, unlike the demo
+        passwords: nothing needs to read it back, it is only ever compared
+        against what somebody typed. So it can be changed and never shown,
+        which is the trade for a gate a database backup does not hand over.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { type: string, minLength: 4 }
+      responses:
+        "204": { description: Replaced }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /demos:
+    get:
+      tags: [Demos]
+      summary: List the demo environments
+      description: |
+        Requires an account of any role — admin, editor or viewer — **and** the
+        shared PIN in `X-Demo-Pin`. Deliberately not public and not reachable
+        by a guest: every row carries a working password in clear, which is the
+        point of the feature and the reason it is behind both.
+
+        The PIN is checked here rather than in the page. A gate the browser
+        enforces is a gate anyone can walk around by calling this endpoint
+        directly. A missing or wrong PIN answers `401` with code
+        `demo_pin_required`, which is distinct from an expired session so a
+        client can show the PIN screen instead of signing somebody out.
+
+        A PIN that has never been set refuses everything rather than serving
+        the credentials ungated.
+
+        Wrong PINs are counted, per account, and five a minute is the
+        allowance: a four-digit PIN is only ten thousand guesses, and an
+        endpoint that counts nothing is an endpoint that hands them over. A
+        correct PIN costs nothing, so ordinary use never meets the limit.
+
+        Retired demos are included by default. Pass `active=true` for a list to
+        hand somebody; the manage view needs all of them, or retiring one would
+        hide the way back.
+      parameters:
+        - $ref: "#/components/parameters/DemoPin"
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Matches the name or the category. `%` and `_` are literal.
+        - name: active
+          in: query
+          schema: { type: string, enum: ["true"] }
+      responses:
+        "200":
+          description: Demos, ordered by `sortOrder` then name
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Demo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      tags: [Demos]
+      summary: Add a demo
+      description: |
+        Requires `admin` or `editor` — the same trust that manages the catalog.
+
+        Omitting `sortOrder` puts the demo at the end rather than at zero,
+        which would silently reorder the page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DemoInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Demo" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /demos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/DemoPin"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Demos]
+      summary: Fetch one demo
+      responses:
+        "200":
+          description: The demo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Demo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Demos]
+      summary: Edit a demo
+      description: |
+        Requires `admin` or `editor`. Partial: an omitted field keeps its
+        value, and `active: false` retires a demo that is temporarily down
+        without losing its details.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DemoInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Demo" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Demos]
+      summary: Remove a demo
+      description: Requires `admin` or `editor`. Nothing references a demo, so nothing blocks this.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /favorites:
     get:
       tags: [Favorites]
@@ -741,7 +1267,58 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+  parameters:
+    DemoPin:
+      name: X-Demo-Pin
+      in: header
+      required: true
+      description: |
+        The shared Demo Center PIN. A header rather than a query parameter: it
+        would otherwise be written into access logs and browser history, which
+        is not where the gate to a page of credentials belongs.
+      schema: { type: string }
+
+    TaxonomyKind:
+      name: kind
+      in: path
+      required: true
+      description: |
+        Which master list. Plural and hyphenated in the URL; stored singular
+        and snake-cased. An unrecognised value is a 404 — the URL names a
+        collection that does not exist.
+      schema:
+        type: string
+        enum: [categories, industries]
+
   schemas:
+    TaxonomyTerm:
+      type: object
+      properties:
+        kind:      { type: string, enum: [category, industry] }
+        slug:
+          type: string
+          description: The value decks store. Immutable after creation.
+        title:     { type: string }
+        sortOrder: { type: integer, description: Browse order; ties break on slug }
+        active:
+          type: boolean
+          description: |
+            False means retired — still valid on existing decks, no longer
+            offered for new ones.
+        accent:
+          type: string
+          description: |
+            Gradient start for the industry cards. Empty for the other kinds,
+            and only ever set together with `secondary`.
+        secondary: { type: string, description: Gradient end; see `accent` }
+        deckCount:
+          type: integer
+          description: |
+            Decks currently using this slug, counted per request rather than
+            stored. Zero is what makes a term safe to delete.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
     Role:
       type: string
       enum: [admin, editor, viewer]
@@ -796,17 +1373,91 @@ components:
     DeckSource:
       type: object
       description: |
-        Where the deck's content lives. `value` is stored verbatim: a YouTube
-        watch URL stays a watch URL, and an uploaded file stays a server-relative
-        `/uploads/...` path. Clients that rewrite it for playback (embed URLs,
-        absolute URLs) must not write the rewritten form back.
+        Where the deck's content lives. `value` keeps the form it was given: a
+        YouTube watch URL stays a watch URL, and an uploaded file stays a
+        server-relative `/uploads/...` path. Clients that rewrite it for
+        playback (embed URLs, absolute URLs) must not write the rewritten form
+        back.
+
+        The one change made on write is the scheme. A `/uploads/...` path is
+        left alone; anything else must be `http://` or `https://`, a missing
+        scheme is filled in with `https://`, and any other scheme is a `400`.
+        The value ends up in an `href` and an iframe `src`, where
+        `javascript:` is script running on the application's own origin.
       required: [type, value]
       properties:
         type:
           type: string
           enum: [pdf, url, video, gslides, embed]
-          description: Not validated as a closed set server-side; these are the values in use.
+          description: A closed set — anything else is a `400`.
         value: { type: string }
+
+    Demo:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        name:      { type: string }
+        category:
+          type: string
+          description: |
+            Free text; the categories here are not a master list. What kind of
+            work the demo shows — "Shopfloor", "Human Resources" — which is
+            what the sheet this list came from calls it.
+        environment:
+          type: string
+          description: |
+            Free text: "Development", "Demo WIT", "Confidential". Says how
+            freely the demo may be shown, which is not the same question as
+            whether it works — see `status` — and not the same as `active`.
+        status:
+          type: string
+          description: Free text; whether the demo works today.
+        url:
+          type: string
+          description: |
+            Always `http://` or `https://` when it comes back. A value stored
+            without a scheme is normalised on write — a bare host in a link is
+            a *relative* URL and would resolve against the app itself — and any
+            other scheme is refused, `javascript:` above all.
+        username:  { type: string }
+        password:
+          type: string
+          description: |
+            Returned in clear. Nobody authenticates against it — it is copied
+            into somebody else's login form, and a hash cannot be copied — so
+            it is stored recoverable. Everyone who can read a demo can read its
+            password, which is why reading one needs an account, and why
+            nothing here should be a credential to anything real.
+        notes:     { type: string }
+        sortOrder: { type: integer }
+        active:
+          type: boolean
+          description: False retires a demo without losing its details.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DemoInput:
+      type: object
+      description: All fields optional on PUT; `name` is required on POST.
+      properties:
+        name:        { type: string, maxLength: 500 }
+        category:    { type: string, maxLength: 500 }
+        environment: { type: string, maxLength: 500 }
+        status:      { type: string, maxLength: 500 }
+        url:
+          type: string
+          maxLength: 500
+          description: |
+            `http://` or `https://`. A missing scheme is filled in with
+            `https://`; anything else — `javascript:`, `data:` — is a `400`.
+        username:  { type: string, maxLength: 500 }
+        password:
+          type: string
+          maxLength: 500
+          description: Stored exactly as given, spaces included — trimming one is a credential that stops working with no sign of why.
+        notes:     { type: string }
+        sortOrder: { type: integer }
+        active:    { type: boolean }
 
     Deck:
       type: object
@@ -821,6 +1472,12 @@ components:
         tags:        { type: array, items: { type: string } }
         source:      { $ref: "#/components/schemas/DeckSource" }
         description: { type: string }
+        coverImage:
+          type: string
+          description: |
+            Optional server-relative upload path for the deck's cover. Empty
+            means the frontend generates artwork from the deck id, which is the
+            default — a deck with no image still renders as designed.
         featured:    { type: boolean, description: The newest featured deck is the one the home hero shows }
         viewCount:   { type: integer }
         createdAt:   { type: string, format: date-time }
@@ -839,6 +1496,12 @@ components:
         tags:        { type: array, items: { type: string } }
         source:      { $ref: "#/components/schemas/DeckSource" }
         description: { type: string }
+        coverImage:
+          type: string
+          description: |
+            Optional server-relative upload path for the deck's cover. Empty
+            means the frontend generates artwork from the deck id, which is the
+            default — a deck with no image still renders as designed.
         featured:    { type: boolean }
 
     DeckPatch:
@@ -854,6 +1517,12 @@ components:
         tags:        { type: array, items: { type: string } }
         source:      { $ref: "#/components/schemas/DeckSource" }
         description: { type: string }
+        coverImage:
+          type: string
+          description: |
+            Optional server-relative upload path for the deck's cover. Empty
+            means the frontend generates artwork from the deck id, which is the
+            default — a deck with no image still renders as designed.
         featured:    { type: boolean }
 
   responses:
@@ -874,6 +1543,20 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: No such resource
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: |
+        Too many attempts. Carries `Retry-After` in seconds, and code
+        `rate_limited`. Applies where a request verifies a secret — signing in,
+        changing your own password, offering the Demo Center PIN — because
+        those are the requests worth guessing at, and each one costs the server
+        a bcrypt comparison.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before trying again.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

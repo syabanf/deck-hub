@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { INDUSTRIES } from '../data/decks.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { IndustryIcon } from '../lib/industryIcons.jsx'
 
 // A dedicated (mock) cover photo per industry, seeded by id so each sector
@@ -83,8 +83,9 @@ function IndustryTile({ ind, count, onPick }) {
 // Counts come from GET /decks/stats. They used to be tallied from an in-memory
 // copy of the whole catalog, which is exactly the fetch this change removed.
 export default function IndustriesPage({ onPickIndustry, counts: rawCounts }) {
+  const { industries } = useTaxonomy()
   const counts = useMemo(() => {
-    const map = Object.fromEntries(INDUSTRIES.map((i) => [i.id, 0]))
+    const map = Object.fromEntries(industries.map((i) => [i.id, 0]))
     for (const [id, n] of Object.entries(rawCounts || {})) {
       if (map[id] !== undefined) map[id] = n
     }
@@ -106,13 +107,13 @@ export default function IndustriesPage({ onPickIndustry, counts: rawCounts }) {
           Pick an industry to filter the catalog.
         </p>
         <div className="text-sm text-white/60 mt-3">
-          {INDUSTRIES.length} industries · {total} sector-tagged decks
+          {industries.length} industries · {total} sector-tagged decks
         </div>
       </div>
 
       {/* Tile grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
-        {INDUSTRIES.map((ind) => (
+        {industries.map((ind) => (
           <IndustryTile
             key={ind.id}
             ind={ind}

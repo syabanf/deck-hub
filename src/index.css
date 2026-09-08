@@ -176,32 +176,6 @@ body {
   100% { transform: translate3d(-1.5%, -2.2%, 0) scale(1.2); }
 }
 
-/* ─────────── View transitions (page → page) ─────────── */
-/* Only the content region animates; the navbar stays put, which reads as a
-   real app navigating rather than the whole page blinking. */
-.view-content {
-  view-transition-name: wit-content;
-}
-::view-transition-old(wit-content),
-::view-transition-new(wit-content) {
-  animation-duration: 260ms;
-  animation-timing-function: var(--ease-out-quint);
-  /* Snapshots overlap; blending them avoids a bright flash mid-swap. */
-  mix-blend-mode: normal;
-}
-::view-transition-old(wit-content) {
-  animation-name: viewOut;
-}
-::view-transition-new(wit-content) {
-  animation-name: viewIn;
-}
-@keyframes viewOut {
-  to { opacity: 0; transform: translate3d(0, -8px, 0); }
-}
-@keyframes viewIn {
-  from { opacity: 0; transform: translate3d(0, 12px, 0); }
-}
-
 /* ─────────── Overlay enter / exit ─────────── */
 /* Modals used to unmount instantly — the exit is what actually reads as jank. */
 @keyframes overlayOut {
@@ -262,11 +236,8 @@ body {
   .hover-card.is-hovered { transform: translateZ(0) scale(1.06); }
   .card-tilt:hover { transform: none; }
   .img-fade { opacity: 1; }
-  /* Pseudo-elements aren't matched by the `*` rule above. */
-  ::view-transition-old(wit-content),
-  ::view-transition-new(wit-content) {
-    animation: none;
-  }
+  /* The page fade is a script-driven animation, so the `*` rule above cannot
+     reach it. withPageFade checks this query itself and skips. */
 }
 
 /* Pulse the play button */

@@ -53,30 +53,55 @@ curl -s localhost:8080/decks -H "Authorization: Bearer $TOKEN"
 A wrong password, an unknown email and a suspended account all return the same
 401. Telling them apart would confirm which addresses have accounts.
 
+A 401 on an authenticated call also covers a case that is not about the token
+at all: **the account behind it is gone or suspended.** Every authenticated
+request re-reads that account, and the role that decides the request is the one
+in the database, not the one in the token — otherwise removing a user would do
+nothing until their token expired, a full day at the default `JWT_TTL`. So a
+client cannot assume that signing in again will fix a 401.
+
 ### Demo accounts
 
-Seeded by migrations `000001` and `000003`, for local development only.
+Migration `000009` removed the seeded demo accounts: they carried passwords
+published in this repository and were found live in production. They are opt-in
+now, for local development only:
 
-| Email           | Password     | Role     |
-|-----------------|--------------|----------|
-| `admin@wit.id`  | `admin1234`  | `admin`  |
-| `editor@wit.id` | `editor1234` | `editor` |
-| `viewer@wit.id` | `viewer1234` | `viewer` |
+```bash
+make seed-demo    # admin@wit.id / editor@wit.id / viewer@wit.id
+```
+
+The bootstrap admin from `000001` is deliberately still there — deleting it
+would lock a running deployment out of its own admin screen — and its password
+is rotated at startup from `BOOTSTRAP_ADMIN_PASSWORD`.
 
 ## Roles
 
 Enforced at the router, so an unauthorized call never reaches a handler.
 
-| Endpoint group        | Read     | Write                |
-|-----------------------|----------|----------------------|
-| `/decks`              | public   | `admin`, `editor`    |
-| `/users`              | public   | `admin`              |
-| `/uploads`            | public   | `admin`, `editor`    |
-| `/favorites`          | any signed-in user (scoped to them) |
-| `/progress`           | any signed-in user (scoped to them) |
+| Endpoint group        | Read                     | Write                |
+|-----------------------|--------------------------|----------------------|
+| `/decks`              | public                   | `admin`, `editor`    |
+| `/taxonomy/{kind}`    | public                   | `admin`              |
+| `/settings`           | public                   | `admin`              |
+| `/uploads`            | public (the stored files) | `admin`, `editor`   |
+| `/users`              | `admin`                  | `admin`              |
+| `/audit`              | `admin`                  | —                    |
+| `/demos`              | any signed-in user **+ PIN** | `admin`, `editor` **+ PIN** |
+| `/demos/pin`          | —                        | `admin` (no PIN)     |
+| `/me`                 | the account itself       | the account itself   |
+| `/favorites`          | any signed-in user (scoped to them) | |
+| `/progress`           | any signed-in user (scoped to them) | |
+
+`/users` reads used to be public. They return every account's email and role,
+which is the target list an attacker wants before guessing a single password.
 
 `POST /decks/{id}/views` is public and unauthenticated — view counts are a
 global signal, not per-user history.
+
+The Demo Center needs both an account and the shared PIN, in `X-Demo-Pin`, on
+every call. Wrong PINs are counted: five a minute per account, then `429`.
+Setting a new PIN is admin-only and deliberately *not* behind the PIN — that
+is how a forgotten one gets replaced.
 
 ## Errors
 
@@ -93,7 +118,14 @@ One envelope everywhere, so clients branch on `code` and never parse prose:
 | `forbidden`     | 403    | Authenticated, but the role isn't allowed   |
 | `not_found`     | 404    | No such resource                            |
 | `conflict`      | 409    | Email already registered                    |
+| `rate_limited`  | 429    | Too many attempts; `Retry-After` says when  |
 | `internal`      | 500    | Unexpected server-side failure              |
+
+Two 401s carry their own codes because the fix is different. `email_not_verified`
+means the password was right and the address is not confirmed — the client shows
+"check your inbox" with a resend button. `demo_pin_required` means the session is
+fine and the Demo Center PIN is missing or wrong — the client shows the PIN
+screen instead of signing the person out.
 
 `message` is written for developers. Render your own copy keyed off `code` — the
 frontend does this in `src/lib/errors.js`.

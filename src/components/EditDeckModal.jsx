@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
+import { absoluteUrl, uploadFile } from '../lib/api.js'
+import { humanizeError } from '../lib/errors.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { useClosable } from '../lib/useClosable.js'
 import { CloseIcon, CheckIcon, LinkIcon } from '../lib/icons.jsx'
 
@@ -26,6 +28,7 @@ const parseTags = (raw) =>
     .filter(Boolean)
 
 export default function EditDeckModal({ deck, onSave, onClose, saving = false, error = null }) {
+  const { categories, industries } = useTaxonomy()
   const { closing, requestClose } = useClosable(onClose)
 
   // The form is seeded from the deck's *stored* values. source.raw is the
@@ -34,12 +37,22 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
   const [subtitle, setSubtitle] = useState(deck.subtitle || '')
   const [author, setAuthor] = useState(deck.author || '')
   const [year, setYear] = useState(deck.year || new Date().getFullYear())
-  const [category, setCategory] = useState(deck.category || 'mine')
+  // No 'mine' fallback: it is not a category any list contains, and the API
+  // now refuses it. An empty select is the honest state for a deck whose
+  // stored category was retired or never existed.
+  const [category, setCategory] = useState(deck.category || '')
   const [industry, setIndustry] = useState(deck.industry || '')
   const [tagsRaw, setTagsRaw] = useState((deck.tags || []).join(', '))
   const [description, setDescription] = useState(deck.description || '')
   const [featured, setFeatured] = useState(!!deck.featured)
   const [sourceValue, setSourceValue] = useState(deck.source?.raw ?? deck.source?.value ?? '')
+  // The stored path, or '' for a deck using the generated artwork. A newly
+  // picked file is uploaded on save, not on selection — an upload for an edit
+  // that gets cancelled is a file nothing will ever reference.
+  const [coverImage, setCoverImage] = useState(deck.coverImage || '')
+  const [coverFile, setCoverFile] = useState(null)
+  const [uploadingCover, setUploadingCover] = useState(false)
+  const [coverError, setCoverError] = useState(null)
 
   // Two different types matter here. The normalized type decides whether the
   // source is a text-editable link at all; the stored type is what gets written
@@ -50,6 +63,8 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
   const canEditSource = SOURCE_EDITABLE.has(playbackType)
   const originalSource = deck.source?.raw ?? deck.source?.value ?? ''
   const originalTags = deck.tags || []
+
+  useEffect(() => () => { if (coverFile?.preview) URL.revokeObjectURL(coverFile.preview) }, [coverFile])
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && requestClose()
@@ -74,23 +89,42 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
     if (!sameTags(tags, originalTags)) p.tags = tags
     if (description !== (deck.description || '')) p.description = description
     if (featured !== !!deck.featured) p.featured = featured
+    // '' is a real value: it clears the cover and returns the deck to the
+    // generated artwork, so this compares rather than checks for truthiness.
+    if (!coverFile && coverImage !== (deck.coverImage || '')) p.coverImage = coverImage
     if (canEditSource && sourceValue.trim() !== originalSource) {
       p.source = { type: storedType, value: sourceValue.trim() }
     }
     return p
   }, [
     title, subtitle, author, year, category, industry, tagsRaw, description,
-    featured, sourceValue, deck, originalTags, originalSource, canEditSource, storedType,
+    featured, sourceValue, coverImage, coverFile, deck, originalTags, originalSource,
+    canEditSource, storedType,
   ])
 
-  const changedCount = Object.keys(patch).length
+  const changedCount = Object.keys(patch).length + (coverFile ? 1 : 0)
   const titleEmpty = !title.trim()
-  const canSave = changedCount > 0 && !titleEmpty && !saving
+  const canSave = changedCount > 0 && !titleEmpty && !saving && !uploadingCover
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
     if (!canSave) return
-    onSave(deck.id, patch)
+    const body = { ...patch }
+    if (coverFile) {
+      // Upload here rather than at pick time, so a cancelled edit leaves no
+      // orphaned file behind.
+      setUploadingCover(true)
+      try {
+        const up = await uploadFile(coverFile.file)
+        body.coverImage = up.path
+      } catch (err) {
+        setCoverError(humanizeError(err, { action: 'upload that image' }).message)
+        setUploadingCover(false)
+        return
+      }
+      setUploadingCover(false)
+    }
+    onSave(deck.id, body)
   }
 
   return (
@@ -168,18 +202,17 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Category">
               <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-                {CATEGORIES.map((c) => (
+                {categories.map((c) => (
                   <option key={c.id} value={c.id} className="bg-deck-card">
                     {c.title}
                   </option>
                 ))}
-                <option value="mine" className="bg-deck-card">My Uploads</option>
               </select>
             </Field>
             <Field label="Industry">
               <select value={industry} onChange={(e) => setIndustry(e.target.value)} className={inputCls}>
                 <option value="" className="bg-deck-card">— none —</option>
-                {INDUSTRIES.map((i) => (
+                {industries.map((i) => (
                   <option key={i.id} value={i.id} className="bg-deck-card">
                     {i.title}
                   </option>
@@ -233,6 +266,57 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
                 <span className="truncate">{deck.source?.raw || deck.source?.value}</span>
               </div>
             )}
+          </Field>
+
+          <Field label="Cover image" hint="Optional — empty uses the generated artwork">
+            <div className="flex items-center gap-3">
+              <div className="w-24 h-16 rounded-lg border border-deck-border bg-deck-card overflow-hidden shrink-0 grid place-items-center">
+                {coverFile?.preview || coverImage ? (
+                  <img
+                    src={coverFile?.preview || absoluteUrl(coverImage)}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-[10px] text-white/35 text-center leading-tight px-1">
+                    Generated<br />artwork
+                  </span>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="inline-block px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold cursor-pointer">
+                  {coverFile || coverImage ? 'Replace' : 'Choose image'}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      setCoverError(null)
+                      setCoverFile({ file, name: file.name, preview: URL.createObjectURL(file) })
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+                {(coverFile || coverImage) && (
+                  <button
+                    type="button"
+                    onClick={() => { setCoverFile(null); setCoverImage('') }}
+                    className="ml-2 text-xs text-white/50 hover:text-white"
+                  >
+                    Remove
+                  </button>
+                )}
+                <p className="text-[11px] text-deck-muted mt-1 truncate">
+                  {coverError
+                    ? coverError
+                    : coverFile
+                      ? `${coverFile.name} — uploaded when you save`
+                      : coverImage || 'Leave empty to use the generated cover.'}
+                </p>
+              </div>
+            </div>
           </Field>
 
           <label className="flex items-center gap-3 cursor-pointer select-none pt-1">

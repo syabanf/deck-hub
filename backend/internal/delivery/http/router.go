@@ -1,26 +1,45 @@
 package http
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
+
+	"github.com/wit/wit-backend/internal/domain"
 )
 
 // RouterDeps bundles everything the router needs to wire its routes. Handlers
 // depend on narrow usecase interfaces, not concrete types or repositories.
 type RouterDeps struct {
-	Auth      *AuthHandler
-	Register  *RegistrationHandler
-	Users     *UserHandler
-	Decks     *DeckHandler
-	Uploads   *UploadHandler
-	Favorites *FavoriteHandler
-	Progress  *ProgressHandler
-	Docs      *DocsHandler
-	Tokens    *TokenManager
+	Auth     *AuthHandler
+	Register *RegistrationHandler
+	Users    *UserHandler
+	Decks    *DeckHandler
+	Taxonomy *TaxonomyHandler
+	Settings *SettingsHandler
+	Me       *MeHandler
+	AuditLog *AuditHandler
+	Demos    *DemoHandler
+
+	// AuditRepo records every write. Nil turns recording off; the log endpoint
+	// is mounted separately, so a deployment can read history it is no longer
+	// adding to.
+	AuditRepo domain.AuditRepository
+
+	// ActorEmail resolves the account behind a token, so the log keeps a name
+	// even after that account is deleted.
+	ActorEmail func(context.Context, uuid.UUID) string
+	Uploads    *UploadHandler
+	Favorites  *FavoriteHandler
+	Progress   *ProgressHandler
+	Docs       *DocsHandler
+	Tokens     *TokenManager
 
 	// UploadDir is the directory uploaded files are served from. When empty,
 	// the static /uploads/* route is not mounted.
@@ -36,6 +55,35 @@ type RouterDeps struct {
 	AuthRateAccount int
 }
 
+// downloadName sanitises a requested download filename.
+//
+// It ends up inside a Content-Disposition header, so anything that could close
+// the quoted string or start a new header line has to go — a name carrying a
+// newline could otherwise inject a header of the caller's choosing. Path
+// separators go too: the value is a filename, and browsers differ on what they
+// do with a path in one.
+func downloadName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r < 0x20 || r == 0x7f: // control characters, newlines included
+			continue
+		case r == '"' || r == '\\' || r == '/' || r == ';':
+			b.WriteRune('-')
+		default:
+			b.WriteRune(r)
+		}
+		if b.Len() > 150 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // NewRouter builds the chi router with middleware and all mounted routes.
 func NewRouter(d RouterDeps) http.Handler {
 	r := chi.NewRouter()
@@ -45,7 +93,14 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	// Above the server's own read/write timeouts in spirit but well below
+	// them in value: an API call that has not finished in two minutes is
+	// broken, while an upload or a download of a 25 MB deck legitimately
+	// takes longer than the 30s this used to allow.
+	r.Use(middleware.Timeout(2 * time.Minute))
+
+	// Before the routes, so every write is covered by having been routed.
+	r.Use(Audit(d.AuditRepo, d.ActorEmail))
 
 	// CORS for the browser frontend (dev server, preview, or deployed PWA).
 	origins := d.CORSOrigins
@@ -55,7 +110,11 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: origins,
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
+		// PinHeader has to be listed, or the browser's preflight fails and the
+		// Demo Center cannot be opened at all. Only visible where the app and
+		// the API are on different origins — which is development, not
+		// production, so it would have shipped looking fine.
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id", PinHeader},
 		// Paging metadata is unreadable from JS unless it is exposed here.
 		ExposedHeaders:   []string{"X-Request-Id", "X-Total-Count", "X-Limit", "X-Offset"},
 		AllowCredentials: true,
@@ -104,6 +163,60 @@ func NewRouter(d RouterDeps) http.Handler {
 		}
 	})
 
+	// The signed-in account's own record. Any role, because a viewer has every
+	// right to read and change their own and no business reading anyone
+	// else's — /users below is the admin path and returns everybody.
+	if d.Me != nil {
+		// The password change is limited like a sign-in, because it is one:
+		// it verifies the current password, so it is both an oracle for
+		// guessing it and a way for any account to make the server run bcrypt
+		// on demand. Keyed by account — the token is already required, so the
+		// address says little.
+		pwLimiter := NewRateLimiter(accountBurst, time.Minute)
+
+		r.Route("/me", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Me.Get)
+			r.With(RateLimit(pwLimiter, ByUser)).Put("/password", d.Me.ChangePassword)
+		})
+	}
+
+	// The activity log. Admin only: it names every account and what they
+	// changed, which is precisely the picture an attacker wants and nobody
+	// else needs.
+	if d.AuditLog != nil {
+		r.Route("/audit", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Use(RequireRole("admin"))
+			r.Get("/", d.AuditLog.List)
+		})
+	}
+
+	// Demo Center. Reading requires an account of any role — the rows carry
+	// credentials in clear, so a guest or a shared link must not reach them —
+	// and changing them is admin or editor, the same trust that manages the
+	// catalog.
+	if d.Demos != nil {
+		r.Route("/demos", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Demos.List)
+
+			// Before /{id}, or "pin" is parsed as a demo id. Admin only, and
+			// deliberately not behind the PIN itself: it is how a forgotten
+			// one gets replaced.
+			r.With(RequireRole("admin")).Put("/pin", d.Demos.SetPin)
+
+			r.Get("/{id}", d.Demos.Get)
+
+			r.Group(func(r chi.Router) {
+				r.Use(RequireRole("admin", "editor"))
+				r.Post("/", d.Demos.Create)
+				r.Put("/{id}", d.Demos.Update)
+				r.Delete("/{id}", d.Demos.Delete)
+			})
+		})
+	}
+
 	// Users: admin only, reads included.
 	//
 	// The listing used to be public. It returns every account's email and role,
@@ -138,6 +251,40 @@ func NewRouter(d RouterDeps) http.Handler {
 		})
 	})
 
+	// Taxonomy: the master lists decks are browsed by — categories, industries
+	// and source types. Reads are public because the browse UI needs them
+	// before anyone signs in; writes are admin only. An editor adding a deck
+	// picks from these lists, but adding to them changes the shape of the
+	// catalog and the site's own navigation, which is not a per-deck decision.
+	if d.Taxonomy != nil {
+		r.Route("/taxonomy/{kind}", func(r chi.Router) {
+			r.Get("/", d.Taxonomy.List)
+			// Before /{slug}, or "unknown" is parsed as a term to look up.
+			r.Get("/unknown", d.Taxonomy.Unknown)
+			r.Get("/{slug}", d.Taxonomy.Get)
+
+			r.Group(func(r chi.Router) {
+				r.Use(d.Tokens.JWTAuth)
+				r.Use(RequireRole("admin"))
+				r.Post("/", d.Taxonomy.Create)
+				r.Put("/{slug}", d.Taxonomy.Update)
+				r.Delete("/{slug}", d.Taxonomy.Delete)
+			})
+		})
+	}
+
+	// Settings: read by anyone, because the navigation needs them before a
+	// visitor has signed in and none of the values are secret. Written by
+	// admins only.
+	if d.Settings != nil {
+		r.Get("/settings", d.Settings.Get)
+		r.Group(func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Use(RequireRole("admin"))
+			r.Put("/settings", d.Settings.Update)
+		})
+	}
+
 	// Uploads: writing requires an authenticated admin/editor; the stored files
 	// themselves are served publicly so decks can reference them.
 	if d.Uploads != nil {
@@ -156,6 +303,19 @@ func NewRouter(d RouterDeps) http.Handler {
 			// but without nosniff a browser may ignore that label, sniff the
 			// HTML and execute its scripts against this origin.
 			w.Header().Set("X-Content-Type-Options", "nosniff")
+
+			// ?download=<name> saves the file under a readable name instead of
+			// the UUID it is stored as. The stored name stays a UUID on
+			// purpose — a client-supplied filename in the path could traverse
+			// directories or overwrite an existing upload — so the readable
+			// name is carried here, where it names a download and nothing else.
+			//
+			// The header rather than the frontend's `download` attribute,
+			// because that attribute is ignored cross-origin, and in
+			// development the app and the API are on different ports.
+			if name := downloadName(r.URL.Query().Get("download")); name != "" {
+				w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+			}
 			fileServer.ServeHTTP(w, r)
 		})
 	}

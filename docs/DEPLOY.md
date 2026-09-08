@@ -1,0 +1,302 @@
+# Deploying to production
+
+The runbook for `https://paparan.reddie.id`. Written for whoever is at the
+console of the deploy host — today that is Primmie.
+
+Everything here assumes the shape described in
+[`docker-compose.ghcr.yml`](../docker-compose.ghcr.yml): four containers on one
+host, images pulled from GHCR, Postgres and the uploads directory on named
+volumes.
+
+**Nothing is ever built on the production host.** CI builds the images when a
+commit lands on `main` or a tag is pushed; the host only pulls them. If you
+find yourself typing `docker build` on the server, stop — something upstream
+has gone wrong and building locally will hide it.
+
+---
+
+## Contents
+
+- [What is running](#what-is-running) · [Before the first deploy](#before-the-first-deploy)
+- [First deploy](#first-deploy) · [After the first deploy](#after-the-first-deploy-do-not-skip)
+- [Updating](#updating-to-a-new-version) · [Rolling back](#rolling-back)
+- [Migrations](#migrations) · [Checking it works](#checking-it-works)
+- [When something is wrong](#when-something-is-wrong) · [Do not do these](#do-not-do-these)
+
+---
+
+## What is running
+
+| Container | Image | Listens | Reachable from |
+| --- | --- | --- | --- |
+| `frontend` | `…-frontend` | `8080` in the container, published on `${APP_PORT}` | the TLS terminator |
+| `backend` | `…-backend` | `8080` | `frontend` only |
+| `migrate` | `…-backend`, different entrypoint | — | runs once, then exits |
+| `db` | `postgres:16-alpine` | `5432` | `backend` and `migrate` only |
+
+Two networks. `public` carries the frontend; `private` is `internal: true`, so
+the database has no route off the host at all — there is no published port to
+firewall, because there is no published port.
+
+The frontend container is nginx. It serves the built bundle and proxies
+`/api/` to the backend, which is why the browser only ever talks to one origin
+and CORS never enters into it in production.
+
+**The containers speak plain HTTP.** TLS is terminated in front of them, by
+whatever proxy already answers for `paparan.reddie.id`. That proxy needs to
+pass a body of at least 30 MB and allow a slow transfer to take several
+minutes — see [Uploads stall](#uploads-or-downloads-stall-partway) below.
+
+---
+
+## Before the first deploy
+
+You need, on the host:
+
+- Docker with the Compose plugin (`docker compose version`).
+- Read access to `ghcr.io/syabanf/deck-hub-*`. The packages inherit the
+  repository's visibility; for a private repository, log in first:
+  ```bash
+  echo "$GITHUB_TOKEN" | docker login ghcr.io -u <github-username> --password-stdin
+  ```
+  The token needs `read:packages` and nothing else.
+- A TLS terminator already answering for the domain, forwarding to
+  `127.0.0.1:${APP_PORT}`.
+- Somewhere to keep `.env`, readable only by the deploy user (`chmod 600`).
+
+And a decision on five values that compose will refuse to start without.
+They are listed with the reason each one is required in
+[`.env.production.example`](../.env.production.example). Generate the secrets
+on the host, not in a chat window:
+
+```bash
+openssl rand -hex 24     # DB_PASSWORD
+openssl rand -base64 48  # JWT_SECRET  (must be at least 32 characters)
+openssl rand -base64 18  # BOOTSTRAP_ADMIN_PASSWORD
+```
+
+`JWT_SECRET` is checked at boot: shorter than 32 characters and the API exits
+with a message saying so, rather than starting with a key that can be guessed
+offline from any token it ever issues.
+
+---
+
+## First deploy
+
+```bash
+# 1. Get the compose file and the template onto the host.
+#    Only these two files are needed — not the source tree.
+mkdir -p /opt/deck-hub && cd /opt/deck-hub
+curl -fsSLO https://raw.githubusercontent.com/syabanf/deck-hub/main/docker-compose.ghcr.yml
+curl -fsSLo .env https://raw.githubusercontent.com/syabanf/deck-hub/main/.env.production.example
+
+# 2. Fill it in. Every REQUIRED line, and IMAGE_TAG pinned to a real tag.
+chmod 600 .env && $EDITOR .env
+
+# 3. Pull and start. `migrate` runs first and the backend waits for it.
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+
+# 4. Watch it come up. The migrate container should exit 0, not restart.
+docker compose -f docker-compose.ghcr.yml ps
+docker compose -f docker-compose.ghcr.yml logs -f backend
+```
+
+A healthy backend log ends with `HTTP server listening on :8080` and carries
+no `SECURITY WARNING`. If it does carry one, `BOOTSTRAP_ADMIN_PASSWORD` did
+not reach the container and the admin account still has the password published
+in migration `000001` — fix that before the site is reachable.
+
+---
+
+## After the first deploy (do not skip)
+
+Three things are seeded from the repository and are therefore public knowledge
+until you change them.
+
+**1. Sign in and change the admin password.** `BOOTSTRAP_ADMIN_PASSWORD`
+rotates the seeded account at every boot, which means it is also sitting in
+`.env` in clear. Sign in as `BOOTSTRAP_ADMIN_EMAIL`, then open the account
+menu (the avatar, top right) → Settings → **Profile** → Change your password. Do the same for any other account created from a template.
+
+**2. Change the Demo Center PIN.** It ships as `1234` — the bcrypt hash of it
+is in migration `000017`, in the repository, readable by anyone who can read
+the source. The Demo Center holds working credentials for client systems, so
+this is the one that matters most.
+
+> Settings → **Master Data** → Demo Center PIN → set a new one.
+> The field is only rendered for an admin.
+
+The PIN is stored hashed and can never be read back, only replaced. Tell the
+people who need it out of band, not in the repository and not in a ticket.
+
+**3. Load the demo credentials.** They are **not** in git and never will be —
+`backend/scripts/seed-demos.local.sql` matches `*.local.sql` in `.gitignore`
+precisely so that a file full of live passwords cannot be committed by
+accident. Get the file from the team over a private channel, then:
+
+```bash
+# Copy it to the host first; do not pipe it through anything that logs.
+docker compose -f docker-compose.ghcr.yml exec -T db \
+  psql -U wit -d wit < seed-demos.local.sql
+
+# Then remove it from the host.
+shred -u seed-demos.local.sql   # or: rm -P on macOS
+```
+
+The script is idempotent: it inserts rows that are missing and updates the
+ones that exist, matched on name. Running it twice does nothing the first run
+did not already do.
+
+**4. Check what is public.** Deck browsing is public by design — a shared link
+opens a deck without a sign-in, which is the point of the share button. Users,
+the activity log and the Demo Center are not: they need an account, and the
+Demo Center needs the PIN as well.
+
+---
+
+## Updating to a new version
+
+```bash
+cd /opt/deck-hub
+
+# 1. Point at the new tag. Pin a version; never leave IMAGE_TAG=latest.
+$EDITOR .env          # IMAGE_TAG=v0.2.0
+
+# 2. Pull, then bring it up. Migrations run before the new backend starts.
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+
+# 3. Confirm.
+docker compose -f docker-compose.ghcr.yml ps
+curl -fsS https://paparan.reddie.id/api/healthz
+```
+
+Take a database backup first — see [`BACKUP.md`](BACKUP.md). A migration that
+drops or rewrites a column is not reversible by re-running the old image.
+
+There is a gap of a few seconds while the new backend replaces the old one.
+For a deployment this size that is the right trade; anyone mid-request sees
+one failed call and a retry succeeds.
+
+---
+
+## Rolling back
+
+The images are immutable and every one CI built is still in the registry, so a
+rollback is choosing an older tag:
+
+```bash
+$EDITOR .env    # IMAGE_TAG=v0.1.0, the tag that was working
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+**This rolls back the code, not the database.** `golang-migrate` has already
+applied the newer migrations and nothing here undoes them. An older backend
+against a newer schema is usually fine — the migrations so far only add — but
+if the release you are backing out of renamed or dropped anything, restore the
+database from the backup you took before the update instead.
+
+---
+
+## Migrations
+
+The `migrate` container runs `migrate … up` against the same database, and the
+backend does not start until it has exited successfully. So the ordinary case
+needs no thought: `up -d` migrates, then starts.
+
+To see where the schema stands:
+
+```bash
+docker compose -f docker-compose.ghcr.yml exec -T db \
+  psql -U wit -d wit -c 'select * from schema_migrations'
+```
+
+A `dirty` of `t` means a migration failed partway. Do not run `up` again on top
+of it — find out what failed first (`docker compose … logs migrate`), fix the
+cause, then force the version back to the last good one and re-run:
+
+```bash
+docker compose -f docker-compose.ghcr.yml run --rm --entrypoint /usr/local/bin/migrate \
+  backend -path=/app/migrations \
+  -database="postgres://wit:$DB_PASSWORD@db:5432/wit?sslmode=disable" force <last-good-version>
+```
+
+---
+
+## Checking it works
+
+After any deploy, in this order — each one fails differently:
+
+```bash
+# The API is alive and reachable through nginx and the TLS terminator.
+curl -fsS https://paparan.reddie.id/api/healthz            # {"status":"ok"}
+
+# The bundle is being served, not a 502 from the proxy.
+curl -fsSI https://paparan.reddie.id/ | head -1            # HTTP/2 200
+
+# The database has the catalog in it.
+curl -fsS 'https://paparan.reddie.id/api/decks?limit=1' | head -c 200
+```
+
+Then in a browser, signed in as an admin:
+
+1. Open a deck — a PDF one, so the player and `/uploads` are both exercised.
+2. Add a deck by uploading a PDF, and delete it again.
+3. Open the Demo Center, enter the PIN, copy a password.
+4. Settings → Activity: the three things you just did are listed, with your
+   account against them.
+
+That last one is worth doing every time. The activity log is written by the
+router, so if it is empty the middleware is not running and something more
+fundamental than the log is wrong.
+
+---
+
+## When something is wrong
+
+**The site loads but every call fails.** Almost always `CORS_ORIGINS`, and only
+if something has been changed to make the browser talk to the API
+cross-origin. In the normal same-origin setup nginx proxies `/api` and CORS is
+not consulted at all — so if you see CORS errors, check the frontend image was
+built with `VITE_API_URL=/api` (CI does this; a hand-built image may not).
+
+**Nobody can finish signing up.** `SMTP_HOST` is empty, so verification links
+are being printed into the backend log instead of sent. Read them with
+`docker compose … logs backend | grep verify` as a stopgap, and set the SMTP
+variables properly.
+
+**Uploads or downloads stall partway.** A 25 MB deck takes minutes on a slow
+link. The API allows five minutes and its nginx allows 300 seconds, but the
+TLS terminator in front has its own timeouts and its own body-size limit —
+raise `client_max_body_size` to at least 30 MB and the proxy read/send
+timeouts to at least 300 seconds there too.
+
+**A deleted user can still use the site.** They cannot, and have not been able
+to since the account behind a token is re-read on every request. If you are
+seeing it, you are looking at a browser that has not made a request yet — its
+next one is refused.
+
+**The Demo Center answers 429.** Five wrong PINs a minute per account and it
+stops answering for a minute. That is the brute-force guard doing its job;
+wait a minute.
+
+**Everything is slow.** Check `docker stats` first, then the backend log — chi
+logs every request with its duration, so a slow endpoint names itself.
+
+---
+
+## Do not do these
+
+- **Do not run `docker compose down -v`.** `-v` deletes the named volumes,
+  which is the database *and* every uploaded deck. There is no undo.
+- **Do not commit `.env`, or `*.local.sql`.** Both are gitignored; keep it
+  that way. The demo seed in particular is live credentials for other people's
+  systems.
+- **Do not publish a port for `db`.** It has none on purpose. Reach it with
+  `docker compose exec`.
+- **Do not leave `IMAGE_TAG=latest`.** You lose the ability to say what is
+  running and the ability to roll back to it.
+- **Do not build images on the host.** The registry is the record of what was
+  deployed; a locally built image is not in it.

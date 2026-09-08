@@ -2,6 +2,7 @@ import Cover from './Cover.jsx'
 import DeckFilters, { useDeckFilters } from './DeckFilters.jsx'
 import LoadMore from './LoadMore.jsx'
 import { useFavorites } from '../lib/favoritesContext.jsx'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { PlayIcon, ChevronDown, TrashIcon, BookmarkIcon, BookmarkFilledIcon } from '../lib/icons.jsx'
 
 const HEADERS = {
@@ -53,8 +54,10 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
       <div className="aspect-deck relative rounded-md overflow-hidden ring-1 ring-deck-border bg-deck-card shadow-lg card-tilt group-hover:ring-white/20">
         <Cover deck={deck} sizeClass="text-sm" minimal onCategoryClick={onCategoryClick} />
 
-        {/* Hover action cluster over a scrim — matches the home-row cards. */}
-        <div className="absolute inset-x-0 bottom-0 p-3 pt-10 flex items-center gap-1.5 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Action cluster over a scrim. There is no hover on a touch screen, so
+            below md the cluster is simply always visible — otherwise play and
+            bookmark are unreachable on a phone. */}
+        <div className="absolute inset-x-0 bottom-0 p-3 pt-10 flex items-center gap-1.5 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -70,7 +73,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
               e.stopPropagation()
               toggle(deck)
             }}
-            className={`flex items-center justify-center w-8 h-8 rounded-full backdrop-blur border hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out ${
+            className={`flex items-center justify-center w-8 h-8 rounded-full border hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out ${
               isFav ? 'bg-white/20 border-white text-white' : 'bg-black/40 border-white/40 hover:border-white'
             }`}
             title={isFav ? 'In My Library' : 'Add to My Library'}
@@ -83,7 +86,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
               e.stopPropagation()
               onDetails(deck)
             }}
-            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
+            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
             title="More info"
           >
             <ChevronDown size={15} />
@@ -94,7 +97,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
                 e.stopPropagation()
                 onRemove(deck)
               }}
-              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
+              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
               title="Remove"
             >
               <TrashIcon size={14} />
@@ -140,7 +143,16 @@ export default function CategoryView({
   onCategoryClick,
   canEdit = false,
 }) {
-  const meta = HEADERS[categoryId] || { title: 'Decks', description: '' }
+  const { categories } = useTaxonomy()
+  // Curated copy where it exists; Master Data otherwise. A category added
+  // there used to land here as a page titled "Decks", because HEADERS only
+  // knew the six that shipped with the app.
+  const term = categories.find((c) => c.id === categoryId)
+  const meta = HEADERS[categoryId] || {
+    title: term?.title || 'Decks',
+    description: '',
+    accent: term?.accent,
+  }
   const isEmpty = decks.length === 0
   const { filtered, controls } = useDeckFilters(decks)
 

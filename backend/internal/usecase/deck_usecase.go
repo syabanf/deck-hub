@@ -12,14 +12,60 @@ import (
 )
 
 // DeckUsecase holds application business rules for decks. It depends only on
-// the domain DeckRepository interface.
+// domain interfaces.
 type DeckUsecase struct {
 	repo domain.DeckRepository
+
+	// taxonomy is what turns the master lists into master data rather than a
+	// list of suggestions. Required, not optional: a wiring that forgot it
+	// would accept anything and nothing would say so until a deck went missing
+	// from its own category.
+	taxonomy domain.TaxonomyRepository
 }
 
-// NewDeckUsecase wires a DeckUsecase with its repository dependency.
-func NewDeckUsecase(repo domain.DeckRepository) *DeckUsecase {
-	return &DeckUsecase{repo: repo}
+// NewDeckUsecase wires a DeckUsecase with its repository dependencies.
+func NewDeckUsecase(repo domain.DeckRepository, taxonomy domain.TaxonomyRepository) *DeckUsecase {
+	return &DeckUsecase{repo: repo, taxonomy: taxonomy}
+}
+
+// checkTerm rejects a value no active term defines.
+//
+// Empty passes: industry is optional, and category and source type are already
+// required by validateDeckCore. Retired terms are rejected too — that is what
+// retiring is for, and decks already carrying one are left alone because this
+// only runs on the fields a write actually touches.
+func (uc *DeckUsecase) checkTerm(ctx context.Context, kind domain.TaxonomyKind, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	ok, err := uc.taxonomy.Exists(ctx, kind, value)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", kind, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: no active %s %q", domain.ErrInvalidInput, kind, value)
+	}
+	return nil
+}
+
+// checkDeckTerms validates every taxonomy field a write is setting.
+//
+// Source type is checked against domain.SourceTypes rather than the database:
+// it is a rendering contract the player implements, not a list anyone can add
+// to. See the comment on that variable.
+func (uc *DeckUsecase) checkDeckTerms(ctx context.Context, category, industry, sourceType string) error {
+	if err := uc.checkTerm(ctx, domain.KindCategory, category); err != nil {
+		return err
+	}
+	if err := uc.checkTerm(ctx, domain.KindIndustry, industry); err != nil {
+		return err
+	}
+	if sourceType != "" && !domain.ValidSourceType(sourceType) {
+		return fmt.Errorf("%w: source type %q is not one of %v",
+			domain.ErrInvalidInput, sourceType, domain.SourceTypes)
+	}
+	return nil
 }
 
 // CreateDeckInput carries the fields needed to create a deck.
@@ -33,7 +79,12 @@ type CreateDeckInput struct {
 	Tags        []string
 	Source      domain.DeckSource
 	Description string
+	CoverImage  string
 	Featured    bool
+
+	// CreatedBy is set from the token by the handler, never from the request
+	// body. A client naming its own author would make the record worthless.
+	CreatedBy *uuid.UUID
 }
 
 func validateDeckCore(title, category string, source domain.DeckSource) error {
@@ -54,6 +105,22 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 	if err := validateDeckCore(in.Title, in.Category, in.Source); err != nil {
 		return nil, err
 	}
+	if err := uc.checkDeckTerms(ctx, in.Category, in.Industry, in.Source.Type); err != nil {
+		return nil, err
+	}
+	// The source and the cover both end up as an href or an iframe src — see
+	// normalizeLink for what that has to be protected from.
+	value, err := normalizeLink("the deck source", in.Source.Value)
+	if err != nil {
+		return nil, err
+	}
+	in.Source.Value = value
+	cover, err := normalizeLink("the cover image", in.CoverImage)
+	if err != nil {
+		return nil, err
+	}
+	in.CoverImage = cover
+
 	if in.Tags == nil {
 		in.Tags = []string{}
 	}
@@ -70,6 +137,8 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 		Tags:        in.Tags,
 		Source:      in.Source,
 		Description: in.Description,
+		CoverImage:  in.CoverImage,
+		CreatedBy:   in.CreatedBy,
 		Featured:    in.Featured,
 		ViewCount:   0,
 		CreatedAt:   now,
@@ -168,6 +237,7 @@ type UpdateDeckInput struct {
 	Tags        *[]string
 	Source      *domain.DeckSource
 	Description *string
+	CoverImage  *string
 	Featured    *bool
 }
 
@@ -213,10 +283,41 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 		if strings.TrimSpace(in.Source.Type) == "" || strings.TrimSpace(in.Source.Value) == "" {
 			return nil, fmt.Errorf("%w: source type and value are required", domain.ErrInvalidInput)
 		}
+		value, err := normalizeLink("the deck source", in.Source.Value)
+		if err != nil {
+			return nil, err
+		}
+		in.Source.Value = value
 		d.Source = *in.Source
 	}
 	if in.Description != nil {
 		d.Description = *in.Description
+	}
+	if in.CoverImage != nil {
+		// Empty is meaningful: it clears an uploaded cover and hands the deck
+		// back to the generated artwork.
+		cover, err := normalizeLink("the cover image", *in.CoverImage)
+		if err != nil {
+			return nil, err
+		}
+		d.CoverImage = cover
+	}
+
+	// Only the fields this request set. A deck that already carries a retired
+	// term keeps it through an unrelated edit; changing it means opting into
+	// the current lists.
+	var newCategory, newIndustry, newSourceType string
+	if in.Category != nil {
+		newCategory = d.Category
+	}
+	if in.Industry != nil {
+		newIndustry = d.Industry
+	}
+	if in.Source != nil {
+		newSourceType = d.Source.Type
+	}
+	if err := uc.checkDeckTerms(ctx, newCategory, newIndustry, newSourceType); err != nil {
+		return nil, err
 	}
 	if in.Featured != nil {
 		d.Featured = *in.Featured
@@ -244,4 +345,14 @@ func (uc *DeckUsecase) IncrementViews(ctx context.Context, id uuid.UUID) (*domai
 		return nil, fmt.Errorf("increment views: %w", err)
 	}
 	return d, nil
+}
+
+// CountByCreator returns how many decks an account has added. What a profile
+// page reports about itself.
+func (uc *DeckUsecase) CountByCreator(ctx context.Context, userID uuid.UUID) (int, error) {
+	n, err := uc.repo.CountByCreator(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("count decks: %w", err)
+	}
+	return n, nil
 }

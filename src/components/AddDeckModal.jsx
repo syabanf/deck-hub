@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import Cover from './Cover.jsx'
 import { CloseIcon, UploadIcon, LinkIcon } from '../lib/icons.jsx'
-import { loadPdfDocument, fileToArrayBuffer } from '../lib/pdf.js'
+import { loadPdfDocument, fileToArrayBuffer, renderPdfPageToCanvas } from '../lib/pdf.js'
 import { uploadFile } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
-import { detectAttachment } from '../lib/attachments.js'
 import { useClosable } from '../lib/useClosable.js'
-import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 
 const PALETTES = [
   { name: 'Ember', from: '#ff5f6d', to: '#ffc371', text: '#1a0d00' },
@@ -83,7 +82,97 @@ const FieldLabel = ({ children, hint }) => (
   </label>
 )
 
+// The first page of a PDF is the cover the deck already has — it is what
+// somebody opening the file sees first. Rendering it here means uploading a
+// deck produces artwork that belongs to it, instead of the stock photograph
+// picsum hands out for an unknown seed.
+//
+// JPEG rather than PNG: a rendered slide is a photograph as far as the encoder
+// is concerned, and a 1200px PNG of one runs to several megabytes against a
+// 25MB upload cap shared with the deck itself.
+async function coverFromFirstPage(doc, name) {
+  const canvas = document.createElement('canvas')
+  // pdf.js can stall indefinitely on a page it cannot rasterise — a tab the
+  // browser has stopped painting does it too. Neither is worth waiting on
+  // forever when the fallback is artwork that already exists.
+  const rendered = await Promise.race([
+    renderPdfPageToCanvas(doc, 1, canvas, 1200).then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 20000)),
+  ])
+  if (!rendered) return null
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+  if (!blob) return null
+  const base = name.replace(/\.pdf$/i, '')
+  const file = new File([blob], `${base}-cover.jpg`, { type: 'image/jpeg' })
+  return { file, name: file.name, preview: URL.createObjectURL(file), fromPdf: true }
+}
+
+// Optional artwork. Skipping it is the normal path — Cover generates a
+// deterministic image from the deck id, so a deck without one still looks
+// designed rather than unfinished. That is why there is no placeholder box
+// shouting for a file.
+function CoverPicker({ cover, busy, onPick }) {
+  return (
+    <div className="space-y-2">
+      <FieldLabel>
+        Cover image <span className="text-white/40">optional</span>
+      </FieldLabel>
+      <div className="flex items-center gap-3">
+        <div
+          className="w-24 h-16 rounded-lg border border-deck-border bg-deck-card overflow-hidden shrink-0 grid place-items-center"
+        >
+          {cover?.preview ? (
+            <img src={cover.preview} alt="" className="w-full h-full object-cover" />
+          ) : busy ? (
+            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : (
+            <span className="text-[10px] text-white/35 text-center leading-tight px-1">
+              Generated<br />artwork
+            </span>
+          )}
+        </div>
+        <div className="flex-1">
+          <label className="inline-block px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold cursor-pointer">
+            {cover ? 'Replace' : 'Choose image'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                onPick({ file, name: file.name, preview: URL.createObjectURL(file) })
+                // Reset, or picking the same file twice fires no change event.
+                e.target.value = ''
+              }}
+            />
+          </label>
+          {cover && (
+            <button
+              type="button"
+              onClick={() => onPick(null)}
+              className="ml-2 text-xs text-white/50 hover:text-white"
+            >
+              Remove
+            </button>
+          )}
+          <p className="text-[11px] text-deck-muted mt-1">
+            {busy && !cover
+              ? 'Reading page 1…'
+              : cover?.fromPdf
+              ? 'Taken from page 1 — replace it if you want something else.'
+                : cover
+                  ? cover.name
+                  : 'Leave empty to use the generated cover.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AddDeckModal({ onClose, onAdd }) {
+  const { categories, industries } = useTaxonomy()
   const { closing, requestClose } = useClosable(onClose)
   const [tab, setTab] = useState('upload')
   const [dragOver, setDragOver] = useState(false)
@@ -97,10 +186,19 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const [subtitle, setSubtitle] = useState('')
   const [author, setAuthor] = useState('')
   const [year, setYear] = useState(new Date().getFullYear())
-  const [category, setCategory] = useState('mine')
+  // Defaulted from the master list rather than to a literal. 'mine' used to
+  // sit here and is not a category any list contains, so every deck created
+  // this way was invisible to the filter that should have found it — and the
+  // API refuses it outright now.
+  const [category, setCategory] = useState('')
   const [industry, setIndustry] = useState('')
   const [description, setDescription] = useState('')
   const [tagsInput, setTagsInput] = useState('')
+  const [featured, setFeatured] = useState(false)
+  // An optional cover. Without one the deck renders the generated artwork,
+  // which is the default and looks deliberate rather than missing.
+  const [cover, setCover] = useState(null)
+  const [coverBusy, setCoverBusy] = useState(false)
   const [paletteIndex, setPaletteIndex] = useState(1)
   const [pattern, setPattern] = useState('orbs')
 
@@ -110,11 +208,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const [videoUrl, setVideoUrl] = useState('')
   const [videoFile, setVideoFile] = useState(null) // { name, size, dataUrl }
   const [videoDrag, setVideoDrag] = useState(false)
-
-  // Multiple attachments
-  const [attachments, setAttachments] = useState([])
-  const [newAttachUrl, setNewAttachUrl] = useState('')
-  const [newAttachLabel, setNewAttachLabel] = useState('')
 
   // Success
   const [successDeck, setSuccessDeck] = useState(null)
@@ -129,6 +222,15 @@ export default function AddDeckModal({ onClose, onAdd }) {
     }
   }, [requestClose])
 
+  // The list arrives from the API a moment after mount, so the default is set
+  // when it does rather than at initialisation.
+  useEffect(() => {
+    if (!category && categories.length) setCategory(categories[0].id)
+  }, [categories, category])
+
+  // An object URL held past its file is a leak, and there is one per pick.
+  useEffect(() => () => { if (cover?.preview) URL.revokeObjectURL(cover.preview) }, [cover])
+
   useEffect(() => {
     if (!error) return
     const t = setTimeout(() => setError(null), 4000)
@@ -137,7 +239,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
 
   const platform = useMemo(() => detectPlatform(url), [url])
   const videoInfo = useMemo(() => detectVideo(videoUrl), [videoUrl])
-  const newAttachDetected = useMemo(() => detectAttachment(newAttachUrl.trim()), [newAttachUrl])
 
   const tags = useMemo(
     () =>
@@ -156,12 +257,16 @@ export default function AddDeckModal({ onClose, onAdd }) {
       subtitle: subtitle.trim() || undefined,
       author: author.trim() || 'You',
       year: parseInt(year, 10) || new Date().getFullYear(),
-      category: category || 'mine',
+      category,
       industry: industry || undefined,
       description: description.trim() || undefined,
       tags: tags.length ? tags : undefined,
       gradient: { from: palette.from, to: palette.to, text: palette.text },
       pattern,
+      // Without this the preview showed whatever photograph picsum returns for
+      // an unknown seed — a stock image with no relationship to the deck, and
+      // no sign that a cover had been chosen at all.
+      image: cover?.preview,
     }
     if (tab === 'upload' && pdfFile) {
       return { ...base, slidesCount: pdfFile.pages, source: { type: 'pdf' } }
@@ -175,7 +280,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
     // Nothing chosen yet. An empty type matches none of Cover's badges, which
     // is the intent — it used to say 'mock', a leftover from the offline catalog.
     return { ...base, slidesCount: '—', source: { type: '' } }
-  }, [tab, pdfFile, url, videoUrl, title, subtitle, author, year, category, industry, description, tags, paletteIndex, pattern])
+  }, [tab, pdfFile, url, videoUrl, title, subtitle, author, year, category, industry, description, tags, paletteIndex, pattern, cover])
 
   const handleVideoFile = async (file) => {
     if (!file) return
@@ -192,31 +297,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
     setVideoFile({ name: file.name, size: file.size, file })
     setVideoUrl('') // clear URL since we now have a file
     if (!title) setTitle(file.name.replace(/\.[^.]+$/, ''))
-  }
-
-  const addAttachment = () => {
-    const trimmed = newAttachUrl.trim()
-    if (!trimmed) return
-    const detected = detectAttachment(trimmed)
-    if (!detected) {
-      setError("Couldn't recognize that link")
-      return
-    }
-    setAttachments((prev) => [
-      ...prev,
-      {
-        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: newAttachLabel.trim() || detected.platform,
-        ...detected,
-      },
-    ])
-    setNewAttachUrl('')
-    setNewAttachLabel('')
-    setError(null)
-  }
-
-  const removeAttachment = (id) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id))
   }
 
   const handlePdfFile = async (file) => {
@@ -238,6 +318,21 @@ export default function AddDeckModal({ onClose, onAdd }) {
       const doc = await loadPdfDocument(buf.slice(0))
       setPdfFile({ name: file.name, size: file.size, pages: doc.numPages, file })
       if (!title) setTitle(file.name.replace(/\.pdf$/i, ''))
+
+      // Deliberately not awaited. Rasterising a page is the slowest thing here
+      // and the least important: the deck is complete without it. Awaiting it
+      // held the whole form behind a render that can stall, with nothing on
+      // screen to say why.
+      //
+      // Only when nothing was chosen by hand — a deliberate pick should not be
+      // overwritten by dropping a replacement file.
+      if (!cover) {
+        setCoverBusy(true)
+        coverFromFirstPage(doc, file.name)
+          .then((generated) => { if (generated) setCover(generated) })
+          .catch(() => {})
+          .finally(() => setCoverBusy(false))
+      }
     } catch (e) {
       // Reading happens in the browser, so this is a bad/corrupt file — not
       // a server problem. Say what the person can actually do about it.
@@ -278,6 +373,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
       industry: industry || undefined,
       description: description.trim() || undefined,
       tags: tags.length ? tags : ['my-upload'],
+      featured,
       gradient: { from: palette.from, to: palette.to, text: palette.text },
       pattern,
     }
@@ -285,9 +381,20 @@ export default function AddDeckModal({ onClose, onAdd }) {
       try { new URL(url) } catch { setError("That doesn't look like a valid URL"); return }
     }
 
+    if (!category) {
+      setError('Pick a category first')
+      return
+    }
+
     setError(null)
     setUploading(true)
     try {
+      // The cover goes up before the deck so the failure, if there is one,
+      // happens while nothing has been created yet.
+      if (cover?.file) {
+        const up = await uploadFile(cover.file)
+        base.coverImage = up.path
+      }
       let deck
       if (tab === 'upload') {
         // Store the server-relative path; the client absolutises it on read.
@@ -309,9 +416,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
           slidesCount: 1,
           source: { type: 'video', value: videoInfo.embedUrl, kind: videoInfo.kind, platform: videoInfo.platform },
         }
-      }
-      if (attachments.length > 0) {
-        deck.attachments = attachments
       }
       setSuccessDeck(deck)
       setTimeout(() => onAdd(deck), 900)
@@ -345,7 +449,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
               <CloseIcon size={18} />
             </button>
 
-            <div className="px-7 pt-7 pb-3">
+            <div className="px-4 pt-6 pb-3 sm:px-7 sm:pt-7">
               <h2 className="text-2xl font-black tracking-tight">Add a deck</h2>
               <p className="text-sm text-deck-muted mt-1">
                 Upload a PDF, paste a hosted slides link, or embed a video demo.
@@ -358,7 +462,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
               <Tab active={tab === 'video'} onClick={() => setTab('video')} icon={<VideoIcon width={16} height={16} />} label="Video demo" />
             </div>
 
-            <div className="grid md:grid-cols-[1fr_240px] gap-6 p-7 max-h-[70vh] overflow-y-auto thin-scroll">
+            <div className="grid md:grid-cols-[1fr_240px] gap-5 sm:gap-6 p-4 sm:p-7 max-h-[76vh] sm:max-h-[70vh] overflow-y-auto thin-scroll">
               <div className="space-y-4">
                 <div key={tab} className="animate-tab-slide">
                   {tab === 'upload' && (
@@ -422,8 +526,12 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       onChange={(e) => setCategory(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
                     >
-                      <option value="mine">My Library</option>
-                      {CATEGORIES.map((c) => (
+                      {/* "My Library" used to sit here as value="mine". It is
+                          not a category any list contains, so a deck filed
+                          under it was reachable from no filter at all — and the
+                          API refuses it now. My Library is the favourites
+                          feature, which is a different thing entirely. */}
+                      {categories.map((c) => (
                         <option key={c.id} value={c.id}>{c.title}</option>
                       ))}
                     </select>
@@ -436,7 +544,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       className="w-full px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
                     >
                       <option value="">— None —</option>
-                      {INDUSTRIES.map((i) => (
+                      {industries.map((i) => (
                         <option key={i.id} value={i.id}>{i.title}</option>
                       ))}
                     </select>
@@ -492,22 +600,35 @@ export default function AddDeckModal({ onClose, onAdd }) {
                         </div>
                       )}
                     </div>
+
+                    <label className="flex items-center gap-3 cursor-pointer select-none pt-1">
+                      <input
+                        type="checkbox"
+                        checked={featured}
+                        onChange={(e) => setFeatured(e.target.checked)}
+                        className="w-4 h-4 accent-deck-accent"
+                      />
+                      <span className="text-sm">
+                        Featured
+                        <span className="block text-[11px] text-deck-muted">
+                          The newest featured deck is the one the home page leads with.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 )}
 
-                <AttachmentsSection
-                  attachments={attachments}
-                  removeAttachment={removeAttachment}
-                  addAttachment={addAttachment}
-                  newAttachUrl={newAttachUrl}
-                  setNewAttachUrl={setNewAttachUrl}
-                  newAttachLabel={newAttachLabel}
-                  setNewAttachLabel={setNewAttachLabel}
-                  detected={newAttachDetected}
-                />
+                <CoverPicker cover={cover} busy={coverBusy} onPick={setCover} />
 
                 <div>
-                  <div className="text-xs uppercase tracking-widest text-deck-muted mb-2">Cover theme</div>
+                  <div className="text-xs uppercase tracking-widest text-deck-muted mb-2">
+                    Cover theme
+                    {cover && (
+                      <span className="ml-2 normal-case tracking-normal text-white/40">
+                        — fallback if the image can’t load
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-8 gap-1.5">
                     {PALETTES.map((p, i) => (
                       <button
@@ -549,7 +670,15 @@ export default function AddDeckModal({ onClose, onAdd }) {
                 )}
               </div>
 
-              <div className="space-y-3">
+              {/* Sticky from md up, where it is a real second column. `self-start`
+                  is what makes it work at all: a grid item stretches to the row
+                  height by default, and an element as tall as its scroll
+                  container never has anywhere to stick to.
+
+                  Below md the grid collapses to one column and this sits under
+                  the form, where sticking it would pin the preview over the
+                  fields somebody is still filling in. */}
+              <div className="space-y-3 md:sticky md:top-0 md:self-start">
                 <div className="text-xs uppercase tracking-widest text-deck-muted">Preview</div>
                 <div className="aspect-deck rounded-lg overflow-hidden ring-1 ring-deck-border shadow-2xl">
                   <Cover deck={previewDeck} sizeClass="text-xs" />
@@ -801,109 +930,6 @@ function VideoPanel({
           {info.platform} {info.kind === 'iframe' ? 'embed' : 'native player'} ready
         </div>
       )}
-    </div>
-  )
-}
-
-function AttachmentsSection({
-  attachments,
-  removeAttachment,
-  addAttachment,
-  newAttachUrl,
-  setNewAttachUrl,
-  newAttachLabel,
-  setNewAttachLabel,
-  detected,
-}) {
-  return (
-    <div className="space-y-3 rounded-xl border border-deck-border bg-white/[0.02] p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-xs uppercase tracking-widest font-bold text-deck-muted">
-          Additional materials
-        </div>
-        <span className="text-[10px] text-white/40">
-          {attachments.length} attached
-        </span>
-      </div>
-
-      {/* Existing attachments */}
-      {attachments.length > 0 && (
-        <div className="space-y-1.5">
-          {attachments.map((a) => (
-            <div
-              key={a.id}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-deck-card border border-deck-border"
-            >
-              <span
-                className="w-7 h-7 rounded flex items-center justify-center text-xs font-black text-white flex-shrink-0"
-                style={{ background: a.color || '#444' }}
-                title={a.platform}
-              >
-                {a.icon || '↗'}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold truncate">{a.label}</div>
-                <div className="text-xs text-deck-muted truncate flex items-center gap-1.5">
-                  <span>{a.platform}</span>
-                  <span>·</span>
-                  <span className="truncate">{a.value}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => removeAttachment(a.id)}
-                className="text-xs text-deck-muted hover:text-red-400 transition-colors px-2"
-                title="Remove"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add new attachment row */}
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <input
-            value={newAttachUrl}
-            onChange={(e) => setNewAttachUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addAttachment()}
-            placeholder="Paste a Canva, YouTube, Slides, or any link…"
-            className="flex-1 px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40"
-          />
-          <input
-            value={newAttachLabel}
-            onChange={(e) => setNewAttachLabel(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addAttachment()}
-            placeholder="Label (optional)"
-            className="w-36 px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40"
-          />
-          <button
-            onClick={addAttachment}
-            disabled={!newAttachUrl.trim()}
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            +
-          </button>
-        </div>
-        {detected && (
-          <div
-            className="text-xs flex items-center gap-1.5"
-            style={{ color: detected.color }}
-          >
-            <span
-              className="w-4 h-4 rounded flex items-center justify-center text-white font-black text-[10px]"
-              style={{ background: detected.color }}
-            >
-              {detected.icon}
-            </span>
-            Detected as <span className="font-bold">{detected.platform}</span>
-            {detected.type === 'video' && (
-              <span className="text-white/60">· will play as video</span>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

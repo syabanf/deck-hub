@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	"github.com/wit/wit-backend/internal/domain"
 	logmailer "github.com/wit/wit-backend/internal/mailer/log"
 	"github.com/wit/wit-backend/internal/repository/postgres"
 	"github.com/wit/wit-backend/internal/storage/local"
@@ -63,17 +65,17 @@ func TestMain(m *testing.M) {
 	// be dropped before 000001 can drop those tables, then re-created after. The
 	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
 	// tests assert on counts and would break if the catalog grew.
-	for _, f := range []string{
+	for _, f := range append([]string{
+		// audit_log references users, so it has to go before 000001 drops them.
+		// demos references users too.
+		"000016_demos.down.sql",
+		"000015_audit_log.down.sql",
+		"000010_taxonomy_terms.down.sql",     // reads decks; drop before they go
 		"000008_viewing_progress.down.sql",   // FK → users, decks
 		"000007_email_verification.down.sql", // FK → users
 		"000004_favorites.down.sql",          // FK → users, decks
 		"000001_init.down.sql",
-		"000001_init.up.sql",
-		"000004_favorites.up.sql",
-		"000005_deck_indexes.up.sql",
-		"000007_email_verification.up.sql",
-		"000008_viewing_progress.up.sql",
-	} {
+	}, schemaUps()...) {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
 			os.Exit(1)
@@ -102,10 +104,33 @@ func TestMain(m *testing.M) {
 
 	// Same wiring as cmd/api/main.go — this is what makes it end-to-end.
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
-	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool))
+	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
+	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
+	settingsUC := usecase.NewSettingsUsecase(postgres.NewSettingsRepository(pool))
+	auditRepo := postgres.NewAuditRepository(pool)
+	auditUC := usecase.NewAuditUsecase(auditRepo)
+	demoUC := usecase.NewDemoUsecase(postgres.NewDemoRepository(pool), postgres.NewSettingsRepository(pool))
+	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
+
+	// The same wiring production uses, so the suite exercises what actually
+	// runs: a token whose account has been deleted or suspended is refused.
+	tokens.SetAccountLookup(func(ctx context.Context, id string) (string, bool) {
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return "", false
+		}
+		u, err := userUC.GetByID(ctx, uid)
+		if err != nil {
+			return "", false
+		}
+		if u.Status == domain.StatusSuspended {
+			return "", false
+		}
+		return string(u.Role), true
+	})
 
 	// The dev mailer writes the link to the log rather than sending it; the tests
 	// assert on stored state instead of on the message, so nothing here needs a
@@ -122,6 +147,12 @@ func TestMain(m *testing.M) {
 		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
 		Users:     httpdelivery.NewUserHandler(userUC),
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
+		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
+		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
+		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
+		Demos:     httpdelivery.NewDemoHandler(demoUC),
+		AuditRepo: auditRepo,
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:  httpdelivery.NewProgressHandler(progressUC),
@@ -139,6 +170,47 @@ func TestMain(m *testing.M) {
 	defer srv.Close()
 
 	os.Exit(m.Run())
+}
+
+// schemaUps lists the up-migrations that build the schema these tests run
+// against, in migration order.
+//
+// Read from the directory rather than written out here. The hand-kept list
+// this replaced fell a migration behind — 000018 renamed a column the demo
+// repository selects, and because nothing in the suite touched that table the
+// gap was invisible: the tests were passing against a schema production does
+// not have, which is worse than not testing it at all.
+//
+// The seeds are the deliberate omissions. 000002/000003/000006 fill the
+// catalog and add demo accounts, and this suite asserts on counts; 000009
+// only removes what 000003 added.
+func schemaUps() []string {
+	skip := map[string]bool{
+		"000002_seed_catalog.up.sql":         true,
+		"000003_seed_demo_accounts.up.sql":   true,
+		"000006_seed_team_accounts.up.sql":   true,
+		"000009_remove_demo_accounts.up.sql": true,
+	}
+	matches, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	if err != nil {
+		fmt.Printf("list migrations: %v\n", err)
+		os.Exit(1)
+	}
+	if len(matches) == 0 {
+		fmt.Println("no migrations found — is the working directory right?")
+		os.Exit(1)
+	}
+	sort.Strings(matches)
+
+	ups := make([]string, 0, len(matches))
+	for _, m := range matches {
+		name := filepath.Base(m)
+		if skip[name] {
+			continue
+		}
+		ups = append(ups, name)
+	}
+	return ups
 }
 
 // execSQLFile runs a whole .sql script. The simple protocol is required so a
@@ -199,6 +271,52 @@ func do(t *testing.T, method, path, token string, body any) (int, []byte) {
 		t.Fatalf("read body: %v", err)
 	}
 	return res.StatusCode, respBody
+}
+
+// doWithHeaders is `do` plus extra request headers — the Demo Center's PIN
+// travels in one.
+func doWithHeaders(t *testing.T, method, path, token string, body any, extra map[string]string) (int, []byte) {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		reader = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequest(method, srv.URL+path, reader)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer res.Body.Close()
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return res.StatusCode, respBody
+}
+
+// withPin is the header a Demo Center call carries.
+func withPin(pin string) map[string]string {
+	return map[string]string{httpdelivery.PinHeader: pin}
 }
 
 func decode(t *testing.T, raw []byte, into any) {
@@ -1388,4 +1506,511 @@ func TestAuthRateLimit(t *testing.T) {
 	if !rl.Allow("ip:203.0.113.9") {
 		t.Fatal("a different address was refused because of another's usage")
 	}
+}
+
+// TestTaxonomy covers the master lists the catalog is browsed by: who may
+// change them, and the two rules that keep a change from quietly breaking
+// decks — a term in use cannot be deleted, and a retired one cannot be
+// attached to anything new.
+func TestTaxonomy(t *testing.T) {
+	admin := adminToken(t)
+
+	t.Run("reads are public", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/taxonomy/categories", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var terms []struct {
+			Slug      string `json:"slug"`
+			Title     string `json:"title"`
+			Active    bool   `json:"active"`
+			DeckCount int    `json:"deckCount"`
+		}
+		decode(t, raw, &terms)
+		if len(terms) == 0 {
+			t.Fatal("no categories returned; migration 000010 should have seeded six")
+		}
+	})
+
+	t.Run("an unknown kind is a 404, not an empty list", func(t *testing.T) {
+		// An empty array would read as "there are none of those", which is a
+		// different and much more confusing answer than "no such collection".
+		status, raw := do(t, http.MethodGet, "/taxonomy/colours", "", nil)
+		requireStatus(t, http.StatusNotFound, status, raw)
+
+		// Source types were a kind here until 000011. They are a rendering
+		// contract the player implements, not a list anyone can add to.
+		status, raw = do(t, http.MethodGet, "/taxonomy/source-types", "", nil)
+		requireStatus(t, http.StatusNotFound, status, raw)
+	})
+
+	t.Run("a non-admin cannot change the lists", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "E2E Taxonomy Editor", "email": "e2e-taxonomy-editor@wit.id",
+			"password": "editor12345", "role": "editor", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var created struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+created.ID, admin, nil) })
+
+		// An editor may create decks, but not the lists decks are filed under.
+		editor := login(t, "e2e-taxonomy-editor@wit.id", "editor12345")
+		status, raw = do(t, http.MethodPost, "/taxonomy/categories", editor,
+			map[string]any{"slug": "editor-made", "title": "Editor made"})
+		requireStatus(t, http.StatusForbidden, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/taxonomy/categories", "",
+			map[string]any{"slug": "anon-made", "title": "Anon made"})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a slug must be url-safe", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/taxonomy/categories", admin,
+			map[string]any{"slug": "Not A Slug", "title": "Nope"})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("colours come in pairs", func(t *testing.T) {
+		// One half of a two-stop gradient renders as a flat black card rather
+		// than as an obvious mistake.
+		status, raw := do(t, http.MethodPost, "/taxonomy/industries", admin,
+			map[string]any{"slug": "half-painted", "title": "Half painted", "accent": "#ff0000"})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("lifecycle", func(t *testing.T) {
+		const slug = "e2e-category"
+		t.Cleanup(func() { do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil) })
+
+		status, raw := do(t, http.MethodPost, "/taxonomy/categories", admin,
+			map[string]any{"slug": slug, "title": "E2E Category"})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var term struct {
+			Slug      string `json:"slug"`
+			SortOrder int    `json:"sortOrder"`
+			Active    bool   `json:"active"`
+			DeckCount int    `json:"deckCount"`
+		}
+		decode(t, raw, &term)
+		if !term.Active {
+			t.Fatal("a new term should be active")
+		}
+		if term.SortOrder == 0 {
+			t.Fatal("a new term should land at the end of the list, not at position zero")
+		}
+
+		// The same slug twice is a conflict, not a silent overwrite.
+		status, raw = do(t, http.MethodPost, "/taxonomy/categories", admin,
+			map[string]any{"slug": slug, "title": "Duplicate"})
+		requireStatus(t, http.StatusConflict, status, raw)
+
+		// A deck can now be filed under it.
+		body := newDeckBody("E2E Taxonomy Deck")
+		body["category"] = slug
+		status, raw = do(t, http.MethodPost, "/decks", admin, body)
+		requireStatus(t, http.StatusCreated, status, raw)
+		var deck struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &deck)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+deck.ID, admin, nil) })
+
+		// And while it does, the term cannot be deleted out from under it.
+		status, raw = do(t, http.MethodGet, "/taxonomy/categories/"+slug, "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		decode(t, raw, &term)
+		if term.DeckCount != 1 {
+			t.Fatalf("expected deckCount 1, got %d", term.DeckCount)
+		}
+
+		status, raw = do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil)
+		requireStatus(t, http.StatusConflict, status, raw)
+
+		// Retiring is the reversible alternative: the deck keeps its category,
+		// and nothing new can be filed under it.
+		status, raw = do(t, http.MethodPut, "/taxonomy/categories/"+slug, admin,
+			map[string]any{"active": false})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		body = newDeckBody("Should Not Exist")
+		body["category"] = slug
+		status, raw = do(t, http.MethodPost, "/decks", admin, body)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+
+		status, raw = do(t, http.MethodGet, "/decks/"+deck.ID, "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		// A retired term is still listed by default, or the only control that
+		// could bring it back would be invisible.
+		status, raw = do(t, http.MethodGet, "/taxonomy/categories?active=true", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		if bytes.Contains(raw, []byte(slug)) {
+			t.Fatal("active=true still returned a retired term")
+		}
+		status, raw = do(t, http.MethodGet, "/taxonomy/categories", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		if !bytes.Contains(raw, []byte(slug)) {
+			t.Fatal("the unfiltered listing hid a retired term")
+		}
+
+		// Once nothing points at it, it can go.
+		status, raw = do(t, http.MethodDelete, "/decks/"+deck.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+		status, raw = do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+	})
+
+	t.Run("an edit can set order to zero and clear a gradient", func(t *testing.T) {
+		// Both are zero values, and both are edits somebody meant to make.
+		// While these fields were plain ints and strings the request succeeded
+		// and changed nothing, which is the worst of the three outcomes.
+		const slug = "e2e-industry"
+		t.Cleanup(func() { do(t, http.MethodDelete, "/taxonomy/industries/"+slug, admin, nil) })
+
+		status, raw := do(t, http.MethodPost, "/taxonomy/industries", admin, map[string]any{
+			"slug": slug, "title": "E2E Industry",
+			"accent": "#00c6fb", "secondary": "#005bea",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var term struct {
+			SortOrder int    `json:"sortOrder"`
+			Accent    string `json:"accent"`
+			Secondary string `json:"secondary"`
+		}
+		decode(t, raw, &term)
+		if term.SortOrder == 0 {
+			t.Fatal("a new term should land at the end, not at zero")
+		}
+
+		status, raw = do(t, http.MethodPut, "/taxonomy/industries/"+slug, admin,
+			map[string]any{"sortOrder": 0, "accent": "", "secondary": ""})
+		requireStatus(t, http.StatusOK, status, raw)
+		decode(t, raw, &term)
+		if term.SortOrder != 0 {
+			t.Fatalf("sortOrder 0 was ignored, got %d", term.SortOrder)
+		}
+		if term.Accent != "" || term.Secondary != "" {
+			t.Fatalf("clearing the gradient was ignored, got %q/%q", term.Accent, term.Secondary)
+		}
+
+		// An omitted field is still left alone.
+		status, raw = do(t, http.MethodPut, "/taxonomy/industries/"+slug, admin,
+			map[string]any{"title": "E2E Industry Renamed"})
+		requireStatus(t, http.StatusOK, status, raw)
+		decode(t, raw, &term)
+		if term.SortOrder != 0 {
+			t.Fatalf("an unrelated edit moved sortOrder to %d", term.SortOrder)
+		}
+	})
+
+	t.Run("unknown values are reported, not hidden", func(t *testing.T) {
+		// The columns are plain text with no foreign key, so a value written
+		// before this table existed still resolves to nothing. Writing one
+		// directly is the only way to reproduce that now.
+		ctx := context.Background()
+		pool, err := postgres.NewPool(ctx, os.Getenv("E2E_DATABASE_URL"))
+		if err != nil {
+			t.Fatalf("pool: %v", err)
+		}
+		defer pool.Close()
+
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO decks (title, category, source_type, source_value)
+			 VALUES ('Orphan', 'no-such-category', 'url', 'https://example.com')`); err != nil {
+			t.Fatalf("insert orphan deck: %v", err)
+		}
+		t.Cleanup(func() {
+			pool2, err := postgres.NewPool(context.Background(), os.Getenv("E2E_DATABASE_URL"))
+			if err != nil {
+				return
+			}
+			defer pool2.Close()
+			pool2.Exec(context.Background(), `DELETE FROM decks WHERE title = 'Orphan'`)
+		})
+
+		status, raw := do(t, http.MethodGet, "/taxonomy/categories/unknown", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		if !bytes.Contains(raw, []byte("no-such-category")) {
+			t.Fatalf("orphaned category not reported: %s", raw)
+		}
+	})
+}
+
+// TestDemoCenter covers the gate in front of the credentials.
+//
+// The Demo Center hands out working sign-ins to other people's systems, so its
+// two locks are the ones worth testing directly: an account is required, and
+// so is the shared PIN. Neither had a test, which is how the schema underneath
+// it drifted a migration behind without anybody noticing.
+func TestDemoCenter(t *testing.T) {
+	admin := adminToken(t)
+	const pin = "1234" // the PIN migration 000017 seeds
+
+	t.Run("no token is refused before the PIN is even considered", func(t *testing.T) {
+		status, raw := doWithHeaders(t, http.MethodGet, "/demos", "", nil, withPin(pin))
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a signed-in caller without the PIN gets its own error code", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/demos", admin, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+
+		var out struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		decode(t, raw, &out)
+		// The frontend keys on this to show the PIN screen rather than
+		// signing the person out of the whole app.
+		if out.Error.Code != "demo_pin_required" {
+			t.Fatalf("error code = %q, want demo_pin_required", out.Error.Code)
+		}
+	})
+
+	t.Run("lifecycle", func(t *testing.T) {
+		status, raw := doWithHeaders(t, http.MethodPost, "/demos", admin, map[string]any{
+			"name":        "E2E Demo",
+			"category":    "Testing",
+			"url":         "https://demo.example.com",
+			"username":    "demo@wit.id",
+			"password":    "  spaces matter  ",
+			"environment": "Development",
+			"status":      "Active",
+		}, withPin(pin))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var created struct {
+			ID       string `json:"id"`
+			URL      string `json:"url"`
+			Password string `json:"password"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() {
+			doWithHeaders(t, http.MethodDelete, "/demos/"+created.ID, admin, nil, withPin(pin))
+		})
+
+		// A demo password is copied into someone else's login form, so it has
+		// to come back exactly as it was stored — leading spaces included.
+		if created.Password != "  spaces matter  " {
+			t.Fatalf("password = %q, want it untrimmed", created.Password)
+		}
+
+		status, raw = doWithHeaders(t, http.MethodGet, "/demos/"+created.ID, admin, nil, withPin(pin))
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = doWithHeaders(t, http.MethodPut, "/demos/"+created.ID, admin,
+			map[string]any{"category": "Edited"}, withPin(pin))
+		requireStatus(t, http.StatusOK, status, raw)
+	})
+
+	t.Run("a URL is stored as something a browser can follow", func(t *testing.T) {
+		// A bare host in an href is a relative link: it resolves against this
+		// app and goes nowhere. One of the imported rows was exactly that.
+		status, raw := doWithHeaders(t, http.MethodPost, "/demos", admin, map[string]any{
+			"name": "E2E Schemeless", "url": "dashboard.example.com/app",
+		}, withPin(pin))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var created struct {
+			ID  string `json:"id"`
+			URL string `json:"url"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() {
+			doWithHeaders(t, http.MethodDelete, "/demos/"+created.ID, admin, nil, withPin(pin))
+		})
+		if created.URL != "https://dashboard.example.com/app" {
+			t.Fatalf("url = %q, want the scheme filled in", created.URL)
+		}
+
+		// And a scheme that executes rather than navigates is refused outright.
+		status, raw = doWithHeaders(t, http.MethodPost, "/demos", admin, map[string]any{
+			"name": "E2E Script", "url": "javascript:alert(1)",
+		}, withPin(pin))
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("a viewer may read the credentials but not change them", func(t *testing.T) {
+		const email, pass = "e2e-demo-viewer@wit.id", "viewer12345"
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "Demo Viewer", "email": email, "password": pass,
+			"role": "viewer", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var viewer struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &viewer)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+viewer.ID, admin, nil) })
+
+		viewerToken := login(t, email, pass)
+
+		status, raw = doWithHeaders(t, http.MethodGet, "/demos", viewerToken, nil, withPin(pin))
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = doWithHeaders(t, http.MethodPost, "/demos", viewerToken,
+			map[string]any{"name": "nope"}, withPin(pin))
+		requireStatus(t, http.StatusForbidden, status, raw)
+
+		// The PIN is not the permission. Holding it does not make a viewer an
+		// editor, and not holding it does not make an admin one either.
+		status, raw = do(t, http.MethodPut, "/demos/pin", viewerToken, map[string]string{"pin": "9999"})
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+
+	t.Run("wrong PINs are rate limited", func(t *testing.T) {
+		// A four-digit PIN is 10,000 guesses. Without a limit an account could
+		// work through them; with one, the same search takes days and is loud.
+		const email, pass = "e2e-pin-bruteforce@wit.id", "viewer12345"
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "PIN Prober", "email": email, "password": pass,
+			"role": "viewer", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var prober struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &prober)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+prober.ID, admin, nil) })
+
+		token := login(t, email, pass)
+
+		limited := false
+		for i := 0; i < 20; i++ {
+			status, _ := doWithHeaders(t, http.MethodGet, "/demos", token, nil, withPin("0000"))
+			if status == http.StatusTooManyRequests {
+				limited = true
+				break
+			}
+			if status != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: status = %d, want 401 or 429", i, status)
+			}
+		}
+		if !limited {
+			t.Fatal("twenty wrong PINs in a row were all answered — the guesses are not being counted")
+		}
+	})
+}
+
+// TestTokenRevocation is the other half of "remove this user".
+//
+// A JWT is a snapshot: nothing about deleting an account or suspending it
+// reaches a token already in a browser, so without a check on every request
+// the button in the admin screen does nothing for as long as the token lives.
+func TestTokenRevocation(t *testing.T) {
+	admin := adminToken(t)
+
+	newUser := func(t *testing.T, email, pass, role string) (string, string) {
+		t.Helper()
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "Revocation Subject", "email": email, "password": pass,
+			"role": role, "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var u struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &u)
+		return u.ID, login(t, email, pass)
+	}
+
+	t.Run("a deleted account's token stops working", func(t *testing.T) {
+		id, token := newUser(t, "e2e-revoked@wit.id", "revoked12345", "editor")
+
+		status, raw := do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = do(t, http.MethodDelete, "/users/"+id, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		status, raw = do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a suspended account's token stops working", func(t *testing.T) {
+		id, token := newUser(t, "e2e-suspended@wit.id", "suspended12345", "editor")
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+id, admin, nil) })
+
+		status, raw := do(t, http.MethodPut, "/users/"+id, admin, map[string]string{"status": "suspended"})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a demotion takes effect on the next request", func(t *testing.T) {
+		id, token := newUser(t, "e2e-demoted@wit.id", "demoted12345", "editor")
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+id, admin, nil) })
+
+		// The token still says "editor" — the database is what decides.
+		status, raw := do(t, http.MethodPut, "/users/"+id, admin, map[string]string{"role": "viewer"})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/decks", token, newDeckBody("after demotion"))
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+}
+
+// TestMeProfile covers the account's own page: what it can read, and the one
+// thing it can change.
+func TestMeProfile(t *testing.T) {
+	admin := adminToken(t)
+
+	const email, first, second = "e2e-profile@wit.id", "profile12345", "profile-second-67890"
+	status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+		"name": "Profile Owner", "email": email, "password": first,
+		"role": "editor", "status": "active",
+	})
+	requireStatus(t, http.StatusCreated, status, raw)
+	var u struct {
+		ID string `json:"id"`
+	}
+	decode(t, raw, &u)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+u.ID, admin, nil) })
+
+	token := login(t, email, first)
+
+	t.Run("reads its own record and deck count", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var me struct {
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			DeckCount int    `json:"deckCount"`
+		}
+		decode(t, raw, &me)
+		if me.Email != email || me.Role != "editor" {
+			t.Fatalf("me = %+v, want %s/editor", me, email)
+		}
+		if me.DeckCount != 0 {
+			t.Fatalf("deckCount = %d, want 0 before this account has added anything", me.DeckCount)
+		}
+	})
+
+	t.Run("the current password has to be right", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/me/password", token, map[string]string{
+			"currentPassword": "not-the-password", "newPassword": second,
+		})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("changing it invalidates the old one", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/me/password", token, map[string]string{
+			"currentPassword": first, "newPassword": second,
+		})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/auth/login", "", map[string]string{
+			"email": email, "password": first,
+		})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+
+		login(t, email, second) // fatals if the new one does not work
+	})
 }

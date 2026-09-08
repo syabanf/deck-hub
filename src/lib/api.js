@@ -57,8 +57,8 @@ async function fetchWithTimeout(url, options, ms) {
 const transient = (err) =>
   err?.code === 'network' || err?.code === 'timeout' || (err?.status >= 500 && err?.status < 600)
 
-async function request(path, { method = 'GET', body, auth = false, retries, meta = false } = {}) {
-  const headers = {}
+async function request(path, { method = 'GET', body, auth = false, retries, meta = false, headers: extra } = {}) {
+  const headers = { ...extra }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (auth) {
     const token = loadAuth()?.token
@@ -108,7 +108,11 @@ async function request(path, { method = 'GET', body, auth = false, retries, meta
         // An authenticated call rejected as 401 means the JWT lapsed. Tell the
         // app once so it can sign out cleanly; a failed login is the caller's
         // business, not a session expiry.
-        if (res.status === 401 && auth) onAuthFailure?.(err)
+        //
+        // The Demo Center PIN is the other exception, and it is why that code
+        // exists: the token is fine, a second gate was not satisfied. Without
+        // this, typing the PIN wrong signed the person out of the whole app.
+        if (res.status === 401 && auth && code !== 'demo_pin_required') onAuthFailure?.(err)
 
         if (transient(err) && attempt < attempts - 1) {
           lastErr = err
@@ -191,6 +195,8 @@ export async function uploadFile(file) {
 
 // ─────────────── Endpoints ───────────────
 
+const demoPin = (pin) => (pin ? { 'X-Demo-Pin': pin } : {})
+
 export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: { email, password } }),
@@ -238,6 +244,66 @@ export const api = {
   createUser: (user) => request('/users', { method: 'POST', body: user, auth: true }),
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
+
+  // Demo Center. Reading needs an account of any role — the rows carry working
+  // passwords — and writing needs admin or editor.
+  // The PIN travels in a header, not the query string: a query parameter ends
+  // up in access logs and browser history, and this one guards a page of
+  // credentials.
+  listDemos: (pin, params = {}) => {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, v)
+    }
+    const q = qs.toString()
+    return request(`/demos${q ? `?${q}` : ''}`, { auth: true, headers: demoPin(pin) })
+  },
+  createDemo: (pin, demo) =>
+    request('/demos', { method: 'POST', body: demo, auth: true, headers: demoPin(pin) }),
+  updateDemo: (pin, id, patch) =>
+    request(`/demos/${id}`, { method: 'PUT', body: patch, auth: true, headers: demoPin(pin) }),
+  deleteDemo: (pin, id) =>
+    request(`/demos/${id}`, { method: 'DELETE', auth: true, headers: demoPin(pin) }),
+
+  // Admin only, and write-only — the PIN is stored hashed, so it can be
+  // replaced and never read back.
+  setDemoPin: (pin) => request('/demos/pin', { method: 'PUT', body: { pin }, auth: true }),
+
+  // The activity log. Admin only, and paged like the catalog — it is the one
+  // table that only grows.
+  listAudit: (params = {}) => {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, v)
+    }
+    const q = qs.toString()
+    return request(`/audit${q ? `?${q}` : ''}`, { auth: true, meta: true })
+  },
+
+  // The signed-in account's own record. Any role; /users is the admin path.
+  getMe: () => request('/me', { auth: true }),
+  changePassword: (currentPassword, newPassword) =>
+    request('/me/password', { method: 'PUT', body: { currentPassword, newPassword }, auth: true }),
+
+  // Settings — read by anyone (the navigation needs them before sign-in),
+  // written by admins.
+  getSettings: () => request('/settings'),
+  updateSettings: (patch) => request('/settings', { method: 'PUT', body: patch, auth: true }),
+
+  // Taxonomy — the master lists the catalog is browsed by. Reads are public;
+  // writes are admin-only, so `auth: true` on all four.
+  //
+  // `activeOnly` is what browse screens want and the admin screen must not
+  // pass: retiring a term you can no longer see is a one-way door.
+  listTerms: (kind, { activeOnly = false } = {}) =>
+    request(`/taxonomy/${kind}${activeOnly ? '?active=true' : ''}`),
+  unknownTerms: (kind) => request(`/taxonomy/${kind}/unknown`),
+  createTerm: (kind, term) =>
+    request(`/taxonomy/${kind}`, { method: 'POST', body: term, auth: true }),
+  updateTerm: (kind, slug, patch) =>
+    request(`/taxonomy/${kind}/${slug}`, { method: 'PUT', body: patch, auth: true }),
+  deleteTerm: (kind, slug) =>
+    request(`/taxonomy/${kind}/${slug}`, { method: 'DELETE', auth: true }),
 
   // Viewing progress ("Continue watching") — private per-user history.
   listProgress: () => request('/progress', { auth: true }),
@@ -318,6 +384,10 @@ export const normalizeDeck = (d) => {
     tags: Array.isArray(d.tags) ? d.tags : [],
     gradient: GRADIENTS[h % GRADIENTS.length],
     pattern: PATTERNS[(h >> 4) % PATTERNS.length],
+    // An uploaded cover wins; without one Cover falls back to its own artwork,
+    // which is why coverImage is optional rather than required. Resolved
+    // against the API base because the stored path is server-relative.
+    image: d.coverImage ? absoluteUrl(d.coverImage) : d.image,
     source: normalizeSource(d.source),
   }
 }
@@ -325,18 +395,22 @@ export const normalizeDeck = (d) => {
 export const normalizeDecks = (list) => (Array.isArray(list) ? list.map(normalizeDeck) : [])
 
 // Map an AddDeckModal deck (rich, client-side) → the backend createDeck body.
-// Presentation-only fields (gradient, pattern, attachments, slidesCount) are
-// dropped — the backend doesn't store them; they're re-derived on read.
+// Presentation-only fields (gradient, pattern, slidesCount) are dropped — the
+// backend doesn't store them; they're re-derived on read.
 export const toCreateRequest = (deck) => ({
   title: deck.title || '',
   subtitle: deck.subtitle || '',
   author: deck.author || '',
   year: Number(deck.year) || new Date().getFullYear(),
-  category: deck.category || 'mine',
+  // No default: 'mine' used to stand in here, and it is not a category any
+  // list contains — every deck created that way was invisible to the filter
+  // that should have found it. The form picks a real one.
+  category: deck.category || '',
   industry: deck.industry || '',
   tags: Array.isArray(deck.tags) ? deck.tags : [],
   source: { type: deck.source?.type || 'url', value: deck.source?.value || '' },
   description: deck.description || '',
+  coverImage: deck.coverImage || '',
   featured: !!deck.featured,
 })
 
@@ -356,6 +430,9 @@ export const toUpdateRequest = (patch) => {
   if (patch.industry !== undefined) body.industry = patch.industry
   if (patch.tags !== undefined) body.tags = Array.isArray(patch.tags) ? patch.tags : []
   if (patch.description !== undefined) body.description = patch.description
+  // '' is a real value here: it clears an uploaded cover and hands the deck
+  // back to the generated artwork.
+  if (patch.coverImage !== undefined) body.coverImage = patch.coverImage
   if (patch.featured !== undefined) body.featured = !!patch.featured
   if (patch.source !== undefined) {
     body.source = { type: patch.source.type || 'url', value: patch.source.value || '' }

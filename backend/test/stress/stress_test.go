@@ -35,7 +35,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/google/uuid"
+
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	"github.com/wit/wit-backend/internal/domain"
 	"github.com/wit/wit-backend/internal/repository/postgres"
 	"github.com/wit/wit-backend/internal/storage/local"
 	"github.com/wit/wit-backend/internal/usecase"
@@ -98,22 +101,18 @@ func TestMain(m *testing.M) {
 
 	// Clean schema, then load it up with a realistic amount of data. Drop
 	// favorites first so a leftover FK from an e2e run can't block the reset.
-	for _, f := range []string{
+	for _, f := range append([]string{
 		// Anything with a foreign key into users or decks has to go before
 		// 000001 can drop those tables.
+		// audit_log references users, so it has to go before 000001 drops them.
+		"000016_demos.down.sql",
+		"000015_audit_log.down.sql",
+		"000010_taxonomy_terms.down.sql",
 		"000008_viewing_progress.down.sql",
 		"000007_email_verification.down.sql",
 		"000004_favorites.down.sql",
 		"000001_init.down.sql",
-		"000001_init.up.sql",
-		// The perf indexes are part of the schema under test — without them
-		// these numbers would measure an unindexed table, not production.
-		"000005_deck_indexes.up.sql",
-		// Re-create what was dropped above. Without this, users has no
-		// email_verified_at column and every authenticated call fails.
-		"000007_email_verification.up.sql",
-		"000008_viewing_progress.up.sql",
-	} {
+	}, schemaUps()...) {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)
 			os.Exit(1)
@@ -141,8 +140,26 @@ func TestMain(m *testing.M) {
 	store, _ := local.New(uploadDir, "/uploads")
 
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
-	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool))
+	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), postgres.NewTaxonomyRepository(pool))
 	tokens := httpdelivery.NewTokenManager("stress-secret", time.Hour)
+
+	// Wired as production wires it, so the numbers include the account lookup
+	// every authenticated request now does. Measuring a cheaper server than
+	// the one that runs is the whole way a load test misleads.
+	tokens.SetAccountLookup(func(ctx context.Context, id string) (string, bool) {
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return "", false
+		}
+		u, err := userUC.GetByID(ctx, uid)
+		if err != nil {
+			return "", false
+		}
+		if u.Status == domain.StatusSuspended {
+			return "", false
+		}
+		return string(u.Role), true
+	})
 
 	srv = httptest.NewServer(httpdelivery.NewRouter(httpdelivery.RouterDeps{
 		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
@@ -166,6 +183,34 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+// schemaUps lists the up-migrations, in order, that build the schema this
+// harness measures. Read from the directory rather than kept by hand — the
+// list it replaced had fallen a migration behind, which meant measuring a
+// schema production does not have. The seeds are skipped: this suite creates
+// its own data.
+func schemaUps() []string {
+	skip := map[string]bool{
+		"000002_seed_catalog.up.sql":         true,
+		"000003_seed_demo_accounts.up.sql":   true,
+		"000006_seed_team_accounts.up.sql":   true,
+		"000009_remove_demo_accounts.up.sql": true,
+	}
+	matches, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	if err != nil || len(matches) == 0 {
+		fmt.Printf("list migrations: %v\n", err)
+		os.Exit(1)
+	}
+	sort.Strings(matches)
+
+	ups := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if name := filepath.Base(m); !skip[name] {
+			ups = append(ups, name)
+		}
+	}
+	return ups
 }
 
 func execSQLFile(ctx context.Context, dsn, path string) error {
@@ -434,7 +479,7 @@ func TestStress(t *testing.T) {
 
 		// This one grows the table by design; it runs last.
 		run("POST /decks (create)", concurrency, duration, postJSON("/decks", adminJWT, map[string]any{
-			"title": "Stress Created", "category": "mine", "industry": "tech",
+			"title": "Stress Created", "category": "engineering", "industry": "tech",
 			"tags":   []string{"stress"},
 			"source": map[string]string{"type": "url", "value": "https://example.com/x"},
 		})).log(t)

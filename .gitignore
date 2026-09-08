@@ -13,8 +13,15 @@ dist
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Conflict copies a file-sync service drops into the tree on its own. The Go
 # ones redeclare their package's types and break the build; it has also renamed
 # node_modules binaries out from under the bundler.
 * [0-9].*
+
+# Staging run directory: generated nginx config, pids, logs, uploads.
+staging/.run/
+
+# Seed files carrying real credentials. Handed over out of band, never committed.
+*.local.sql

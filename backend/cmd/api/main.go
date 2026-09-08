@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/wit/wit-backend/internal/config"
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
 	"github.com/wit/wit-backend/internal/domain"
@@ -50,12 +52,20 @@ func run() error {
 	deckRepo := postgres.NewDeckRepository(pool)
 	favoriteRepo := postgres.NewFavoriteRepository(pool)
 	progressRepo := postgres.NewProgressRepository(pool)
+	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
+	settingsRepo := postgres.NewSettingsRepository(pool)
+	auditRepo := postgres.NewAuditRepository(pool)
+	demoRepo := postgres.NewDemoRepository(pool)
 
 	// --- Usecases (depend only on domain interfaces) ---
 	userUC := usecase.NewUserUsecase(userRepo)
-	deckUC := usecase.NewDeckUsecase(deckRepo)
+	deckUC := usecase.NewDeckUsecase(deckRepo, taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(favoriteRepo)
 	progressUC := usecase.NewProgressUsecase(progressRepo)
+	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
+	settingsUC := usecase.NewSettingsUsecase(settingsRepo)
+	auditUC := usecase.NewAuditUsecase(auditRepo)
+	demoUC := usecase.NewDemoUsecase(demoRepo, settingsRepo)
 
 	// Take ownership of the seeded admin. Migration 000001 ships a published
 	// password so a fresh checkout works; production must not keep it.
@@ -112,11 +122,45 @@ func run() error {
 
 	// --- Transport: token manager + handlers ---
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
+
+	// Every authenticated request re-reads the account the token names, so
+	// removing or suspending someone takes effect now rather than whenever
+	// their token happens to expire. See SetAccountLookup.
+	tokens.SetAccountLookup(func(ctx context.Context, id string) (string, bool) {
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return "", false
+		}
+		u, err := userUC.GetByID(ctx, uid)
+		if err != nil {
+			return "", false
+		}
+		if u.Status == domain.StatusSuspended {
+			return "", false
+		}
+		return string(u.Role), true
+	})
+
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
-		Auth:        httpdelivery.NewAuthHandler(userUC, tokens),
-		Register:    httpdelivery.NewRegistrationHandler(registrationUC, tokens),
-		Users:       httpdelivery.NewUserHandler(userUC),
-		Decks:       httpdelivery.NewDeckHandler(deckUC),
+		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
+		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
+		Users:     httpdelivery.NewUserHandler(userUC),
+		Decks:     httpdelivery.NewDeckHandler(deckUC),
+		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
+		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
+		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
+		Demos:     httpdelivery.NewDemoHandler(demoUC),
+		AuditRepo: auditRepo,
+		// The email is copied into each entry at the time, so a deleted account
+		// does not erase its own history.
+		ActorEmail: func(ctx context.Context, id uuid.UUID) string {
+			u, err := userUC.GetByID(ctx, id)
+			if err != nil {
+				return ""
+			}
+			return u.Email
+		},
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
 		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:    httpdelivery.NewProgressHandler(progressUC),
@@ -126,12 +170,26 @@ func run() error {
 		CORSOrigins: cfg.CORSOrigins,
 	})
 
+	// Timeouts sized for the largest thing that crosses this server: a 25 MB
+	// deck, in either direction.
+	//
+	// They were 15s read / 30s write, which is fine on a laptop and wrong on
+	// the internet. A read timeout covers the whole request body, so 15s meant
+	// an upload had to sustain ~14 Mbps or the connection was cut mid-transfer
+	// — and the frontend already allows two minutes for one. The write timeout
+	// covers the whole response, so 30s meant serving that same PDF back
+	// needed ~7 Mbps. Both failures look like "it just stops", and only on a
+	// slow link, which is exactly where nobody is testing.
+	//
+	// ReadHeaderTimeout stays short: that is the slowloris defence, and it is
+	// unaffected by how long a legitimate body takes. Size is bounded
+	// separately by MaxBytesReader.
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 

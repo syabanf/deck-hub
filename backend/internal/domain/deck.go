@@ -28,10 +28,44 @@ type Deck struct {
 	Tags        []string   `json:"tags"`
 	Source      DeckSource `json:"source"`
 	Description string     `json:"description"`
-	Featured    bool       `json:"featured"`
-	ViewCount   int        `json:"viewCount"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+
+	// CoverImage is an optional server-relative upload path. Empty means the
+	// frontend generates artwork from the deck id, which is the default and
+	// looks deliberate rather than missing.
+	CoverImage string `json:"coverImage"`
+
+	// CreatedBy is the account that added the deck, separate from Author,
+	// which is free text naming whoever made the presentation. Nil for every
+	// deck added before this was recorded — "unknown" rather than a guess.
+	CreatedBy *uuid.UUID `json:"createdBy,omitempty"`
+	Featured  bool       `json:"featured"`
+	ViewCount int        `json:"viewCount"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+}
+
+// SourceTypes are the kinds of content the player can actually render.
+//
+// Deliberately not master data. A category is a label — add one and the
+// catalog files decks under it straight away. A source type is a rendering
+// contract: 'pdf' means pdf.js, 'video' means the media element, 'gslides' and
+// 'embed' mean an iframe with their own URL rules, 'url' means a plain link.
+// Adding a sixth through an admin screen would only produce decks nothing
+// knows how to play, and the failure would surface at playback to a viewer
+// instead of at creation to whoever caused it.
+//
+// Changing this list means changing src/lib/embed.js and DeckPlayer with it,
+// which is why it sits in code rather than in a table.
+var SourceTypes = []string{"pdf", "gslides", "url", "video", "embed"}
+
+// ValidSourceType reports whether the player has a branch for this type.
+func ValidSourceType(s string) bool {
+	for _, t := range SourceTypes {
+		if t == s {
+			return true
+		}
+	}
+	return false
 }
 
 // DeckFilter narrows a List query. Zero values mean "no filter".
@@ -95,4 +129,9 @@ type DeckRepository interface {
 	Update(ctx context.Context, d *Deck) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	IncrementViews(ctx context.Context, id uuid.UUID) (*Deck, error)
+
+	// CountByCreator is what a profile page reports. A separate query rather
+	// than a filter on List: the answer is one number, and listing every deck
+	// to count them is the shape of a problem that only shows up later.
+	CountByCreator(ctx context.Context, userID uuid.UUID) (int, error)
 }

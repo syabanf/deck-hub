@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { TrashIcon, PlusIcon, StarIcon, PencilIcon } from '../lib/icons.jsx'
 import LoadMore from './LoadMore.jsx'
 
@@ -44,6 +44,7 @@ export default function ManagePage({
   onRemove,
   embedded = false,
 }) {
+  const { categories, industries } = useTaxonomy()
   const { search = '', category: filterCategory = 'all', industry: filterIndustry = 'all', source: filterSource = 'all' } = filters || {}
   const setFilter = (patch) => onFiltersChange?.({ ...filters, ...patch })
   const setSearch = (v) => setFilter({ search: v })
@@ -106,7 +107,7 @@ export default function ManagePage({
       <div className="mb-8">
         <div className="text-xs uppercase tracking-widest text-deck-muted mb-2">By category</div>
         <div className="flex flex-wrap gap-2">
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <div
               key={c.id}
               className="px-3 py-1.5 rounded-full bg-white/5 border border-deck-border text-xs flex items-center gap-2"
@@ -132,8 +133,7 @@ export default function ManagePage({
           className="px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
         >
           <option value="all">All categories</option>
-          <option value="mine">My Library</option>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <option key={c.id} value={c.id}>{c.title}</option>
           ))}
         </select>
@@ -143,7 +143,7 @@ export default function ManagePage({
           className="px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
         >
           <option value="all">All industries</option>
-          {INDUSTRIES.map((i) => (
+          {industries.map((i) => (
             <option key={i.id} value={i.id}>{i.title}</option>
           ))}
         </select>
@@ -167,7 +167,8 @@ export default function ManagePage({
 
       {/* Table */}
       <div className="rounded-xl border border-deck-border overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[520px]">
           <thead className="bg-white/5 text-[10px] uppercase tracking-widest text-deck-muted">
             <tr>
               <th className="text-left px-3 py-2 font-bold">Deck</th>
@@ -211,10 +212,10 @@ export default function ManagePage({
                     {deck.author}
                   </td>
                   <td className="px-3 py-2 text-xs hidden md:table-cell">
-                    {CATEGORIES.find((c) => c.id === deck.category)?.title || deck.category}
+                    {categories.find((c) => c.id === deck.category)?.title || deck.category}
                   </td>
                   <td className="px-3 py-2 text-xs hidden lg:table-cell">
-                    {INDUSTRIES.find((i) => i.id === deck.industry)?.title || '—'}
+                    {industries.find((i) => i.id === deck.industry)?.title || '—'}
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -262,6 +263,7 @@ export default function ManagePage({
             })}
           </tbody>
         </table>
+        </div>
       </div>
       <LoadMore loaded={decks.length} total={total} loading={loading} onLoadMore={onLoadMore} />
     </div>

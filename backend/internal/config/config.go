@@ -117,8 +117,21 @@ func Load() (*Config, error) {
 	}
 	cfg.JWTTTL = ttl
 
+	// A short secret is a guessable one: every token this server issues is
+	// signed with it, and forging an admin token is a matter of brute-forcing
+	// the HMAC key offline from any token the attacker holds — including one
+	// from an account they opened themselves. Refusing to boot is the only
+	// reliable moment to catch it; a warning in a log is not read.
+	//
+	// 32 bytes matches HS256's own output size, past which extra length adds
+	// nothing. `openssl rand -base64 48` produces a suitable value.
+	const minJWTSecret = 32
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET must be set")
+	}
+	if len(cfg.JWTSecret) < minJWTSecret {
+		return nil, fmt.Errorf("JWT_SECRET is too short (%d characters): use at least %d, e.g. `openssl rand -base64 48`",
+			len(cfg.JWTSecret), minJWTSecret)
 	}
 
 	return cfg, nil
