@@ -20,7 +20,22 @@ export function useClosable(onClose, ms = 200) {
       return
     }
     setClosing(true)
-    timer.current = setTimeout(onClose, ms)
+    timer.current = setTimeout(() => {
+      // Both of these have to be undone before onClose, or this hook can only
+      // ever close one thing.
+      //
+      // An overlay that unmounts when it closes gets a fresh hook next time and
+      // never noticed. One that stays mounted and is driven by an `open` prop —
+      // ConfirmDialog is — reuses this state: it reopened with `closing` still
+      // true, so it played its exit animation the moment it appeared and ended
+      // up invisible, and with `timer.current` still set the guard above turned
+      // requestClose into a no-op, so Cancel and Escape did nothing either. It
+      // looked like the second delete in a row simply did not work, and a page
+      // reload "fixed" it by discarding the hook.
+      timer.current = null
+      setClosing(false)
+      onClose()
+    }, ms)
   }, [onClose, ms])
 
   useEffect(() => () => clearTimeout(timer.current), [])
