@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTaxonomy } from './lib/taxonomy.jsx'
 import {
   api,
@@ -18,7 +18,7 @@ import {
 } from './lib/storage.js'
 import { loadLocalFavorites, saveLocalFavorites } from './lib/favorites.js'
 import { FavoritesProvider } from './lib/favoritesContext.jsx'
-import { withViewTransition } from './lib/viewTransition.js'
+import { withPageFade } from './lib/pageFade.js'
 import { useSwipe } from './lib/useSwipe.js'
 import Navbar from './components/Navbar.jsx'
 import MobileNav from './components/MobileNav.jsx'
@@ -222,16 +222,26 @@ export default function App() {
     if (i < 0) return
     const j = i + dir
     if (j < 0 || j >= SWIPE_SECTIONS.length) return
-    withViewTransition(() => {
+    withPageFade(() => {
       setActiveCategory(SWIPE_SECTIONS[j])
       setQuery('')
-    })
+    }, contentEl.current)
   }
-  const contentRef = useSwipe({
+  const swipeRef = useSwipe({
     onLeft: () => navigateSection(1),
     onRight: () => navigateSection(-1),
     ignore: '.scroll-snap-x, input, textarea, select, [data-no-swipe]',
   })
+  // useSwipe hands back a callback ref, which has no `.current` to read the
+  // node from — the fade needs the element itself, so keep our own alongside.
+  const contentEl = useRef(null)
+  const contentRef = useCallback(
+    (node) => {
+      contentEl.current = node
+      swipeRef(node)
+    },
+    [swipeRef],
+  )
 
   // Route progress writes to the backend while signed in. Guests fall through to
   // localStorage alone, exactly as before.
@@ -310,10 +320,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favoriteIds, history, status])
 
-  // The catch-all for section changes that do not go through a transition —
-  // signing out, and searching from the details modal. Navigations scroll
-  // inside the transition itself; see withViewTransition for why doing it here
-  // made the animation play against the old scroll position.
+  // The catch-all for section changes that do not go through a fade — signing
+  // out, and searching from the details modal. Navigations scroll inside
+  // withPageFade, synchronously with the state change.
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
@@ -434,13 +443,16 @@ export default function App() {
   // category listings can be answered from memory — a search or an industry
   // filter has no cached equivalent, and there the empty frame is honest.
   const pageDecks = useMemo(() => {
-    const fetched = page.ids.map((id) => byId.get(id)).filter(Boolean)
-    if (fetched.length) return fetched
-    // Nothing fetched for this listing yet. `page.key` is no use as the test —
-    // the effect sets it to the new key at the same moment it clears the ids,
-    // so it already matches while the grid is empty.
-    return pageQuery?.category ? byCategory[pageQuery.category] || [] : fetched
-  }, [page.ids, pageQuery, byId, byCategory])
+    // Two frames have to be covered, and they need different tests. Straight
+    // after the click the ids still belong to the page being left, so the new
+    // heading would sit above the old page's cards; `page.key` catches that.
+    // A moment later the effect clears the ids and sets the key to the new
+    // listing, so the key matches while the grid is empty; only the emptiness
+    // catches that one.
+    const fresh = page.key === pageKey ? page.ids.map((id) => byId.get(id)).filter(Boolean) : []
+    if (fresh.length) return fresh
+    return pageQuery?.category ? byCategory[pageQuery.category] || [] : fresh
+  }, [page.ids, page.key, pageKey, pageQuery, byId, byCategory])
 
   // ---- admin catalog table (Settings → Master Data) ----
   const isSettingsTab = activeCategory === 'settings'
@@ -705,8 +717,8 @@ export default function App() {
     }
   }
 
-  // Every navigation goes through the View Transitions cross-fade.
-  const goTo = (update) => withViewTransition(update)
+  // Every navigation fades the content region and lands at the top of it.
+  const goTo = (update) => withPageFade(update, contentEl.current)
 
   const isSearching = !!query.trim() || !!activeIndustry
   const isHome = activeCategory === 'home' && !isSearching
