@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Cover from './Cover.jsx'
 import { CloseIcon, UploadIcon, LinkIcon } from '../lib/icons.jsx'
-import { loadPdfDocument, fileToArrayBuffer } from '../lib/pdf.js'
+import { loadPdfDocument, fileToArrayBuffer, renderPdfPageToCanvas } from '../lib/pdf.js'
 import { uploadFile } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
@@ -83,11 +83,36 @@ const FieldLabel = ({ children, hint }) => (
   </label>
 )
 
+// The first page of a PDF is the cover the deck already has — it is what
+// somebody opening the file sees first. Rendering it here means uploading a
+// deck produces artwork that belongs to it, instead of the stock photograph
+// picsum hands out for an unknown seed.
+//
+// JPEG rather than PNG: a rendered slide is a photograph as far as the encoder
+// is concerned, and a 1200px PNG of one runs to several megabytes against a
+// 25MB upload cap shared with the deck itself.
+async function coverFromFirstPage(doc, name) {
+  const canvas = document.createElement('canvas')
+  // pdf.js can stall indefinitely on a page it cannot rasterise — a tab the
+  // browser has stopped painting does it too. Neither is worth waiting on
+  // forever when the fallback is artwork that already exists.
+  const rendered = await Promise.race([
+    renderPdfPageToCanvas(doc, 1, canvas, 1200).then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 20000)),
+  ])
+  if (!rendered) return null
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+  if (!blob) return null
+  const base = name.replace(/\.pdf$/i, '')
+  const file = new File([blob], `${base}-cover.jpg`, { type: 'image/jpeg' })
+  return { file, name: file.name, preview: URL.createObjectURL(file), fromPdf: true }
+}
+
 // Optional artwork. Skipping it is the normal path — Cover generates a
 // deterministic image from the deck id, so a deck without one still looks
 // designed rather than unfinished. That is why there is no placeholder box
 // shouting for a file.
-function CoverPicker({ cover, onPick }) {
+function CoverPicker({ cover, busy, onPick }) {
   return (
     <div className="space-y-2">
       <FieldLabel>
@@ -99,6 +124,8 @@ function CoverPicker({ cover, onPick }) {
         >
           {cover?.preview ? (
             <img src={cover.preview} alt="" className="w-full h-full object-cover" />
+          ) : busy ? (
+            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
             <span className="text-[10px] text-white/35 text-center leading-tight px-1">
               Generated<br />artwork
@@ -131,7 +158,13 @@ function CoverPicker({ cover, onPick }) {
             </button>
           )}
           <p className="text-[11px] text-deck-muted mt-1">
-            {cover ? cover.name : 'Leave empty to use the generated cover.'}
+            {busy && !cover
+              ? 'Reading page 1…'
+              : cover?.fromPdf
+              ? 'Taken from page 1 — replace it if you want something else.'
+                : cover
+                  ? cover.name
+                  : 'Leave empty to use the generated cover.'}
           </p>
         </div>
       </div>
@@ -166,6 +199,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
   // An optional cover. Without one the deck renders the generated artwork,
   // which is the default and looks deliberate rather than missing.
   const [cover, setCover] = useState(null)
+  const [coverBusy, setCoverBusy] = useState(false)
   const [paletteIndex, setPaletteIndex] = useState(1)
   const [pattern, setPattern] = useState('orbs')
 
@@ -236,6 +270,10 @@ export default function AddDeckModal({ onClose, onAdd }) {
       tags: tags.length ? tags : undefined,
       gradient: { from: palette.from, to: palette.to, text: palette.text },
       pattern,
+      // Without this the preview showed whatever photograph picsum returns for
+      // an unknown seed — a stock image with no relationship to the deck, and
+      // no sign that a cover had been chosen at all.
+      image: cover?.preview,
     }
     if (tab === 'upload' && pdfFile) {
       return { ...base, slidesCount: pdfFile.pages, source: { type: 'pdf' } }
@@ -249,7 +287,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
     // Nothing chosen yet. An empty type matches none of Cover's badges, which
     // is the intent — it used to say 'mock', a leftover from the offline catalog.
     return { ...base, slidesCount: '—', source: { type: '' } }
-  }, [tab, pdfFile, url, videoUrl, title, subtitle, author, year, category, industry, description, tags, paletteIndex, pattern])
+  }, [tab, pdfFile, url, videoUrl, title, subtitle, author, year, category, industry, description, tags, paletteIndex, pattern, cover])
 
   const handleVideoFile = async (file) => {
     if (!file) return
@@ -312,6 +350,21 @@ export default function AddDeckModal({ onClose, onAdd }) {
       const doc = await loadPdfDocument(buf.slice(0))
       setPdfFile({ name: file.name, size: file.size, pages: doc.numPages, file })
       if (!title) setTitle(file.name.replace(/\.pdf$/i, ''))
+
+      // Deliberately not awaited. Rasterising a page is the slowest thing here
+      // and the least important: the deck is complete without it. Awaiting it
+      // held the whole form behind a render that can stall, with nothing on
+      // screen to say why.
+      //
+      // Only when nothing was chosen by hand — a deliberate pick should not be
+      // overwritten by dropping a replacement file.
+      if (!cover) {
+        setCoverBusy(true)
+        coverFromFirstPage(doc, file.name)
+          .then((generated) => { if (generated) setCover(generated) })
+          .catch(() => {})
+          .finally(() => setCoverBusy(false))
+      }
     } catch (e) {
       // Reading happens in the browser, so this is a bad/corrupt file — not
       // a server problem. Say what the person can actually do about it.
@@ -583,8 +636,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       )}
                     </div>
 
-                    <CoverPicker cover={cover} onPick={setCover} />
-
                     <label className="flex items-center gap-3 cursor-pointer select-none pt-1">
                       <input
                         type="checkbox"
@@ -613,8 +664,17 @@ export default function AddDeckModal({ onClose, onAdd }) {
                   detected={newAttachDetected}
                 />
 
+                <CoverPicker cover={cover} busy={coverBusy} onPick={setCover} />
+
                 <div>
-                  <div className="text-xs uppercase tracking-widest text-deck-muted mb-2">Cover theme</div>
+                  <div className="text-xs uppercase tracking-widest text-deck-muted mb-2">
+                    Cover theme
+                    {cover && (
+                      <span className="ml-2 normal-case tracking-normal text-white/40">
+                        — fallback if the image can’t load
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-8 gap-1.5">
                     {PALETTES.map((p, i) => (
                       <button
