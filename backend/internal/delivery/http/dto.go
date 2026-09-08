@@ -235,3 +235,69 @@ type changePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
 }
+
+// ----- demos -----
+
+// demoResponse carries the password in clear. That is the point of the
+// feature — it is copied into somebody else's login form — and it is why
+// reading a demo requires an account.
+type demoResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Product   string    `json:"product"`
+	URL       string    `json:"url"`
+	Username  string    `json:"username"`
+	Password  string    `json:"password"`
+	Notes     string    `json:"notes"`
+	SortOrder int       `json:"sortOrder"`
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func toDemoResponse(d *domain.Demo) demoResponse {
+	return demoResponse{
+		ID:        d.ID.String(),
+		Name:      d.Name,
+		Product:   d.Product,
+		URL:       d.URL,
+		Username:  d.Username,
+		Password:  d.Password,
+		Notes:     d.Notes,
+		SortOrder: d.SortOrder,
+		Active:    d.Active,
+		CreatedAt: d.CreatedAt,
+		UpdatedAt: d.UpdatedAt,
+	}
+}
+
+func toDemoResponses(demos []*domain.Demo) []demoResponse {
+	out := make([]demoResponse, 0, len(demos))
+	for _, d := range demos {
+		out = append(out, toDemoResponse(d))
+	}
+	return out
+}
+
+type createDemoRequest struct {
+	Name      string `json:"name"`
+	Product   string `json:"product"`
+	URL       string `json:"url"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Notes     string `json:"notes"`
+	SortOrder int    `json:"sortOrder"`
+	Active    *bool  `json:"active"`
+}
+
+// updateDemoRequest is partial; an omitted field keeps its value.
+type updateDemoRequest struct {
+	Name      *string `json:"name"`
+	Product   *string `json:"product"`
+	URL       *string `json:"url"`
+	Username  *string `json:"username"`
+	Password  *string `json:"password"`
+	Notes     *string `json:"notes"`
+	SortOrder *int    `json:"sortOrder"`
+	Active    *bool   `json:"active"`
+}

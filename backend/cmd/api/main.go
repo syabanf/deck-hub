@@ -55,6 +55,7 @@ func run() error {
 	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
 	settingsRepo := postgres.NewSettingsRepository(pool)
 	auditRepo := postgres.NewAuditRepository(pool)
+	demoRepo := postgres.NewDemoRepository(pool)
 
 	// --- Usecases (depend only on domain interfaces) ---
 	userUC := usecase.NewUserUsecase(userRepo)
@@ -64,6 +65,7 @@ func run() error {
 	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
 	settingsUC := usecase.NewSettingsUsecase(settingsRepo)
 	auditUC := usecase.NewAuditUsecase(auditRepo)
+	demoUC := usecase.NewDemoUsecase(demoRepo)
 
 	// Take ownership of the seeded admin. Migration 000001 ships a published
 	// password so a fresh checkout works; production must not keep it.
@@ -129,6 +131,7 @@ func run() error {
 		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
 		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
 		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
+		Demos:     httpdelivery.NewDemoHandler(demoUC),
 		AuditRepo: auditRepo,
 		// The email is copied into each entry at the time, so a deleted account
 		// does not erase its own history.

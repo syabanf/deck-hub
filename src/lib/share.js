@@ -86,12 +86,20 @@ export const downloadUrl = (deck, absolute) => {
 }
 
 export const copyToClipboard = async (text) => {
+  // The modern API first, but its absence is not the only way it fails: it
+  // rejects without a secure context, and Chrome rejects it without a recent
+  // user gesture too. Either way there is a fallback that still works, so a
+  // rejection is a reason to try it rather than to tell somebody it did not
+  // work.
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Fall through.
+    }
   }
-  // Clipboard API needs a secure context; a deployment reached over plain HTTP
-  // has none, and this is the fallback that still works there.
+
   const el = document.createElement('textarea')
   el.value = text
   el.setAttribute('readonly', '')
@@ -99,6 +107,7 @@ export const copyToClipboard = async (text) => {
   el.style.opacity = '0'
   document.body.appendChild(el)
   el.select()
-  document.execCommand('copy')
+  const ok = document.execCommand('copy')
   document.body.removeChild(el)
+  if (!ok) throw new Error('the browser refused to copy')
 }

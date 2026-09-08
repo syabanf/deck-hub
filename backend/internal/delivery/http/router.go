@@ -25,6 +25,7 @@ type RouterDeps struct {
 	Settings *SettingsHandler
 	Me       *MeHandler
 	AuditLog *AuditHandler
+	Demos    *DemoHandler
 
 	// AuditRepo records every write. Nil turns recording off; the log endpoint
 	// is mounted separately, so a deployment can read history it is no longer
@@ -173,6 +174,25 @@ func NewRouter(d RouterDeps) http.Handler {
 			r.Use(d.Tokens.JWTAuth)
 			r.Use(RequireRole("admin"))
 			r.Get("/", d.AuditLog.List)
+		})
+	}
+
+	// Demo Center. Reading requires an account of any role — the rows carry
+	// credentials in clear, so a guest or a shared link must not reach them —
+	// and changing them is admin or editor, the same trust that manages the
+	// catalog.
+	if d.Demos != nil {
+		r.Route("/demos", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Demos.List)
+			r.Get("/{id}", d.Demos.Get)
+
+			r.Group(func(r chi.Router) {
+				r.Use(RequireRole("admin", "editor"))
+				r.Post("/", d.Demos.Create)
+				r.Put("/{id}", d.Demos.Update)
+				r.Delete("/{id}", d.Demos.Delete)
+			})
 		})
 	}
 

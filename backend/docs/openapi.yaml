@@ -75,6 +75,7 @@ tags:
   - name: Health
   - name: Auth
   - name: Decks
+  - name: Demos
   - name: Activity
   - name: Profile
   - name: Settings
@@ -975,6 +976,108 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /demos:
+    get:
+      tags: [Demos]
+      summary: List the demo environments
+      description: |
+        Requires an account of any role — admin, editor or viewer. Deliberately
+        not public and not reachable by a guest: every row carries a working
+        password in clear, which is the point of the feature and the reason it
+        is behind a sign-in.
+
+        Retired demos are included by default. Pass `active=true` for a list to
+        hand somebody; the manage view needs all of them, or retiring one would
+        hide the way back.
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Matches the name or the product. `%` and `_` are literal.
+        - name: active
+          in: query
+          schema: { type: string, enum: ["true"] }
+      responses:
+        "200":
+          description: Demos, ordered by `sortOrder` then name
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Demo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Demos]
+      summary: Add a demo
+      description: |
+        Requires `admin` or `editor` — the same trust that manages the catalog.
+
+        Omitting `sortOrder` puts the demo at the end rather than at zero,
+        which would silently reorder the page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DemoInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Demo" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /demos/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Demos]
+      summary: Fetch one demo
+      responses:
+        "200":
+          description: The demo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Demo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Demos]
+      summary: Edit a demo
+      description: |
+        Requires `admin` or `editor`. Partial: an omitted field keeps its
+        value, and `active: false` retires a demo that is temporarily down
+        without losing its details.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DemoInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Demo" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Demos]
+      summary: Remove a demo
+      description: Requires `admin` or `editor`. Nothing references a demo, so nothing blocks this.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /favorites:
     get:
       tags: [Favorites]
@@ -1201,6 +1304,46 @@ components:
           enum: [pdf, url, video, gslides, embed]
           description: Not validated as a closed set server-side; these are the values in use.
         value: { type: string }
+
+    Demo:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        name:      { type: string }
+        product:   { type: string, description: Free text; the products are not a master list }
+        url:       { type: string }
+        username:  { type: string }
+        password:
+          type: string
+          description: |
+            Returned in clear. Nobody authenticates against it — it is copied
+            into somebody else's login form, and a hash cannot be copied — so
+            it is stored recoverable. Everyone who can read a demo can read its
+            password, which is why reading one needs an account, and why
+            nothing here should be a credential to anything real.
+        notes:     { type: string }
+        sortOrder: { type: integer }
+        active:
+          type: boolean
+          description: False retires a demo without losing its details.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DemoInput:
+      type: object
+      description: All fields optional on PUT; `name` is required on POST.
+      properties:
+        name:      { type: string, maxLength: 500 }
+        product:   { type: string, maxLength: 500 }
+        url:       { type: string, maxLength: 500 }
+        username:  { type: string, maxLength: 500 }
+        password:
+          type: string
+          maxLength: 500
+          description: Stored exactly as given, spaces included — trimming one is a credential that stops working with no sign of why.
+        notes:     { type: string }
+        sortOrder: { type: integer }
+        active:    { type: boolean }
 
     Deck:
       type: object

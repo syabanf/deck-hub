@@ -239,6 +239,20 @@ export const api = {
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
 
+  // Demo Center. Reading needs an account of any role — the rows carry working
+  // passwords — and writing needs admin or editor.
+  listDemos: (params = {}) => {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, v)
+    }
+    const q = qs.toString()
+    return request(`/demos${q ? `?${q}` : ''}`, { auth: true })
+  },
+  createDemo: (demo) => request('/demos', { method: 'POST', body: demo, auth: true }),
+  updateDemo: (id, patch) => request(`/demos/${id}`, { method: 'PUT', body: patch, auth: true }),
+  deleteDemo: (id) => request(`/demos/${id}`, { method: 'DELETE', auth: true }),
+
   // The activity log. Admin only, and paged like the catalog — it is the one
   // table that only grows.
   listAudit: (params = {}) => {

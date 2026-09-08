@@ -65,6 +65,8 @@ func TestMain(m *testing.M) {
 	// tests assert on counts and would break if the catalog grew.
 	for _, f := range []string{
 		// audit_log references users, so it has to go before 000001 drops them.
+		// demos references users too.
+		"000016_demos.down.sql",
 		"000015_audit_log.down.sql",
 		"000010_taxonomy_terms.down.sql",     // reads decks; drop before they go
 		"000008_viewing_progress.down.sql",   // FK → users, decks
@@ -88,6 +90,7 @@ func TestMain(m *testing.M) {
 		"000013_app_settings.up.sql",
 		"000014_deck_owner.up.sql",
 		"000015_audit_log.up.sql",
+		"000016_demos.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -122,6 +125,7 @@ func TestMain(m *testing.M) {
 	settingsUC := usecase.NewSettingsUsecase(postgres.NewSettingsRepository(pool))
 	auditRepo := postgres.NewAuditRepository(pool)
 	auditUC := usecase.NewAuditUsecase(auditRepo)
+	demoUC := usecase.NewDemoUsecase(postgres.NewDemoRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
@@ -146,6 +150,7 @@ func TestMain(m *testing.M) {
 		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
 		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
 		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
+		Demos:     httpdelivery.NewDemoHandler(demoUC),
 		AuditRepo: auditRepo,
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),

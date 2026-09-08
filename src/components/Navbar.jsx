@@ -16,6 +16,9 @@ import { useTaxonomy } from '../lib/taxonomy.jsx'
 const LEADING_ITEMS = [{ id: 'home', label: 'Home' }]
 const TRAILING_ITEMS = [
   { id: 'industries', label: 'Industries' },
+  // Demo Center carries working credentials, so it is not offered to a guest —
+  // and the API refuses them anyway, which is what actually enforces it.
+  { id: 'demos', label: 'Demo Center', requiresAccount: true },
   { id: 'mine', label: 'My Library' },
   { id: 'settings', label: 'Settings' },
 ]
@@ -144,7 +147,8 @@ export default function Navbar({
   activeCategory,
   onCategoryChange,
 }) {
-  const { leading, categories: navCategories, trailing, chips: chipItems } = useNavItems()
+  const { leading, categories: navCategories, trailing: allTrailing, chips: chipItems } = useNavItems()
+  const trailing = allTrailing.filter((i) => !i.requiresAccount || (user && !user.guest))
   const navListRef = useRef(null)
   const moreRef = useRef(null)
   // Two limits, and the smaller wins. The measurement stops the bar running

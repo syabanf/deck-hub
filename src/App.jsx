@@ -40,6 +40,7 @@ import OfflineBanner from './components/OfflineBanner.jsx'
 import LoadMore from './components/LoadMore.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import VerifyPage from './components/VerifyPage.jsx'
+import DemoCenter from './components/DemoCenter.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
 import AutoDemo from './components/AutoDemo.jsx'
@@ -759,8 +760,9 @@ export default function App() {
   const isSearching = !!query.trim() || !!activeIndustry
   const isHome = activeCategory === 'home' && !isSearching
   const isSettings = activeCategory === 'settings'
+  const isDemos = activeCategory === 'demos'
   const isIndustries = activeCategory === 'industries' && !isSearching
-  const showCategory = !isHome && !isSearching && !isSettings && !isIndustries
+  const showCategory = !isHome && !isSearching && !isSettings && !isIndustries && !isDemos
 
   let body
   if (isSearching) {
@@ -815,6 +817,8 @@ export default function App() {
         }}
       />
     )
+  } else if (isDemos) {
+    body = <DemoCenter canEdit={canEdit} onNotify={setToast} />
   } else if (showCategory) {
     const isLibrary = activeCategory === 'mine'
     body = (
