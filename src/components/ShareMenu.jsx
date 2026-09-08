@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
 
 import { absoluteUrl } from '../lib/api.js'
@@ -39,27 +40,74 @@ function QrCode({ value, size = 168 }) {
   )
 }
 
+const MENU_WIDTH = 288 // w-72
+
 export default function ShareMenu({ deck, onNotify }) {
   const [open, setOpen] = useState(false)
   const [showQr, setShowQr] = useState(false)
-  const ref = useRef(null)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: MENU_WIDTH })
+  const buttonRef = useRef(null)
+  const menuRef = useRef(null)
+
+  // The menu is rendered into document.body rather than beside the button.
+  // Both the modal panel and its hero region are `overflow-hidden`, so a
+  // dropdown positioned normally is clipped at the edge of the artwork — all
+  // that showed was its top border.
+  const place = useCallback(() => {
+    const el = buttonRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const margin = 12
+    const height = menuRef.current?.offsetHeight || 260
+
+    // Narrower than the menu is a real case on a phone, so the width gives way
+    // before the position does.
+    const width = Math.min(MENU_WIDTH, window.innerWidth - margin * 2)
+
+    // Flip up when there is no room below, and pull back inside the viewport
+    // rather than opening off the right edge.
+    const below = r.bottom + margin + height <= window.innerHeight
+    const top = below ? r.bottom + 10 : Math.max(margin, r.top - 10 - height)
+
+    // The upper bound has to be clamped too. Written as a bare
+    // `innerWidth - width - margin` it goes negative on a narrow window, and
+    // Math.min then picked *that* — which put the menu 300px off the left of
+    // the screen.
+    const maxLeft = Math.max(margin, window.innerWidth - width - margin)
+    const left = Math.min(Math.max(margin, r.left), maxLeft)
+    setPos({ top, left, width })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (open) place()
+  }, [open, showQr, place])
 
   useEffect(() => {
     if (!open) return
-    const onDown = (e) => {
-      if (!ref.current?.contains(e.target)) {
-        setOpen(false)
-        setShowQr(false)
-      }
+    const close = () => {
+      setOpen(false)
+      setShowQr(false)
     }
-    const onKey = (e) => e.key === 'Escape' && (setOpen(false), setShowQr(false))
+    const onDown = (e) => {
+      if (buttonRef.current?.contains(e.target)) return
+      if (menuRef.current?.contains(e.target)) return
+      close()
+    }
+    const onKey = (e) => e.key === 'Escape' && close()
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
+    // The modal scrolls behind a fixed menu, so follow it rather than letting
+    // the two drift apart. Capture phase: the scroll happens on the panel, not
+    // on the window.
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
     }
-  }, [open])
+  }, [open, place])
 
   if (!deck) return null
   const url = deckUrl(deck)
@@ -83,8 +131,9 @@ export default function ShareMenu({ deck, onNotify }) {
   const item = 'w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-white/80 hover:text-white hover:bg-white/5 transition-colors'
 
   return (
-    <div className="relative" ref={ref}>
+    <>
       <button
+        ref={buttonRef}
         onClick={() => setOpen((v) => !v)}
         className="flex items-center justify-center w-12 h-12 rounded-full border-2 border-white/25 hover:border-white/60 text-white/80 hover:text-white transition-colors"
         aria-label="Share this deck"
@@ -102,8 +151,12 @@ export default function ShareMenu({ deck, onNotify }) {
         </svg>
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-3 w-72 rounded-xl bg-deck-card border border-deck-border shadow-2xl py-1.5 z-50">
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{ top: pos.top, left: pos.left, width: pos.width }}
+          className="fixed rounded-xl bg-deck-card border border-deck-border shadow-2xl py-1.5 z-[70]"
+        >
           <button onClick={copy} className={item}>
             <span className="w-5 text-center">⧉</span>
             Copy link
@@ -169,8 +222,9 @@ export default function ShareMenu({ deck, onNotify }) {
           <p className="px-4 pt-2 pb-1 text-[11px] text-deck-muted border-t border-deck-border/60 mt-1 leading-snug">
             Anyone with the link can open this deck without signing in.
           </p>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }
