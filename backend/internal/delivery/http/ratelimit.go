@@ -63,7 +63,23 @@ func NewRateLimiter(burst int, per time.Duration) *RateLimiter {
 }
 
 // Allow reports whether the key has budget, spending a token if so.
-func (rl *RateLimiter) Allow(key string) bool {
+func (rl *RateLimiter) Allow(key string) bool { return rl.take(key, 1) }
+
+// Permitted reports whether the key still has budget, without spending any.
+//
+// Paired with Penalise where only a *failed* attempt should count against the
+// allowance. Asking first means an exhausted client is turned away before the
+// server does the expensive work its attempt would cost — which for a PIN or a
+// password is a bcrypt comparison, the very thing an attacker wants to make
+// the server repeat.
+func (rl *RateLimiter) Permitted(key string) bool { return rl.take(key, 0) }
+
+// Penalise spends one token. A no-op once the bucket is already empty.
+func (rl *RateLimiter) Penalise(key string) { rl.take(key, 1) }
+
+// take refills the bucket for elapsed time and spends `cost` if a whole token
+// is available. cost 0 asks without spending.
+func (rl *RateLimiter) take(key string, cost float64) bool {
 	now := time.Now()
 
 	rl.mu.Lock()
@@ -71,22 +87,22 @@ func (rl *RateLimiter) Allow(key string) bool {
 
 	v, ok := rl.visitors[key]
 	if !ok {
-		rl.visitors[key] = &visitor{tokens: rl.burst - 1, lastSeen: now}
-		return true
-	}
-
-	// Refill for the time elapsed, capped at the burst size — an idle client
-	// gets a full allowance back, never more.
-	v.tokens += now.Sub(v.lastSeen).Seconds() * rl.refill
-	if v.tokens > rl.burst {
-		v.tokens = rl.burst
+		v = &visitor{tokens: rl.burst, lastSeen: now}
+		rl.visitors[key] = v
+	} else {
+		// Refill for the time elapsed, capped at the burst size — an idle
+		// client gets a full allowance back, never more.
+		v.tokens += now.Sub(v.lastSeen).Seconds() * rl.refill
+		if v.tokens > rl.burst {
+			v.tokens = rl.burst
+		}
 	}
 	v.lastSeen = now
 
 	if v.tokens < 1 {
 		return false
 	}
-	v.tokens--
+	v.tokens -= cost
 	return true
 }
 
@@ -143,6 +159,18 @@ func RateLimit(rl *RateLimiter, keyFor func(*http.Request) string) func(http.Han
 
 // ByIP keys on the caller's address.
 func ByIP(r *http.Request) string { return "ip:" + clientIP(r) }
+
+// ByUser keys on the authenticated account, falling back to the address.
+//
+// For routes that are already behind a token and still verify a password —
+// changing your own — where the account is the identity worth limiting and the
+// address is whatever network the person happens to be on.
+func ByUser(r *http.Request) string {
+	if id, ok := UserIDFromContext(r.Context()); ok && id != "" {
+		return "user:" + id
+	}
+	return "ip:" + clientIP(r)
+}
 
 // ByEmail keys on the email in the request body, so attempts against one
 // account are capped no matter how many addresses they come from.

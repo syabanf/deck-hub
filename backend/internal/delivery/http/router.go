@@ -93,7 +93,11 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	// Above the server's own read/write timeouts in spirit but well below
+	// them in value: an API call that has not finished in two minutes is
+	// broken, while an upload or a download of a 25 MB deck legitimately
+	// takes longer than the 30s this used to allow.
+	r.Use(middleware.Timeout(2 * time.Minute))
 
 	// Before the routes, so every write is covered by having been routed.
 	r.Use(Audit(d.AuditRepo, d.ActorEmail))
@@ -163,10 +167,17 @@ func NewRouter(d RouterDeps) http.Handler {
 	// right to read and change their own and no business reading anyone
 	// else's — /users below is the admin path and returns everybody.
 	if d.Me != nil {
+		// The password change is limited like a sign-in, because it is one:
+		// it verifies the current password, so it is both an oracle for
+		// guessing it and a way for any account to make the server run bcrypt
+		// on demand. Keyed by account — the token is already required, so the
+		// address says little.
+		pwLimiter := NewRateLimiter(accountBurst, time.Minute)
+
 		r.Route("/me", func(r chi.Router) {
 			r.Use(d.Tokens.JWTAuth)
 			r.Get("/", d.Me.Get)
-			r.Put("/password", d.Me.ChangePassword)
+			r.With(RateLimit(pwLimiter, ByUser)).Put("/password", d.Me.ChangePassword)
 		})
 	}
 

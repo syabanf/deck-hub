@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,11 +26,42 @@ type demoUsecase interface {
 // DemoHandler serves the Demo Center.
 type DemoHandler struct {
 	uc demoUsecase
+
+	// pinLimiter caps wrong PINs. See requirePin.
+	pinLimiter *RateLimiter
 }
+
+// pinAttemptsPerMinute is how many wrong PINs one account may offer per minute.
+//
+// The PIN is short by design — it is typed by people reading it off a note —
+// and short means guessable: a four-digit one is 10,000 tries, which an
+// authenticated client could work through in minutes against an endpoint that
+// counts nothing. Five a minute is more than anyone mistyping needs and turns
+// the same search into more than a day of sustained, obvious traffic.
+//
+// Only failures are counted, so the app calling /demos on every page load
+// never spends any of it.
+const pinAttemptsPerMinute = 5
 
 // NewDemoHandler wires a DemoHandler.
 func NewDemoHandler(uc demoUsecase) *DemoHandler {
-	return &DemoHandler{uc: uc}
+	return &DemoHandler{
+		uc:         uc,
+		pinLimiter: NewRateLimiter(pinAttemptsPerMinute, time.Minute),
+	}
+}
+
+// pinBucket names the allowance a wrong PIN is charged to.
+//
+// The account first: it is the stable identity here — every one of these
+// routes is behind a token — and it survives an attacker moving between
+// addresses. The address is the fallback for a request that somehow arrives
+// without a readable subject, so the bucket is never empty.
+func pinBucket(r *http.Request) string {
+	if id, ok := UserIDFromContext(r.Context()); ok && id != "" {
+		return "demo-pin:user:" + id
+	}
+	return "demo-pin:ip:" + clientIP(r)
 }
 
 // PinHeader carries the shared PIN. A header rather than a query parameter:
@@ -41,8 +73,19 @@ const PinHeader = "X-Demo-Pin"
 // rather than exchanged for a session: there is no state to keep, and a gate
 // with no expiry is a gate that outlives the reason it was opened.
 func (h *DemoHandler) requirePin(w http.ResponseWriter, r *http.Request) bool {
+	key := pinBucket(r)
+	if !h.pinLimiter.Permitted(key) {
+		// Refused before the hash comparison, so a client that has spent its
+		// allowance cannot keep the server busy hashing its guesses.
+		w.Header().Set("Retry-After", "60")
+		writeErrorMsg(w, http.StatusTooManyRequests, "rate_limited",
+			"too many incorrect PINs — wait a minute and try again")
+		return false
+	}
+
 	if err := h.uc.CheckPin(r.Context(), r.Header.Get(PinHeader)); err != nil {
 		if errors.Is(err, usecase.ErrDemoPin) {
+			h.pinLimiter.Penalise(key)
 			// Its own code, so the frontend shows the PIN screen instead of
 			// treating it as an expired sign-in and logging the person out.
 			writeErrorMsg(w, http.StatusUnauthorized, "demo_pin_required", err.Error())
