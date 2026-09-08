@@ -9,13 +9,18 @@ import { PlusIcon, TrashIcon, CloseIcon } from '../lib/icons.jsx'
 // were constants in the bundle, so this screen is the whole point of moving
 // them: changing a category no longer needs a deploy.
 //
+// Source types are not here. They look like a third list, but they are a
+// rendering contract the player implements — adding one through this form
+// would only produce decks nothing knows how to play, and the failure would
+// reach a viewer at playback rather than whoever added it. That list lives in
+// domain.SourceTypes, beside the code that has to change with it.
+//
 // Retired terms are shown, not hidden. Retiring is the reversible way to take
 // something out of circulation, and a screen that hid the result would leave
 // no way to undo it.
 const KINDS = [
   { id: 'categories', label: 'Categories', noun: 'category', colored: false },
   { id: 'industries', label: 'Industries', noun: 'industry', colored: true },
-  { id: 'source-types', label: 'Source types', noun: 'source type', colored: false },
 ]
 
 const blankDraft = { slug: '', title: '', accent: '', secondary: '' }
@@ -212,20 +217,31 @@ export default function TaxonomyManager({ canManage = false }) {
               />
               {kind.colored && (
                 <>
-                  <Field
+                  <ColorField
                     label="Accent"
-                    hint="Gradient start. Both colours or neither."
+                    hint="Gradient start."
                     value={draft.accent}
                     onChange={(v) => setDraft({ ...draft, accent: v })}
-                    placeholder="#00c6fb"
                   />
-                  <Field
+                  <ColorField
                     label="Secondary"
                     hint="Gradient end."
                     value={draft.secondary}
                     onChange={(v) => setDraft({ ...draft, secondary: v })}
-                    placeholder="#005bea"
                   />
+                  <div className="md:col-span-2 -mt-1">
+                    <span className="text-[11px] uppercase tracking-widest text-deck-muted font-bold">
+                      Preview
+                    </span>
+                    <div
+                      className="mt-1 h-10 rounded-lg border border-white/10"
+                      style={{
+                        background: `linear-gradient(135deg, ${draft.accent || '#1b1b22'}, ${
+                          draft.secondary || '#1b1b22'
+                        })`,
+                      }}
+                    />
+                  </div>
                 </>
               )}
             </div>
@@ -358,6 +374,46 @@ function Stat({ label, value, accent }) {
         {value}
       </div>
     </div>
+  )
+}
+
+// A picker plus the hex, not the hex alone. The API wants #rrggbb and typing
+// it by hand is both slower and the only way to get it wrong; the text field
+// stays so an existing brand colour can still be pasted in.
+function ColorField({ label, hint, value, onChange }) {
+  const valid = /^#[0-9a-fA-F]{6}$/.test(value)
+  return (
+    <label className="block">
+      <span className="text-[11px] uppercase tracking-widest text-deck-muted font-bold">{label}</span>
+      <div className="mt-1 flex items-center gap-2">
+        <input
+          type="color"
+          // The native input has no empty state, so an unset colour shows as
+          // black. Keeping the text field authoritative avoids writing a value
+          // nobody chose.
+          value={valid ? value : '#1b1b22'}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-11 h-10 rounded-lg bg-black/40 border border-white/10 cursor-pointer p-1"
+          aria-label={`${label} colour`}
+        />
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="unset"
+          className="flex-1 h-10 px-3 rounded-lg bg-black/40 border border-white/10 focus:border-white/30 outline-none text-sm font-mono"
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="text-xs text-white/50 hover:text-white px-2"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {hint && <span className="block text-[11px] text-deck-muted mt-1">{hint}</span>}
+    </label>
   )
 }
 

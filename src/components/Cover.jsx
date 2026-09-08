@@ -8,7 +8,6 @@ const CATEGORY_LABEL = {
   engineering: 'Engineering',
   strategy: 'Strategy',
   keynotes: 'Keynote',
-  mine: 'Library',
 }
 
 const imageSrc = (deck, w = 800, h = 500) => {

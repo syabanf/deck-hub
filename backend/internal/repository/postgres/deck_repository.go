@@ -27,14 +27,14 @@ func NewDeckRepository(pool *pgxpool.Pool) *DeckRepository {
 var _ domain.DeckRepository = (*DeckRepository)(nil)
 
 const deckColumns = `id, title, subtitle, author, year, category, industry, tags,
-	source_type, source_value, description, featured, view_count, created_at, updated_at`
+	source_type, source_value, description, cover_image, featured, view_count, created_at, updated_at`
 
 func scanDeck(row pgx.Row) (*domain.Deck, error) {
 	var d domain.Deck
 	if err := row.Scan(
 		&d.ID, &d.Title, &d.Subtitle, &d.Author, &d.Year, &d.Category, &d.Industry, &d.Tags,
-		&d.Source.Type, &d.Source.Value, &d.Description, &d.Featured, &d.ViewCount,
-		&d.CreatedAt, &d.UpdatedAt,
+		&d.Source.Type, &d.Source.Value, &d.Description, &d.CoverImage, &d.Featured,
+		&d.ViewCount, &d.CreatedAt, &d.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -47,11 +47,12 @@ func scanDeck(row pgx.Row) (*domain.Deck, error) {
 func (r *DeckRepository) Create(ctx context.Context, d *domain.Deck) error {
 	const q = `
 		INSERT INTO decks (id, title, subtitle, author, year, category, industry, tags,
-			source_type, source_value, description, featured, view_count, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+			source_type, source_value, description, cover_image, featured, view_count,
+			created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	_, err := r.pool.Exec(ctx, q,
 		d.ID, d.Title, d.Subtitle, d.Author, d.Year, d.Category, d.Industry, d.Tags,
-		d.Source.Type, d.Source.Value, d.Description, d.Featured, d.ViewCount,
+		d.Source.Type, d.Source.Value, d.Description, d.CoverImage, d.Featured, d.ViewCount,
 		d.CreatedAt, d.UpdatedAt,
 	)
 	if err != nil {
@@ -166,12 +167,13 @@ func (r *DeckRepository) Update(ctx context.Context, d *domain.Deck) error {
 	const q = `
 		UPDATE decks
 		SET title = $2, subtitle = $3, author = $4, year = $5, category = $6, industry = $7,
-			tags = $8, source_type = $9, source_value = $10, description = $11, featured = $12,
-			updated_at = $13
+			tags = $8, source_type = $9, source_value = $10, description = $11,
+			cover_image = $12, featured = $13, updated_at = $14
 		WHERE id = $1`
 	tag, err := r.pool.Exec(ctx, q,
 		d.ID, d.Title, d.Subtitle, d.Author, d.Year, d.Category, d.Industry,
-		d.Tags, d.Source.Type, d.Source.Value, d.Description, d.Featured, d.UpdatedAt,
+		d.Tags, d.Source.Type, d.Source.Value, d.Description, d.CoverImage,
+		d.Featured, d.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("update deck: %w", mapWriteErr(err))

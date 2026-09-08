@@ -92,6 +92,7 @@ type deckResponse struct {
 	Tags        []string      `json:"tags"`
 	Source      deckSourceDTO `json:"source"`
 	Description string        `json:"description"`
+	CoverImage  string        `json:"coverImage"`
 	Featured    bool          `json:"featured"`
 	ViewCount   int           `json:"viewCount"`
 	CreatedAt   time.Time     `json:"createdAt"`
@@ -114,6 +115,7 @@ func toDeckResponse(d *domain.Deck) deckResponse {
 		Tags:        tags,
 		Source:      deckSourceDTO{Type: d.Source.Type, Value: d.Source.Value},
 		Description: d.Description,
+		CoverImage:  d.CoverImage,
 		Featured:    d.Featured,
 		ViewCount:   d.ViewCount,
 		CreatedAt:   d.CreatedAt,
@@ -139,6 +141,7 @@ type createDeckRequest struct {
 	Tags        []string      `json:"tags"`
 	Source      deckSourceDTO `json:"source"`
 	Description string        `json:"description"`
+	CoverImage  string        `json:"coverImage"`
 	Featured    bool          `json:"featured"`
 }
 
@@ -153,6 +156,7 @@ type updateDeckRequest struct {
 	Tags        *[]string      `json:"tags"`
 	Source      *deckSourceDTO `json:"source"`
 	Description *string        `json:"description"`
+	CoverImage  *string        `json:"coverImage"`
 	Featured    *bool          `json:"featured"`
 }
 

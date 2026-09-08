@@ -53,6 +53,7 @@ func (h *DeckHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Tags:        req.Tags,
 		Source:      domain.DeckSource{Type: req.Source.Type, Value: req.Source.Value},
 		Description: req.Description,
+		CoverImage:  req.CoverImage,
 		Featured:    req.Featured,
 	})
 	if err != nil {
@@ -202,6 +203,7 @@ func (h *DeckHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Industry:    req.Industry,
 		Tags:        req.Tags,
 		Description: req.Description,
+		CoverImage:  req.CoverImage,
 		Featured:    req.Featured,
 	}
 	if req.Source != nil {

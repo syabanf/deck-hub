@@ -133,7 +133,6 @@ export default function ManagePage({
           className="px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
         >
           <option value="all">All categories</option>
-          <option value="mine">My Library</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>{c.title}</option>
           ))}

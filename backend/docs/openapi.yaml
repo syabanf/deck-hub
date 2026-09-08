@@ -917,13 +917,13 @@ components:
         collection that does not exist.
       schema:
         type: string
-        enum: [categories, industries, source-types]
+        enum: [categories, industries]
 
   schemas:
     TaxonomyTerm:
       type: object
       properties:
-        kind:      { type: string, enum: [category, industry, source_type] }
+        kind:      { type: string, enum: [category, industry] }
         slug:
           type: string
           description: The value decks store. Immutable after creation.
@@ -1027,6 +1027,12 @@ components:
         tags:        { type: array, items: { type: string } }
         source:      { $ref: "#/components/schemas/DeckSource" }
         description: { type: string }
+        coverImage:
+          type: string
+          description: |
+            Optional server-relative upload path for the deck's cover. Empty
+            means the frontend generates artwork from the deck id, which is the
+            default — a deck with no image still renders as designed.
         featured:    { type: boolean, description: The newest featured deck is the one the home hero shows }
         viewCount:   { type: integer }
         createdAt:   { type: string, format: date-time }
@@ -1045,6 +1051,12 @@ components:
         tags:        { type: array, items: { type: string } }
         source:      { $ref: "#/components/schemas/DeckSource" }
         description: { type: string }
+        coverImage:
+          type: string
+          description: |
+            Optional server-relative upload path for the deck's cover. Empty
+            means the frontend generates artwork from the deck id, which is the
+            default — a deck with no image still renders as designed.
         featured:    { type: boolean }
 
     DeckPatch:
@@ -1060,6 +1072,12 @@ components:
         tags:        { type: array, items: { type: string } }
         source:      { $ref: "#/components/schemas/DeckSource" }
         description: { type: string }
+        coverImage:
+          type: string
+          description: |
+            Optional server-relative upload path for the deck's cover. Empty
+            means the frontend generates artwork from the deck id, which is the
+            default — a deck with no image still renders as designed.
         featured:    { type: boolean }
 
   responses:

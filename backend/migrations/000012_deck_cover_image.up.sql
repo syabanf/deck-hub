@@ -1,0 +1,13 @@
+-- 000012_deck_cover_image.up.sql
+-- An optional cover image per deck.
+--
+-- Covers are currently generated: api.js picks a gradient and pattern from a
+-- hash of the deck id, so the same deck always looks the same and nothing has
+-- to be uploaded. That stays the default, and it is why this column is
+-- optional rather than required — a deck with no artwork still renders as
+-- designed instead of as a hole in the row.
+--
+-- The value is a server-relative upload path (/uploads/<uuid>.png), matching
+-- source_value for uploaded files. Relative, so stored decks survive the
+-- origin changing.
+ALTER TABLE decks ADD COLUMN IF NOT EXISTS cover_image TEXT NOT NULL DEFAULT '';

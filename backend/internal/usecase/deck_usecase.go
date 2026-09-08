@@ -50,6 +50,10 @@ func (uc *DeckUsecase) checkTerm(ctx context.Context, kind domain.TaxonomyKind, 
 }
 
 // checkDeckTerms validates every taxonomy field a write is setting.
+//
+// Source type is checked against domain.SourceTypes rather than the database:
+// it is a rendering contract the player implements, not a list anyone can add
+// to. See the comment on that variable.
 func (uc *DeckUsecase) checkDeckTerms(ctx context.Context, category, industry, sourceType string) error {
 	if err := uc.checkTerm(ctx, domain.KindCategory, category); err != nil {
 		return err
@@ -57,7 +61,11 @@ func (uc *DeckUsecase) checkDeckTerms(ctx context.Context, category, industry, s
 	if err := uc.checkTerm(ctx, domain.KindIndustry, industry); err != nil {
 		return err
 	}
-	return uc.checkTerm(ctx, domain.KindSourceType, sourceType)
+	if sourceType != "" && !domain.ValidSourceType(sourceType) {
+		return fmt.Errorf("%w: source type %q is not one of %v",
+			domain.ErrInvalidInput, sourceType, domain.SourceTypes)
+	}
+	return nil
 }
 
 // CreateDeckInput carries the fields needed to create a deck.
@@ -71,6 +79,7 @@ type CreateDeckInput struct {
 	Tags        []string
 	Source      domain.DeckSource
 	Description string
+	CoverImage  string
 	Featured    bool
 }
 
@@ -111,6 +120,7 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 		Tags:        in.Tags,
 		Source:      in.Source,
 		Description: in.Description,
+		CoverImage:  strings.TrimSpace(in.CoverImage),
 		Featured:    in.Featured,
 		ViewCount:   0,
 		CreatedAt:   now,
@@ -209,6 +219,7 @@ type UpdateDeckInput struct {
 	Tags        *[]string
 	Source      *domain.DeckSource
 	Description *string
+	CoverImage  *string
 	Featured    *bool
 }
 
@@ -258,6 +269,11 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 	}
 	if in.Description != nil {
 		d.Description = *in.Description
+	}
+	if in.CoverImage != nil {
+		// Empty is meaningful: it clears an uploaded cover and hands the deck
+		// back to the generated artwork.
+		d.CoverImage = strings.TrimSpace(*in.CoverImage)
 	}
 
 	// Only the fields this request set. A deck that already carries a retired

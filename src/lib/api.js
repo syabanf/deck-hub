@@ -333,6 +333,10 @@ export const normalizeDeck = (d) => {
     tags: Array.isArray(d.tags) ? d.tags : [],
     gradient: GRADIENTS[h % GRADIENTS.length],
     pattern: PATTERNS[(h >> 4) % PATTERNS.length],
+    // An uploaded cover wins; without one Cover falls back to its own artwork,
+    // which is why coverImage is optional rather than required. Resolved
+    // against the API base because the stored path is server-relative.
+    image: d.coverImage ? absoluteUrl(d.coverImage) : d.image,
     source: normalizeSource(d.source),
   }
 }
@@ -347,11 +351,15 @@ export const toCreateRequest = (deck) => ({
   subtitle: deck.subtitle || '',
   author: deck.author || '',
   year: Number(deck.year) || new Date().getFullYear(),
-  category: deck.category || 'mine',
+  // No default: 'mine' used to stand in here, and it is not a category any
+  // list contains — every deck created that way was invisible to the filter
+  // that should have found it. The form picks a real one.
+  category: deck.category || '',
   industry: deck.industry || '',
   tags: Array.isArray(deck.tags) ? deck.tags : [],
   source: { type: deck.source?.type || 'url', value: deck.source?.value || '' },
   description: deck.description || '',
+  coverImage: deck.coverImage || '',
   featured: !!deck.featured,
 })
 
@@ -371,6 +379,9 @@ export const toUpdateRequest = (patch) => {
   if (patch.industry !== undefined) body.industry = patch.industry
   if (patch.tags !== undefined) body.tags = Array.isArray(patch.tags) ? patch.tags : []
   if (patch.description !== undefined) body.description = patch.description
+  // '' is a real value here: it clears an uploaded cover and hands the deck
+  // back to the generated artwork.
+  if (patch.coverImage !== undefined) body.coverImage = patch.coverImage
   if (patch.featured !== undefined) body.featured = !!patch.featured
   if (patch.source !== undefined) {
     body.source = { type: patch.source.type || 'url', value: patch.source.value || '' }

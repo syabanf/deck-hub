@@ -117,6 +117,11 @@ func TestMain(m *testing.M) {
 		// Deck writes are validated against these, so the create scenario
 		// fails 100% without them.
 		"000010_taxonomy_terms.up.sql",
+		// 000011 narrows the kind constraint; 000012 adds decks.cover_image.
+		// Their down files are not listed above because 000010 drops the whole
+		// table and 000001 drops decks, which covers both.
+		"000011_drop_source_type_terms.up.sql",
+		"000012_deck_cover_image.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)

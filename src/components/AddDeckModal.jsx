@@ -83,6 +83,62 @@ const FieldLabel = ({ children, hint }) => (
   </label>
 )
 
+// Optional artwork. Skipping it is the normal path — Cover generates a
+// deterministic image from the deck id, so a deck without one still looks
+// designed rather than unfinished. That is why there is no placeholder box
+// shouting for a file.
+function CoverPicker({ cover, onPick }) {
+  return (
+    <div className="space-y-2">
+      <FieldLabel>
+        Cover image <span className="text-white/40">optional</span>
+      </FieldLabel>
+      <div className="flex items-center gap-3">
+        <div
+          className="w-24 h-16 rounded-lg border border-deck-border bg-deck-card overflow-hidden shrink-0 grid place-items-center"
+        >
+          {cover?.preview ? (
+            <img src={cover.preview} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-[10px] text-white/35 text-center leading-tight px-1">
+              Generated<br />artwork
+            </span>
+          )}
+        </div>
+        <div className="flex-1">
+          <label className="inline-block px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold cursor-pointer">
+            {cover ? 'Replace' : 'Choose image'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                onPick({ file, name: file.name, preview: URL.createObjectURL(file) })
+                // Reset, or picking the same file twice fires no change event.
+                e.target.value = ''
+              }}
+            />
+          </label>
+          {cover && (
+            <button
+              type="button"
+              onClick={() => onPick(null)}
+              className="ml-2 text-xs text-white/50 hover:text-white"
+            >
+              Remove
+            </button>
+          )}
+          <p className="text-[11px] text-deck-muted mt-1">
+            {cover ? cover.name : 'Leave empty to use the generated cover.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AddDeckModal({ onClose, onAdd }) {
   const { categories, industries } = useTaxonomy()
   const { closing, requestClose } = useClosable(onClose)
@@ -98,10 +154,18 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const [subtitle, setSubtitle] = useState('')
   const [author, setAuthor] = useState('')
   const [year, setYear] = useState(new Date().getFullYear())
-  const [category, setCategory] = useState('mine')
+  // Defaulted from the master list rather than to a literal. 'mine' used to
+  // sit here and is not a category any list contains, so every deck created
+  // this way was invisible to the filter that should have found it — and the
+  // API refuses it outright now.
+  const [category, setCategory] = useState('')
   const [industry, setIndustry] = useState('')
   const [description, setDescription] = useState('')
   const [tagsInput, setTagsInput] = useState('')
+  const [featured, setFeatured] = useState(false)
+  // An optional cover. Without one the deck renders the generated artwork,
+  // which is the default and looks deliberate rather than missing.
+  const [cover, setCover] = useState(null)
   const [paletteIndex, setPaletteIndex] = useState(1)
   const [pattern, setPattern] = useState('orbs')
 
@@ -130,6 +194,15 @@ export default function AddDeckModal({ onClose, onAdd }) {
     }
   }, [requestClose])
 
+  // The list arrives from the API a moment after mount, so the default is set
+  // when it does rather than at initialisation.
+  useEffect(() => {
+    if (!category && categories.length) setCategory(categories[0].id)
+  }, [categories, category])
+
+  // An object URL held past its file is a leak, and there is one per pick.
+  useEffect(() => () => { if (cover?.preview) URL.revokeObjectURL(cover.preview) }, [cover])
+
   useEffect(() => {
     if (!error) return
     const t = setTimeout(() => setError(null), 4000)
@@ -157,7 +230,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
       subtitle: subtitle.trim() || undefined,
       author: author.trim() || 'You',
       year: parseInt(year, 10) || new Date().getFullYear(),
-      category: category || 'mine',
+      category,
       industry: industry || undefined,
       description: description.trim() || undefined,
       tags: tags.length ? tags : undefined,
@@ -279,6 +352,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
       industry: industry || undefined,
       description: description.trim() || undefined,
       tags: tags.length ? tags : ['my-upload'],
+      featured,
       gradient: { from: palette.from, to: palette.to, text: palette.text },
       pattern,
     }
@@ -286,9 +360,20 @@ export default function AddDeckModal({ onClose, onAdd }) {
       try { new URL(url) } catch { setError("That doesn't look like a valid URL"); return }
     }
 
+    if (!category) {
+      setError('Pick a category first')
+      return
+    }
+
     setError(null)
     setUploading(true)
     try {
+      // The cover goes up before the deck so the failure, if there is one,
+      // happens while nothing has been created yet.
+      if (cover?.file) {
+        const up = await uploadFile(cover.file)
+        base.coverImage = up.path
+      }
       let deck
       if (tab === 'upload') {
         // Store the server-relative path; the client absolutises it on read.
@@ -423,7 +508,11 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       onChange={(e) => setCategory(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm focus:outline-none focus:border-white/40"
                     >
-                      <option value="mine">My Library</option>
+                      {/* "My Library" used to sit here as value="mine". It is
+                          not a category any list contains, so a deck filed
+                          under it was reachable from no filter at all — and the
+                          API refuses it now. My Library is the favourites
+                          feature, which is a different thing entirely. */}
                       {categories.map((c) => (
                         <option key={c.id} value={c.id}>{c.title}</option>
                       ))}
@@ -493,6 +582,23 @@ export default function AddDeckModal({ onClose, onAdd }) {
                         </div>
                       )}
                     </div>
+
+                    <CoverPicker cover={cover} onPick={setCover} />
+
+                    <label className="flex items-center gap-3 cursor-pointer select-none pt-1">
+                      <input
+                        type="checkbox"
+                        checked={featured}
+                        onChange={(e) => setFeatured(e.target.checked)}
+                        className="w-4 h-4 accent-deck-accent"
+                      />
+                      <span className="text-sm">
+                        Featured
+                        <span className="block text-[11px] text-deck-muted">
+                          The newest featured deck is the one the home page leads with.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 )}
 

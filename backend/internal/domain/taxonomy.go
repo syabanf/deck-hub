@@ -11,9 +11,8 @@ import (
 type TaxonomyKind string
 
 const (
-	KindCategory   TaxonomyKind = "category"
-	KindIndustry   TaxonomyKind = "industry"
-	KindSourceType TaxonomyKind = "source_type"
+	KindCategory TaxonomyKind = "category"
+	KindIndustry TaxonomyKind = "industry"
 )
 
 // ParseTaxonomyKind maps the plural, hyphenated form used in URLs to the
@@ -25,8 +24,6 @@ func ParseTaxonomyKind(s string) (TaxonomyKind, error) {
 		return KindCategory, nil
 	case "industries", "industry":
 		return KindIndustry, nil
-	case "source-types", "source_type", "sourceTypes":
-		return KindSourceType, nil
 	default:
 		return "", fmt.Errorf("%w: unknown taxonomy %q", ErrNotFound, s)
 	}
@@ -35,14 +32,10 @@ func ParseTaxonomyKind(s string) (TaxonomyKind, error) {
 // DeckColumn is the decks column this kind is stored in. Callers use it to
 // build queries; it never comes from user input, so interpolating it is safe.
 func (k TaxonomyKind) DeckColumn() string {
-	switch k {
-	case KindIndustry:
+	if k == KindIndustry {
 		return "industry"
-	case KindSourceType:
-		return "source_type"
-	default:
-		return "category"
 	}
+	return "category"
 }
 
 // TaxonomyTerm is one entry in a master list.

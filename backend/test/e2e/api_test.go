@@ -78,6 +78,11 @@ func TestMain(m *testing.M) {
 		// create in this suite would be rejected for naming a category that
 		// does not exist.
 		"000010_taxonomy_terms.up.sql",
+		// 000011 narrows the kind constraint; 000012 adds decks.cover_image.
+		// Their down files are not listed above because 000010 drops the whole
+		// table and 000001 drops decks, which covers both.
+		"000011_drop_source_type_terms.up.sql",
+		"000012_deck_cover_image.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -1425,6 +1430,11 @@ func TestTaxonomy(t *testing.T) {
 		// An empty array would read as "there are none of those", which is a
 		// different and much more confusing answer than "no such collection".
 		status, raw := do(t, http.MethodGet, "/taxonomy/colours", "", nil)
+		requireStatus(t, http.StatusNotFound, status, raw)
+
+		// Source types were a kind here until 000011. They are a rendering
+		// contract the player implements, not a list anyone can add to.
+		status, raw = do(t, http.MethodGet, "/taxonomy/source-types", "", nil)
 		requireStatus(t, http.StatusNotFound, status, raw)
 	})
 

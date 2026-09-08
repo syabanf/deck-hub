@@ -3,7 +3,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { CATEGORIES, INDUSTRIES } from '../data/decks.js'
 import { api } from './api.js'
 
-// The browse taxonomy: categories, industries and source types.
+// The browse taxonomy: categories and industries.
+//
+// Source types are deliberately absent. They are a rendering contract the
+// player implements — 'pdf' means pdf.js, 'video' means the media element —
+// so a sixth one added through a screen would only produce decks nothing can
+// play. That list lives in domain.SourceTypes, next to the code it constrains.
 //
 // These used to be imported straight from src/data/decks.js by seven
 // components, which is why they were unchangeable without a deploy. They now
@@ -14,18 +19,10 @@ import { api } from './api.js'
 // Terms are exposed with `id` rather than `slug`, matching the shape the
 // existing components already read.
 
-const SOURCE_TYPE_FALLBACK = [
-  { id: 'pdf', title: 'PDF document' },
-  { id: 'gslides', title: 'Google Slides' },
-  { id: 'url', title: 'Link' },
-  { id: 'video', title: 'Video' },
-  { id: 'embed', title: 'Embed / iframe' },
-]
 
 const TaxonomyContext = createContext({
   categories: CATEGORIES,
   industries: INDUSTRIES,
-  sourceTypes: SOURCE_TYPE_FALLBACK,
   refresh: () => {},
 })
 
@@ -52,35 +49,31 @@ const applyIfChanged = (setter) => (next) =>
 export function TaxonomyProvider({ children }) {
   const [categories, setCategories] = useState(CATEGORIES)
   const [industries, setIndustries] = useState(INDUSTRIES)
-  const [sourceTypes, setSourceTypes] = useState(SOURCE_TYPE_FALLBACK)
 
   const applyCategories = useMemo(() => applyIfChanged(setCategories), [])
   const applyIndustries = useMemo(() => applyIfChanged(setIndustries), [])
-  const applySourceTypes = useMemo(() => applyIfChanged(setSourceTypes), [])
 
   const refresh = useCallback(async () => {
     // activeOnly: browse screens must not offer a retired term. The admin
     // screen fetches its own unfiltered copy.
     const opts = { activeOnly: true }
-    const [cats, inds, srcs] = await Promise.allSettled([
+    const [cats, inds] = await Promise.allSettled([
       api.listTerms('categories', opts),
       api.listTerms('industries', opts),
-      api.listTerms('source-types', opts),
     ])
     // Each list is applied on its own. One failing request should not roll the
-    // other two back to the compiled-in defaults.
+    // other back to the compiled-in defaults.
     if (cats.status === 'fulfilled' && cats.value?.length) applyCategories(cats.value.map(toTerm))
     if (inds.status === 'fulfilled' && inds.value?.length) applyIndustries(inds.value.map(toTerm))
-    if (srcs.status === 'fulfilled' && srcs.value?.length) applySourceTypes(srcs.value.map(toTerm))
-  }, [applyCategories, applyIndustries, applySourceTypes])
+  }, [applyCategories, applyIndustries])
 
   useEffect(() => {
     refresh()
   }, [refresh])
 
   const value = useMemo(
-    () => ({ categories, industries, sourceTypes, refresh }),
-    [categories, industries, sourceTypes, refresh],
+    () => ({ categories, industries, refresh }),
+    [categories, industries, refresh],
   )
   return <TaxonomyContext.Provider value={value}>{children}</TaxonomyContext.Provider>
 }
