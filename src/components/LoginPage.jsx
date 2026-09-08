@@ -5,11 +5,9 @@ import { humanizeError } from '../lib/errors.js'
 import {
   MailIcon,
   LockIcon,
-  UserIcon,
   EyeIcon,
   EyeOffIcon,
   CheckIcon,
-  GoogleIcon,
   PlayIcon,
 } from '../lib/icons.jsx'
 
@@ -23,8 +21,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 
 export default function LoginPage({ onLogin, notice }) {
-  const [mode, setMode] = useState('signin') // 'signin' | 'signup'
-  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
@@ -81,26 +77,6 @@ export default function LoginPage({ onLogin, notice }) {
     e.preventDefault()
     if (submitting) return
 
-    if (mode === 'signup') {
-      if (!name.trim()) return fail('Enter your name.')
-      if (!EMAIL_RE.test(email.trim())) return fail('Enter a valid email address.')
-      if (password.length < 8) return fail('Use at least 8 characters for your password.')
-
-      setError('')
-      setSubmitting(true)
-      try {
-        await api.register(name.trim(), email.trim().toLowerCase(), password)
-        // No token comes back: the account is real but unusable until the
-        // address is verified, so we show the inbox screen instead of signing in.
-        setPendingEmail(email.trim().toLowerCase())
-      } catch (err) {
-        fail(humanizeError(err, { action: 'create your account' }).message)
-      } finally {
-        setSubmitting(false)
-      }
-      return
-    }
-
     if (!EMAIL_RE.test(email.trim())) return fail('Enter a valid email address.')
     if (!password) return fail('Enter your password.')
 
@@ -122,20 +98,14 @@ export default function LoginPage({ onLogin, notice }) {
     setPendingEmail(null)
     setNeedsVerify(false)
     setResent(false)
-    setMode('signin')
     setPassword('')
-  }
-
-
-  const switchMode = (next) => {
-    setMode(next)
     setError('')
   }
 
-  // Registration succeeded, or a sign-in was refused because the address is
-  // unproven. Both land here: the account exists and the only useful next step
-  // is the inbox, so showing the form again would just invite a retry that
-  // cannot work.
+  // A sign-in refused because the address is unproven — an account an admin
+  // created, or one made before self-registration was taken off this screen.
+  // The account exists and the only useful next step is the inbox, so showing
+  // the form again would just invite a retry that cannot work.
   if (pendingEmail) {
     return (
       <div className="fixed inset-0 flex items-center justify-center px-6 bg-deck-bg text-white">
@@ -226,12 +196,6 @@ export default function LoginPage({ onLogin, notice }) {
         <span className="text-deck-accent font-black text-2xl md:text-3xl tracking-tighter">
           WIT
         </span>
-        <button
-          onClick={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
-          className="text-sm text-white/70 hover:text-white transition-colors"
-        >
-          {mode === 'signin' ? 'Create account' : 'Sign in'}
-        </button>
       </header>
 
       {/* ─── Card ─── */}
@@ -242,28 +206,14 @@ export default function LoginPage({ onLogin, notice }) {
           }`}
         >
           <div className="text-xs uppercase tracking-[0.3em] font-bold text-deck-accent mb-2">
-            {mode === 'signin' ? 'Welcome back' : 'Get started'}
+            Welcome back
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
-            {mode === 'signin' ? 'Sign in to WIT' : 'Create your account'}
-          </h1>
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight">Sign in to WIT</h1>
           <p className="text-deck-muted text-sm mt-1.5">
-            {mode === 'signin'
-              ? 'Pick up where you left off across every deck.'
-              : 'Unlock the full catalog and your own library.'}
+            Pick up where you left off across every deck.
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-3">
-            {mode === 'signup' && (
-              <Field
-                icon={<UserIcon size={18} />}
-                type="text"
-                placeholder="Full name"
-                value={name}
-                onChange={setName}
-                autoComplete="name"
-              />
-            )}
             <Field
               icon={<MailIcon size={18} />}
               type="email"
@@ -278,7 +228,7 @@ export default function LoginPage({ onLogin, notice }) {
               placeholder="Password"
               value={password}
               onChange={setPassword}
-              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+              autoComplete="current-password"
               trailing={
                 <button
                   type="button"
@@ -343,41 +293,16 @@ export default function LoginPage({ onLogin, notice }) {
               ) : (
                 <>
                   <PlayIcon size={16} />
-                  {mode === 'signin' ? 'Sign In' : 'Create account'}
+                  Sign In
                 </>
               )}
             </button>
           </form>
 
-          <div className="flex items-center gap-3 my-5">
-            <span className="flex-1 h-px bg-white/10" />
-            <span className="text-xs uppercase tracking-widest text-white/40">or</span>
-            <span className="flex-1 h-px bg-white/10" />
-          </div>
-
-          {/* Alt actions */}
-          <div className="space-y-2.5">
-            <button
-              type="button"
-              onClick={() => fail('Social sign-in is not wired up. Sign in with your email and password.')}
-              className="w-full h-11 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/25 font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors"
-            >
-              <GoogleIcon size={18} />
-              Continue with Google
-            </button>
-          </div>
-
-          {/* Mode toggle */}
-          <p className="text-center text-sm text-deck-muted mt-6">
-            {mode === 'signin' ? "New to WIT?" : 'Already have an account?'}{' '}
-            <button
-              type="button"
-              onClick={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
-              className="text-white font-semibold hover:text-deck-accent transition-colors"
-            >
-              {mode === 'signin' ? 'Sign up now' : 'Sign in'}
-            </button>
-          </p>
+          {/* Nothing below the form on purpose. "Continue with Google" was a
+              button that only ever produced an apology, and the sign-up link
+              offered a way in that this catalog does not want: accounts are
+              made by an admin, in Settings → Users. */}
         </div>
       </div>
 
