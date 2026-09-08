@@ -242,32 +242,36 @@ type changePasswordRequest struct {
 // feature — it is copied into somebody else's login form — and it is why
 // reading a demo requires an account.
 type demoResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Product   string    `json:"product"`
-	URL       string    `json:"url"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password"`
-	Notes     string    `json:"notes"`
-	SortOrder int       `json:"sortOrder"`
-	Active    bool      `json:"active"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"`
+	Environment string    `json:"environment"`
+	Status      string    `json:"status"`
+	URL         string    `json:"url"`
+	Username    string    `json:"username"`
+	Password    string    `json:"password"`
+	Notes       string    `json:"notes"`
+	SortOrder   int       `json:"sortOrder"`
+	Active      bool      `json:"active"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func toDemoResponse(d *domain.Demo) demoResponse {
 	return demoResponse{
-		ID:        d.ID.String(),
-		Name:      d.Name,
-		Product:   d.Product,
-		URL:       d.URL,
-		Username:  d.Username,
-		Password:  d.Password,
-		Notes:     d.Notes,
-		SortOrder: d.SortOrder,
-		Active:    d.Active,
-		CreatedAt: d.CreatedAt,
-		UpdatedAt: d.UpdatedAt,
+		ID:          d.ID.String(),
+		Name:        d.Name,
+		Category:    d.Category,
+		Environment: d.Environment,
+		Status:      d.Status,
+		URL:         d.URL,
+		Username:    d.Username,
+		Password:    d.Password,
+		Notes:       d.Notes,
+		SortOrder:   d.SortOrder,
+		Active:      d.Active,
+		CreatedAt:   d.CreatedAt,
+		UpdatedAt:   d.UpdatedAt,
 	}
 }
 
@@ -280,24 +284,28 @@ func toDemoResponses(demos []*domain.Demo) []demoResponse {
 }
 
 type createDemoRequest struct {
-	Name      string `json:"name"`
-	Product   string `json:"product"`
-	URL       string `json:"url"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	Notes     string `json:"notes"`
-	SortOrder int    `json:"sortOrder"`
-	Active    *bool  `json:"active"`
+	Name        string `json:"name"`
+	Category    string `json:"category"`
+	Environment string `json:"environment"`
+	Status      string `json:"status"`
+	URL         string `json:"url"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Notes       string `json:"notes"`
+	SortOrder   int    `json:"sortOrder"`
+	Active      *bool  `json:"active"`
 }
 
 // updateDemoRequest is partial; an omitted field keeps its value.
 type updateDemoRequest struct {
-	Name      *string `json:"name"`
-	Product   *string `json:"product"`
-	URL       *string `json:"url"`
-	Username  *string `json:"username"`
-	Password  *string `json:"password"`
-	Notes     *string `json:"notes"`
-	SortOrder *int    `json:"sortOrder"`
-	Active    *bool   `json:"active"`
+	Name        *string `json:"name"`
+	Category    *string `json:"category"`
+	Environment *string `json:"environment"`
+	Status      *string `json:"status"`
+	URL         *string `json:"url"`
+	Username    *string `json:"username"`
+	Password    *string `json:"password"`
+	Notes       *string `json:"notes"`
+	SortOrder   *int    `json:"sortOrder"`
+	Active      *bool   `json:"active"`
 }

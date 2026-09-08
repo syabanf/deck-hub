@@ -129,6 +129,7 @@ func TestMain(m *testing.M) {
 		"000014_deck_owner.up.sql",
 		"000015_audit_log.up.sql",
 		"000016_demos.up.sql",
+		"000017_demo_pin.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)

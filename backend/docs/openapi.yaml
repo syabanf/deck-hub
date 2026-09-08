@@ -976,20 +976,57 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /demos/pin:
+    put:
+      tags: [Demos]
+      summary: Replace the Demo Center PIN
+      description: |
+        Requires `admin`, and deliberately not behind the PIN itself — this is
+        how a forgotten one gets replaced.
+
+        Write-only. The PIN is stored as a bcrypt hash, unlike the demo
+        passwords: nothing needs to read it back, it is only ever compared
+        against what somebody typed. So it can be changed and never shown,
+        which is the trade for a gate a database backup does not hand over.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { type: string, minLength: 4 }
+      responses:
+        "204": { description: Replaced }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /demos:
     get:
       tags: [Demos]
       summary: List the demo environments
       description: |
-        Requires an account of any role — admin, editor or viewer. Deliberately
-        not public and not reachable by a guest: every row carries a working
-        password in clear, which is the point of the feature and the reason it
-        is behind a sign-in.
+        Requires an account of any role — admin, editor or viewer — **and** the
+        shared PIN in `X-Demo-Pin`. Deliberately not public and not reachable
+        by a guest: every row carries a working password in clear, which is the
+        point of the feature and the reason it is behind both.
+
+        The PIN is checked here rather than in the page. A gate the browser
+        enforces is a gate anyone can walk around by calling this endpoint
+        directly. A missing or wrong PIN answers `401` with code
+        `demo_pin_required`, which is distinct from an expired session so a
+        client can show the PIN screen instead of signing somebody out.
+
+        A PIN that has never been set refuses everything rather than serving
+        the credentials ungated.
 
         Retired demos are included by default. Pass `active=true` for a list to
         hand somebody; the manage view needs all of them, or retiring one would
         hide the way back.
       parameters:
+        - $ref: "#/components/parameters/DemoPin"
         - name: search
           in: query
           schema: { type: string }
@@ -1031,6 +1068,7 @@ paths:
 
   /demos/{id}:
     parameters:
+      - $ref: "#/components/parameters/DemoPin"
       - name: id
         in: path
         required: true
@@ -1198,6 +1236,16 @@ components:
       bearerFormat: JWT
 
   parameters:
+    DemoPin:
+      name: X-Demo-Pin
+      in: header
+      required: true
+      description: |
+        The shared Demo Center PIN. A header rather than a query parameter: it
+        would otherwise be written into access logs and browser history, which
+        is not where the gate to a page of credentials belongs.
+      schema: { type: string }
+
     TaxonomyKind:
       name: kind
       in: path

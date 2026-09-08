@@ -16,11 +16,17 @@ import (
 type Demo struct {
 	ID       uuid.UUID `json:"id"`
 	Name     string    `json:"name"`
-	Product  string    `json:"product"`
+	Category string    `json:"category"`
 	URL      string    `json:"url"`
 	Username string    `json:"username"`
 	Password string    `json:"password"`
 	Notes    string    `json:"notes"`
+
+	// How freely the demo may be shown, and whether it works today. Kept apart
+	// from Active: "confidential" and "broken" are different problems, and a
+	// single flag would answer neither question.
+	Environment string `json:"environment"`
+	Status      string `json:"status"`
 
 	SortOrder int  `json:"sortOrder"`
 	Active    bool `json:"active"`

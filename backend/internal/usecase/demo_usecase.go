@@ -2,49 +2,97 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/wit/wit-backend/internal/domain"
 )
 
 // DemoUsecase holds the rules for the demo credentials.
 type DemoUsecase struct {
-	repo domain.DemoRepository
+	repo     domain.DemoRepository
+	settings domain.SettingsRepository
 }
 
-// NewDemoUsecase wires a DemoUsecase with its repository dependency.
-func NewDemoUsecase(repo domain.DemoRepository) *DemoUsecase {
-	return &DemoUsecase{repo: repo}
+// NewDemoUsecase wires a DemoUsecase with its dependencies. The settings
+// repository is where the PIN hash lives.
+func NewDemoUsecase(repo domain.DemoRepository, settings domain.SettingsRepository) *DemoUsecase {
+	return &DemoUsecase{repo: repo, settings: settings}
+}
+
+// ErrDemoPin is returned when the PIN is missing or wrong. Its own error so
+// the handler can answer with a code the frontend acts on — showing the PIN
+// screen — rather than the one it shows for an expired session.
+var ErrDemoPin = errors.New("demo pin required")
+
+// CheckPin verifies the shared PIN in front of the Demo Center.
+//
+// Checked on the server, not in the page. A gate the browser enforces is a
+// gate anyone can walk around by calling the API directly, and what is behind
+// this one is working credentials.
+func (uc *DemoUsecase) CheckPin(ctx context.Context, pin string) error {
+	hash, err := uc.settings.Get(ctx, domain.SettingDemoPinHash)
+	if err != nil {
+		return err
+	}
+	if hash == "" {
+		// Unset means unconfigured, not open. Serving credentials because
+		// nobody has set a PIN yet would be the worst possible default.
+		return fmt.Errorf("%w: no PIN is configured", ErrDemoPin)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(pin)) != nil {
+		return fmt.Errorf("%w: incorrect PIN", ErrDemoPin)
+	}
+	return nil
+}
+
+// SetPin replaces the shared PIN. Stored hashed, so it can be changed and
+// never read back.
+func (uc *DemoUsecase) SetPin(ctx context.Context, pin string) error {
+	pin = strings.TrimSpace(pin)
+	if len(pin) < 4 {
+		return fmt.Errorf("%w: the PIN must be at least 4 characters", domain.ErrInvalidInput)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash pin: %w", err)
+	}
+	return uc.settings.Set(ctx, domain.SettingDemoPinHash, string(hash))
 }
 
 // DemoInput carries the editable fields. Pointers on update only, so this is
 // the create shape; UpdateDemoInput below is the partial one.
 type DemoInput struct {
-	Name      string
-	Product   string
-	URL       string
-	Username  string
-	Password  string
-	Notes     string
-	SortOrder int
-	Active    *bool
-	CreatedBy *uuid.UUID
+	Name        string
+	Category    string
+	URL         string
+	Environment string
+	Status      string
+	Username    string
+	Password    string
+	Notes       string
+	SortOrder   int
+	Active      *bool
+	CreatedBy   *uuid.UUID
 }
 
 // UpdateDemoInput is partial: an omitted field keeps its value.
 type UpdateDemoInput struct {
-	Name      *string
-	Product   *string
-	URL       *string
-	Username  *string
-	Password  *string
-	Notes     *string
-	SortOrder *int
-	Active    *bool
+	Name        *string
+	Category    *string
+	URL         *string
+	Environment *string
+	Status      *string
+	Username    *string
+	Password    *string
+	Notes       *string
+	SortOrder   *int
+	Active      *bool
 }
 
 const maxDemoField = 500
@@ -62,7 +110,7 @@ func (uc *DemoUsecase) Create(ctx context.Context, in DemoInput) (*domain.Demo, 
 	if name == "" {
 		return nil, fmt.Errorf("%w: name is required", domain.ErrInvalidInput)
 	}
-	if err := checkDemoLengths(in.Name, in.Product, in.URL, in.Username, in.Password); err != nil {
+	if err := checkDemoLengths(in.Name, in.Category, in.URL, in.Username, in.Password); err != nil {
 		return nil, err
 	}
 
@@ -84,11 +132,13 @@ func (uc *DemoUsecase) Create(ctx context.Context, in DemoInput) (*domain.Demo, 
 
 	now := time.Now().UTC()
 	d := &domain.Demo{
-		ID:       uuid.New(),
-		Name:     name,
-		Product:  strings.TrimSpace(in.Product),
-		URL:      strings.TrimSpace(in.URL),
-		Username: in.Username,
+		ID:          uuid.New(),
+		Name:        name,
+		Category:    strings.TrimSpace(in.Category),
+		Environment: strings.TrimSpace(in.Environment),
+		Status:      strings.TrimSpace(in.Status),
+		URL:         strings.TrimSpace(in.URL),
+		Username:    in.Username,
 		// Not trimmed. A password can legitimately start or end with a space,
 		// and silently changing one is a credential that no longer works with
 		// no sign of why.
@@ -119,8 +169,14 @@ func (uc *DemoUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDemoIn
 		}
 		d.Name = name
 	}
-	if in.Product != nil {
-		d.Product = strings.TrimSpace(*in.Product)
+	if in.Category != nil {
+		d.Category = strings.TrimSpace(*in.Category)
+	}
+	if in.Environment != nil {
+		d.Environment = strings.TrimSpace(*in.Environment)
+	}
+	if in.Status != nil {
+		d.Status = strings.TrimSpace(*in.Status)
 	}
 	if in.URL != nil {
 		d.URL = strings.TrimSpace(*in.URL)
@@ -140,7 +196,7 @@ func (uc *DemoUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDemoIn
 	if in.Active != nil {
 		d.Active = *in.Active
 	}
-	if err := checkDemoLengths(d.Name, d.Product, d.URL, d.Username, d.Password); err != nil {
+	if err := checkDemoLengths(d.Name, d.Category, d.URL, d.Username, d.Password); err != nil {
 		return nil, err
 	}
 

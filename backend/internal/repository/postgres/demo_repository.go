@@ -24,13 +24,14 @@ func NewDemoRepository(pool *pgxpool.Pool) *DemoRepository {
 
 var _ domain.DemoRepository = (*DemoRepository)(nil)
 
-const demoColumns = `id, name, product, url, username, password, notes,
-	sort_order, active, created_by, created_at, updated_at`
+const demoColumns = `id, name, category, url, username, password, notes,
+	environment, status, sort_order, active, created_by, created_at, updated_at`
 
 func scanDemo(row pgx.Row) (*domain.Demo, error) {
 	var d domain.Demo
-	err := row.Scan(&d.ID, &d.Name, &d.Product, &d.URL, &d.Username, &d.Password,
-		&d.Notes, &d.SortOrder, &d.Active, &d.CreatedBy, &d.CreatedAt, &d.UpdatedAt)
+	err := row.Scan(&d.ID, &d.Name, &d.Category, &d.URL, &d.Username, &d.Password,
+		&d.Notes, &d.Environment, &d.Status, &d.SortOrder, &d.Active, &d.CreatedBy,
+		&d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +44,7 @@ func (r *DemoRepository) List(ctx context.Context, f domain.DemoFilter) ([]*doma
 	// listing before it did the same.
 	q := `SELECT ` + demoColumns + ` FROM demos
 	       WHERE ($1::bool IS NOT TRUE OR active)
-	         AND ($2 = '' OR name ILIKE '%' || $2 || '%' OR product ILIKE '%' || $2 || '%')
+	         AND ($2 = '' OR name ILIKE '%' || $2 || '%' OR category ILIKE '%' || $2 || '%')
 	       ORDER BY sort_order, name, id`
 
 	rows, err := r.pool.Query(ctx, q, f.ActiveOnly, escapeLike(f.Search))
@@ -80,11 +81,12 @@ func (r *DemoRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Dem
 
 func (r *DemoRepository) Create(ctx context.Context, d *domain.Demo) error {
 	const q = `
-		INSERT INTO demos (id, name, product, url, username, password, notes,
-			sort_order, active, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-	_, err := r.pool.Exec(ctx, q, d.ID, d.Name, d.Product, d.URL, d.Username,
-		d.Password, d.Notes, d.SortOrder, d.Active, d.CreatedBy, d.CreatedAt, d.UpdatedAt)
+		INSERT INTO demos (id, name, category, url, username, password, notes,
+			environment, status, sort_order, active, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+	_, err := r.pool.Exec(ctx, q, d.ID, d.Name, d.Category, d.URL, d.Username,
+		d.Password, d.Notes, d.Environment, d.Status, d.SortOrder, d.Active,
+		d.CreatedBy, d.CreatedAt, d.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert demo: %w", err)
 	}
@@ -94,11 +96,12 @@ func (r *DemoRepository) Create(ctx context.Context, d *domain.Demo) error {
 func (r *DemoRepository) Update(ctx context.Context, d *domain.Demo) error {
 	const q = `
 		UPDATE demos
-		   SET name = $2, product = $3, url = $4, username = $5, password = $6,
-		       notes = $7, sort_order = $8, active = $9, updated_at = $10
+		   SET name = $2, category = $3, url = $4, username = $5, password = $6,
+		       notes = $7, environment = $8, status = $9, sort_order = $10,
+		       active = $11, updated_at = $12
 		 WHERE id = $1`
-	tag, err := r.pool.Exec(ctx, q, d.ID, d.Name, d.Product, d.URL, d.Username,
-		d.Password, d.Notes, d.SortOrder, d.Active, d.UpdatedAt)
+	tag, err := r.pool.Exec(ctx, q, d.ID, d.Name, d.Category, d.URL, d.Username,
+		d.Password, d.Notes, d.Environment, d.Status, d.SortOrder, d.Active, d.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update demo: %w", err)
 	}

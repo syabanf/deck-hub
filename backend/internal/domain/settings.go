@@ -48,9 +48,18 @@ func ValidateSetting(key, value string) error {
 	return nil
 }
 
+// SettingDemoPinHash gates the Demo Center. Deliberately absent from
+// SettingDefaults: that map is what GET /settings returns and it is public, so
+// a key listed there is a key anyone can read. This one is written through its
+// own endpoint and read only by the code that checks it.
+const SettingDemoPinHash = "demo_pin_hash"
+
 // SettingsRepository abstracts persistence for the settings map.
 type SettingsRepository interface {
-	// All returns every stored setting. Defaults are applied above this.
+	// All returns every stored setting. Defaults are applied above this, and
+	// the usecase drops anything that is not a known public key — which is how
+	// the PIN hash stays out of a public response.
 	All(ctx context.Context) (map[string]string, error)
+	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key, value string) error
 }

@@ -22,3 +22,6 @@ dist
 
 # Staging run directory: generated nginx config, pids, logs, uploads.
 staging/.run/
+
+# Seed files carrying real credentials. Handed over out of band, never committed.
+*.local.sql

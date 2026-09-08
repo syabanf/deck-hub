@@ -91,6 +91,7 @@ func TestMain(m *testing.M) {
 		"000014_deck_owner.up.sql",
 		"000015_audit_log.up.sql",
 		"000016_demos.up.sql",
+		"000017_demo_pin.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -125,7 +126,7 @@ func TestMain(m *testing.M) {
 	settingsUC := usecase.NewSettingsUsecase(postgres.NewSettingsRepository(pool))
 	auditRepo := postgres.NewAuditRepository(pool)
 	auditUC := usecase.NewAuditUsecase(auditRepo)
-	demoUC := usecase.NewDemoUsecase(postgres.NewDemoRepository(pool))
+	demoUC := usecase.NewDemoUsecase(postgres.NewDemoRepository(pool), postgres.NewSettingsRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))

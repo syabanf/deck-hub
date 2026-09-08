@@ -5,11 +5,37 @@ import { humanizeError } from '../lib/errors.js'
 import { copyToClipboard } from '../lib/share.js'
 import { PlusIcon, TrashIcon, SearchIcon } from '../lib/icons.jsx'
 
-const blank = { name: '', product: '', url: '', username: '', password: '', notes: '' }
+const blank = {
+  name: '', category: '', url: '', username: '', password: '',
+  notes: '', environment: '', status: '',
+}
+
+// The PIN lives in sessionStorage, so it lasts the tab and no longer. A gate
+// that survives closing the browser is a gate that stops meaning anything.
+const PIN_KEY = 'wit.demoPin'
+const loadPin = () => {
+  try { return sessionStorage.getItem(PIN_KEY) || '' } catch { return '' }
+}
+const savePin = (pin) => {
+  try { sessionStorage.setItem(PIN_KEY, pin) } catch { /* private mode */ }
+}
+const clearPin = () => {
+  try { sessionStorage.removeItem(PIN_KEY) } catch { /* private mode */ }
+}
+
+const ENVIRONMENT_COLOR = {
+  Confidential: '#f87171',
+  Production: '#34d399',
+  'Demo WIT': '#c084fc',
+  Development: '#60a5fa',
+}
 
 // The credentials for WIT's own product demos, with one click to copy each
 // field into whatever form is asking for it.
 export default function DemoCenter({ canEdit = false, onNotify }) {
+  const [pin, setPin] = useState(loadPin)
+  const [pinInput, setPinInput] = useState('')
+  const [pinError, setPinError] = useState(null)
   const [demos, setDemos] = useState([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
@@ -21,20 +47,52 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
   const [confirming, setConfirming] = useState(null)
 
   const load = useCallback(async () => {
+    if (!pin) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
-      setDemos(await api.listDemos())
+      setDemos(await api.listDemos(pin))
     } catch (e) {
-      setError(e)
+      // A PIN the server rejects sends us back to the gate rather than showing
+      // an error over an empty page. It can go stale on its own: an admin
+      // changing it invalidates every tab still holding the old one.
+      if (e?.code === 'demo_pin_required') {
+        clearPin()
+        setPin('')
+        setPinError('That PIN is no longer accepted. Ask an admin for the current one.')
+      } else {
+        setError(e)
+      }
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [pin])
 
   useEffect(() => {
     load()
   }, [load])
+
+  const submitPin = async (e) => {
+    e.preventDefault()
+    setPinError(null)
+    const entered = pinInput.trim()
+    if (!entered) return
+    try {
+      // Verified against the server before it is kept, so a wrong PIN is
+      // rejected here rather than looking accepted until the list comes back
+      // empty.
+      await api.listDemos(entered)
+      savePin(entered)
+      setPin(entered)
+      setPinInput('')
+    } catch (err) {
+      if (err?.code === 'demo_pin_required') setPinError('That PIN is not right.')
+      else setPinError(err?.message || humanizeError(err, { action: 'check that PIN' }).message)
+    }
+  }
 
   // Filtered here rather than by refetching: the whole list is small, and a
   // request per keystroke against a page of credentials is more traffic than
@@ -43,7 +101,9 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
     const q = search.trim().toLowerCase()
     if (!q) return demos
     return demos.filter((d) =>
-      [d.name, d.product, d.username, d.notes].some((v) => (v || '').toLowerCase().includes(q)),
+      [d.name, d.category, d.username, d.notes, d.environment].some((v) =>
+        (v || '').toLowerCase().includes(q),
+      ),
     )
   }, [demos, search])
 
@@ -55,8 +115,9 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
 
   const startEdit = (d) => {
     setDraft({
-      name: d.name, product: d.product, url: d.url,
+      name: d.name, category: d.category, url: d.url,
       username: d.username, password: d.password, notes: d.notes,
+      environment: d.environment, status: d.status,
     })
     setEditing(d.id)
     setError(null)
@@ -67,8 +128,8 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
     setSaving(true)
     setError(null)
     try {
-      if (editing === 'new') await api.createDemo(draft)
-      else await api.updateDemo(editing, draft)
+      if (editing === 'new') await api.createDemo(pin, draft)
+      else await api.updateDemo(pin, editing, draft)
       setEditing(null)
       setDraft(blank)
       await load()
@@ -83,7 +144,7 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
     setConfirming(null)
     setError(null)
     try {
-      await api.deleteDemo(d.id)
+      await api.deleteDemo(pin, d.id)
       await load()
     } catch (err) {
       setError(err)
@@ -93,7 +154,7 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
   const toggleActive = async (d) => {
     setError(null)
     try {
-      await api.updateDemo(d.id, { active: !d.active })
+      await api.updateDemo(pin, d.id, { active: !d.active })
       await load()
     } catch (err) {
       setError(err)
@@ -101,6 +162,45 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
   }
 
   const field = 'w-full h-10 px-3 rounded-lg bg-black/40 border border-white/10 focus:border-white/30 outline-none text-sm'
+
+  if (!pin) {
+    return (
+      <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen flex justify-center">
+        <form onSubmit={submitPin} className="w-full max-w-sm mt-8">
+          <div className="text-xs uppercase tracking-[0.3em] font-bold text-deck-muted mb-2">
+            Credentials
+          </div>
+          <h1 className="text-3xl font-black tracking-tight">Demo Center</h1>
+          <p className="text-sm text-deck-muted mt-2 mb-6">
+            This page lists working sign-ins for the demo environments, so it asks
+            for the shared PIN as well as your account.
+          </p>
+          <input
+            autoFocus
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            placeholder="PIN"
+            className="w-full h-11 px-3 rounded-lg bg-black/40 border border-white/10 focus:border-white/30 outline-none text-center text-lg tracking-[0.4em] font-mono"
+          />
+          {pinError && <p className="text-sm text-red-300 mt-3">{pinError}</p>}
+          <button
+            type="submit"
+            disabled={!pinInput.trim()}
+            className="mt-4 w-full h-11 rounded-lg bg-deck-accent font-bold text-sm disabled:opacity-40"
+          >
+            Open the Demo Center
+          </button>
+          <p className="text-[11px] text-deck-muted mt-4 leading-snug">
+            The PIN is checked by the server, not by this page, and it is kept only
+            until you close the tab. An admin can change it in Settings.
+          </p>
+        </form>
+      </div>
+    )
+  }
 
   return (
     <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">
@@ -157,12 +257,28 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
                 required
               />
             </Labelled>
-            <Labelled label="Product">
+            <Labelled label="Category">
               <input
-                value={draft.product}
-                onChange={(e) => setDraft({ ...draft, product: e.target.value })}
+                value={draft.category}
+                onChange={(e) => setDraft({ ...draft, category: e.target.value })}
                 className={field}
-                placeholder="ORYX"
+                placeholder="Shopfloor"
+              />
+            </Labelled>
+            <Labelled label="Environment" hint="Development, Demo WIT, Production, Confidential.">
+              <input
+                value={draft.environment}
+                onChange={(e) => setDraft({ ...draft, environment: e.target.value })}
+                className={field}
+                placeholder="Development"
+              />
+            </Labelled>
+            <Labelled label="Status" hint="Whether it works today.">
+              <input
+                value={draft.status}
+                onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+                className={field}
+                placeholder="Active"
               />
             </Labelled>
             <Labelled label="Link" className="md:col-span-2">
@@ -266,9 +382,33 @@ function DemoCard({ demo, canEdit, onEdit, onToggle, onAskDelete, onDelete, onCa
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="font-bold truncate">{demo.name}</div>
-          {demo.product && (
-            <div className="text-xs text-deck-muted truncate">{demo.product}</div>
-          )}
+          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+            {demo.category && (
+              <span className="text-xs text-deck-muted truncate">{demo.category}</span>
+            )}
+            {demo.environment && (
+              <span
+                className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{
+                  background: `${ENVIRONMENT_COLOR[demo.environment] || '#8a8a99'}25`,
+                  color: ENVIRONMENT_COLOR[demo.environment] || '#8a8a99',
+                }}
+                title={
+                  demo.environment === 'Confidential'
+                    ? 'Not to be shown outside WIT'
+                    : undefined
+                }
+              >
+                {demo.environment}
+              </span>
+            )}
+            {demo.status && demo.status !== 'Active' && (
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                    style={{ background: '#fbbf2425', color: '#fbbf24' }}>
+                {demo.status}
+              </span>
+            )}
+          </div>
         </div>
         {!demo.active && (
           <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded shrink-0"
@@ -281,7 +421,7 @@ function DemoCard({ demo, canEdit, onEdit, onToggle, onAskDelete, onDelete, onCa
       <div className="space-y-2">
         <CopyRow label="Link" value={demo.url} href={demo.url} onNotify={onNotify} />
         <CopyRow label="ID" value={demo.username} onNotify={onNotify} />
-        <CopyRow label="Password" value={demo.password} mono onNotify={onNotify} />
+        <CopyRow label="Password" value={demo.password} mono secret onNotify={onNotify} />
       </div>
 
       {demo.notes && (
@@ -328,8 +468,12 @@ function DemoCard({ demo, canEdit, onEdit, onToggle, onAskDelete, onDelete, onCa
 // One field with the button that copies it. Empty fields are shown as a dash
 // rather than hidden, so a demo missing a password looks incomplete instead of
 // looking like it has none.
-function CopyRow({ label, value, href, mono, onNotify }) {
+function CopyRow({ label, value, href, mono, secret, onNotify }) {
   const [copied, setCopied] = useState(false)
+  // Press and hold to read it. Hidden by default so a password is not sitting
+  // on screen behind whoever is walking past, and held rather than toggled so
+  // it cannot be left showing by accident — letting go puts it back.
+  const [revealed, setRevealed] = useState(false)
 
   const copy = async () => {
     if (!value) return
@@ -361,6 +505,26 @@ function CopyRow({ label, value, href, mono, onNotify }) {
         >
           {value}
         </a>
+      ) : secret && value ? (
+        <button
+          type="button"
+          // Pointer events rather than mouse ones, so a long press on a phone
+          // works the same as holding the button with a mouse.
+          onPointerDown={() => setRevealed(true)}
+          onPointerUp={() => setRevealed(false)}
+          onPointerLeave={() => setRevealed(false)}
+          onPointerCancel={() => setRevealed(false)}
+          // And for anyone on a keyboard, who has no pointer to hold down.
+          onFocus={() => setRevealed(true)}
+          onBlur={() => setRevealed(false)}
+          className={`flex-1 min-w-0 truncate text-left text-sm font-mono select-none cursor-pointer ${
+            revealed ? '' : 'text-white/60 tracking-widest'
+          }`}
+          title={revealed ? value : 'Hold to reveal'}
+          aria-label={revealed ? `${label}: ${value}` : `${label}, hidden. Hold to reveal.`}
+        >
+          {revealed ? value : '•'.repeat(Math.min(value.length, 16))}
+        </button>
       ) : (
         <span
           className={`flex-1 min-w-0 truncate text-sm ${value ? '' : 'text-white/30'} ${mono ? 'font-mono' : ''}`}

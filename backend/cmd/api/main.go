@@ -65,7 +65,7 @@ func run() error {
 	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
 	settingsUC := usecase.NewSettingsUsecase(settingsRepo)
 	auditUC := usecase.NewAuditUsecase(auditRepo)
-	demoUC := usecase.NewDemoUsecase(demoRepo)
+	demoUC := usecase.NewDemoUsecase(demoRepo, settingsRepo)
 
 	// Take ownership of the seeded admin. Migration 000001 ships a published
 	// password so a fresh checkout works; production must not keep it.

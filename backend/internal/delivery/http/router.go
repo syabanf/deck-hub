@@ -106,7 +106,11 @@ func NewRouter(d RouterDeps) http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: origins,
 		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
+		// PinHeader has to be listed, or the browser's preflight fails and the
+		// Demo Center cannot be opened at all. Only visible where the app and
+		// the API are on different origins — which is development, not
+		// production, so it would have shipped looking fine.
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id", PinHeader},
 		// Paging metadata is unreadable from JS unless it is exposed here.
 		ExposedHeaders:   []string{"X-Request-Id", "X-Total-Count", "X-Limit", "X-Offset"},
 		AllowCredentials: true,
@@ -185,6 +189,12 @@ func NewRouter(d RouterDeps) http.Handler {
 		r.Route("/demos", func(r chi.Router) {
 			r.Use(d.Tokens.JWTAuth)
 			r.Get("/", d.Demos.List)
+
+			// Before /{id}, or "pin" is parsed as a demo id. Admin only, and
+			// deliberately not behind the PIN itself: it is how a forgotten
+			// one gets replaced.
+			r.With(RequireRole("admin")).Put("/pin", d.Demos.SetPin)
+
 			r.Get("/{id}", d.Demos.Get)
 
 			r.Group(func(r chi.Router) {

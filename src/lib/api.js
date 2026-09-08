@@ -57,8 +57,8 @@ async function fetchWithTimeout(url, options, ms) {
 const transient = (err) =>
   err?.code === 'network' || err?.code === 'timeout' || (err?.status >= 500 && err?.status < 600)
 
-async function request(path, { method = 'GET', body, auth = false, retries, meta = false } = {}) {
-  const headers = {}
+async function request(path, { method = 'GET', body, auth = false, retries, meta = false, headers: extra } = {}) {
+  const headers = { ...extra }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (auth) {
     const token = loadAuth()?.token
@@ -108,7 +108,11 @@ async function request(path, { method = 'GET', body, auth = false, retries, meta
         // An authenticated call rejected as 401 means the JWT lapsed. Tell the
         // app once so it can sign out cleanly; a failed login is the caller's
         // business, not a session expiry.
-        if (res.status === 401 && auth) onAuthFailure?.(err)
+        //
+        // The Demo Center PIN is the other exception, and it is why that code
+        // exists: the token is fine, a second gate was not satisfied. Without
+        // this, typing the PIN wrong signed the person out of the whole app.
+        if (res.status === 401 && auth && code !== 'demo_pin_required') onAuthFailure?.(err)
 
         if (transient(err) && attempt < attempts - 1) {
           lastErr = err
@@ -191,6 +195,8 @@ export async function uploadFile(file) {
 
 // ─────────────── Endpoints ───────────────
 
+const demoPin = (pin) => (pin ? { 'X-Demo-Pin': pin } : {})
+
 export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: { email, password } }),
@@ -241,17 +247,27 @@ export const api = {
 
   // Demo Center. Reading needs an account of any role — the rows carry working
   // passwords — and writing needs admin or editor.
-  listDemos: (params = {}) => {
+  // The PIN travels in a header, not the query string: a query parameter ends
+  // up in access logs and browser history, and this one guards a page of
+  // credentials.
+  listDemos: (pin, params = {}) => {
     const qs = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== '') qs.set(k, v)
     }
     const q = qs.toString()
-    return request(`/demos${q ? `?${q}` : ''}`, { auth: true })
+    return request(`/demos${q ? `?${q}` : ''}`, { auth: true, headers: demoPin(pin) })
   },
-  createDemo: (demo) => request('/demos', { method: 'POST', body: demo, auth: true }),
-  updateDemo: (id, patch) => request(`/demos/${id}`, { method: 'PUT', body: patch, auth: true }),
-  deleteDemo: (id) => request(`/demos/${id}`, { method: 'DELETE', auth: true }),
+  createDemo: (pin, demo) =>
+    request('/demos', { method: 'POST', body: demo, auth: true, headers: demoPin(pin) }),
+  updateDemo: (pin, id, patch) =>
+    request(`/demos/${id}`, { method: 'PUT', body: patch, auth: true, headers: demoPin(pin) }),
+  deleteDemo: (pin, id) =>
+    request(`/demos/${id}`, { method: 'DELETE', auth: true, headers: demoPin(pin) }),
+
+  // Admin only, and write-only — the PIN is stored hashed, so it can be
+  // replaced and never read back.
+  setDemoPin: (pin) => request('/demos/pin', { method: 'PUT', body: { pin }, auth: true }),
 
   // The activity log. Admin only, and paged like the catalog — it is the one
   // table that only grows.

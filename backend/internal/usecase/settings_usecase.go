@@ -27,6 +27,8 @@ func (uc *SettingsUsecase) All(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Built from the known public keys, never from what happens to be stored.
+	// The demo PIN hash lives in the same table and must not leave it.
 	out := make(map[string]string, len(domain.SettingDefaults))
 	for k, v := range domain.SettingDefaults {
 		if s, ok := stored[k]; ok {

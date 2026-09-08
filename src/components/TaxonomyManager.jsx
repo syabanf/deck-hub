@@ -167,6 +167,7 @@ export default function TaxonomyManager({ canManage = false }) {
   return (
     <div>
       {canManage && <NavLimit onError={setError} />}
+      {canManage && <DemoPin onError={setError} />}
 
       <div className="flex items-center gap-1 mb-5 flex-wrap">
         {KINDS.map((k) => (
@@ -517,6 +518,68 @@ export default function TaxonomyManager({ canManage = false }) {
         circulation without touching the decks that already use it.
       </p>
     </div>
+  )
+}
+
+// The shared PIN in front of the Demo Center.
+//
+// Admin only, and write-only: the PIN is stored as a bcrypt hash, so it can be
+// replaced and never read back. That is the trade for a gate a database backup
+// does not hand over — and it means the only way to recover a forgotten one is
+// to set a new one here.
+function DemoPin({ onError }) {
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+
+  const save = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setDone(false)
+    onError?.(null)
+    try {
+      await api.setDemoPin(value.trim())
+      setValue('')
+      setDone(true)
+      setTimeout(() => setDone(false), 3000)
+    } catch (err) {
+      onError?.(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="mb-5 rounded-xl bg-deck-card border border-deck-border px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex-1 min-w-[16rem]">
+        <div className="text-[11px] uppercase tracking-widest text-deck-muted font-bold">
+          Demo Center PIN
+        </div>
+        <p className="text-xs text-deck-muted mt-1 leading-snug">
+          Asked for on top of signing in, because that page lists working credentials.
+          Stored hashed, so it can be replaced but never shown — and changing it locks
+          out every tab still holding the old one.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="New PIN"
+          className="w-32 h-9 px-3 rounded-lg bg-black/40 border border-white/10 focus:border-white/30 outline-none text-sm font-mono"
+        />
+        <button
+          type="submit"
+          disabled={busy || value.trim().length < 4}
+          className="px-3 h-9 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold disabled:opacity-40"
+        >
+          {done ? 'Changed' : busy ? 'Saving…' : 'Replace'}
+        </button>
+      </div>
+    </form>
   )
 }
 
