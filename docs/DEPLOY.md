@@ -163,175 +163,201 @@ Demo Center needs the PIN as well.
 ## Upgrading the installation that is already there
 
 `paparan.reddie.id` has been running since 18 August, and it did not get there
-the way the section above describes. As of 2026-09-08 it is:
+the way the section above describes. Verified on the host, 2026-09-08/09:
 
 | | |
 | --- | --- |
-| Compose project | `deck-hub`, in `~/deck-hub` on WITServerUtama |
+| Compose project | `deck-hub`, in **`/home/wit/.openclaw/workspace/deck-hub`** |
+| Services | `db`, `migrate`, `backend`, `frontend` — the same four as here |
 | Images | **built on the host**, not pulled from a registry |
-| Database | `deck_hub` — not `wit` — at migration **9**, `dirty=false` |
-| Data | 28 decks, 7 users, uploads volume **empty** |
+| Database | `deck_hub`, user **`deck`** — neither of them the default `wit` |
+| Schema | migration **9**, `dirty=false`. 28 decks, 7 users |
+| Postgres | **16.14 on Alpine** |
+| Volumes | `deck-hub_postgres_data`, `deck-hub_uploads_data` (uploads empty) |
 | Public route | cloudflared tunnel → `localhost:8098` |
 | Env | no `BOOTSTRAP_ADMIN_PASSWORD`, no `SMTP_HOST`, no `APP_BASE_URL` |
 | Backup | none |
 
-So this is a migration between two differently-shaped deployments, not an
-update. Four things about it are worth knowing before touching anything.
+Read that volume row twice, because it decides the whole procedure.
 
-**The dangerous move is bringing this compose file up in a new directory.**
-Compose names volumes after the project, which is the directory name. Start
-`docker-compose.ghcr.yml` in `/opt/deck-hub` and you get
-`deck-hub_postgres_data` — a *different, empty* volume from whatever
-`~/deck-hub` has been using. The site comes up looking perfect and completely
-empty, the 28 decks are still safe in the old volume, and it reads exactly
-like data loss. Nobody enjoys the twenty minutes that follow.
+**The existing volumes are already named what this compose file would name
+them.** Project `deck-hub` plus the volume keys declared here — `postgres_data`
+and `uploads_data` — resolve to `deck-hub_postgres_data` and
+`deck-hub_uploads_data`. The ones that are already there. So bringing this file
+up under the project name `deck-hub` does not create anything fresh: it mounts
+the live database.
 
-**The migration jump is 9 → 18.** Nine migrations run in one go, and between
-them they add: the taxonomy master data the navigation is now built from, deck
-cover images, application settings, deck ownership, the audit log, and the
-Demo Center with its PIN. They only add — nothing in 10–18 drops a column that
-existing data lives in.
+That cuts both ways, and both are worth stating plainly.
 
-**Postgres majors are not interchangeable.** A `PGDATA` directory written by
-Postgres 15 will not start under 16; the container exits with "database files
-are incompatible with server". Reusing the old volume means matching the old
-major exactly. Dumping and restoring does not — `pg_dump` output loads into a
-newer server fine, which is one of two reasons the procedure below dumps.
+It is *good*, because the existing Postgres is 16 and so is the image here, so
+the data directory can simply be kept. No dump-and-restore dance, no window
+where the data lives in a file instead of a database, and much less downtime.
+That is the procedure below.
 
-**The other reason is that there is no backup.** Taking one is the first step
-whatever else happens, and restoring it into the new stack means the backup is
-verified by having been used, rather than filed and hoped for.
+It is *dangerous* if you assume the opposite. A procedure that says "new
+directory, fresh volumes, restore the dump into them" would, on this host,
+restore a dump on top of a database that already has every one of those tables
+— and the errors that follow are the good outcome. Compose does not warn you
+that a volume already exists; it just attaches it.
+
+Two consequences fall out of reusing the volume:
+
+- **`DB_PASSWORD` must be the password the database already has.**
+  `POSTGRES_PASSWORD` only does anything when Postgres initialises an empty
+  data directory. On an existing one it is ignored, and a new value in `.env`
+  means the backend cannot authenticate — for a database that is working
+  perfectly. Read the existing value out of the old compose's env and carry it
+  across; do not generate a new one.
+- **`DB_USER=deck` and `DB_NAME=deck_hub`.** Both default to `wit` here. Get
+  either wrong and the API connects to a database that does not exist, or to
+  an empty one.
+
+`JWT_SECRET` is the opposite: it can and should be new. Changing it invalidates
+every token in circulation, which signs everyone out once and breaks nothing.
+
+**The migration jump is 9 → 18.** Nine migrations in one go: the taxonomy
+master data the navigation is now built from, deck cover images, application
+settings, deck ownership, the audit log, and the Demo Center with its PIN. They
+only add — nothing in 10–18 drops or renames a column that existing data lives
+in.
+
+**There is no backup.** That is the first step regardless, and it is what makes
+every later step reversible.
 
 ### The procedure
 
-Read [`BACKUP.md`](BACKUP.md) first. Set aside an hour; the site is down for
-part of it, so pick a quiet time and tell people.
+Read [`BACKUP.md`](BACKUP.md) first. Pick a quiet hour and tell people: the
+site is down from step 3 to step 6, which should be a few minutes.
 
 ```bash
-cd ~/deck-hub
+cd /home/wit/.openclaw/workspace/deck-hub
 
-# 1. Find out what is actually there. Write these down — the volume names and
-#    the Postgres major are the two facts the rest depends on.
+# 1. Confirm the ground truth before changing anything. In particular: which
+#    volume the db service actually mounts, and what DB_PASSWORD currently is.
 docker compose ps
-docker volume ls | grep -i deck
-docker compose exec -T db psql -U "$DB_USER" -d deck_hub -c 'select version()'
-docker compose exec -T db psql -U "$DB_USER" -d deck_hub -c 'select * from schema_migrations'
+docker compose config | grep -A5 'volumes:'
+docker compose config | grep -E 'POSTGRES_|DB_'
+docker compose exec -T db psql -U deck -d deck_hub -c 'select * from schema_migrations'
 ```
 
+The volume the `db` service mounts must be `deck-hub_postgres_data` at
+`/var/lib/postgresql/data`. If it is mounted anywhere else, or from a host
+path rather than a named volume, stop — the rest of this assumes it is not.
+
 ```bash
-# 2. Back up, twice over: a dump for restoring, and a copy of the whole volume
-#    in case the dump turns out to be wrong.
+# 2. Back up. Two layers: a dump to restore from, and a copy of the whole
+#    volume in case the dump turns out to be wrong.
 mkdir -p ~/deck-hub-backup && cd ~/deck-hub-backup
 
-docker compose -f ~/deck-hub/docker-compose.yml exec -T db \
-  pg_dump -U "$DB_USER" -d deck_hub -Fc > deck_hub-preupgrade.dump
+docker compose -f /home/wit/.openclaw/workspace/deck-hub/docker-compose.yml \
+  exec -T db pg_dump -U deck -d deck_hub -Fc > deck_hub-preupgrade.dump
 
-docker run --rm -v <old-postgres-volume>:/data:ro -v "$PWD":/backup \
+docker run --rm -v deck-hub_postgres_data:/data:ro -v "$PWD":/backup \
   alpine:3.21 tar czf /backup/pgdata-preupgrade.tar.gz -C /data .
 
-# Prove the dump is readable before relying on it.
+# A dump that cannot be read is not a backup. Prove it now.
 docker run --rm -v "$PWD":/b:ro postgres:16-alpine \
   pg_restore --list /b/deck_hub-preupgrade.dump | head
 ```
 
 ```bash
-# 3. Stop the old stack. Do NOT pass -v; the old volumes stay exactly where
-#    they are, which is the whole point of doing it this way.
-cd ~/deck-hub && docker compose down
+# 3. Stop the old stack. NEVER with -v — that deletes the volumes this whole
+#    procedure is built on keeping.
+cd /home/wit/.openclaw/workspace/deck-hub
+docker compose down
 ```
 
 ```bash
-# 4. New stack, new directory, new empty volumes — deliberately.
-mkdir -p /opt/deck-hub && cd /opt/deck-hub
+# 4. Put the new compose file in the SAME directory, so the project name stays
+#    `deck-hub` and the existing volumes are the ones that get mounted.
+#    Keep the old one — it is the rollback.
+cp docker-compose.yml docker-compose.yml.pre-0.1.0
 curl -fsSLO https://raw.githubusercontent.com/syabanf/deck-hub/main/docker-compose.ghcr.yml
-curl -fsSLo .env https://raw.githubusercontent.com/syabanf/deck-hub/main/.env.production.example
-chmod 600 .env && $EDITOR .env
+curl -fsSLo .env.new https://raw.githubusercontent.com/syabanf/deck-hub/main/.env.production.example
 ```
-
-For this host, `.env` needs these values in particular:
-
-```ini
-IMAGE_TAG=0.1.0                        # no "v"
-APP_PORT=8098                          # cloudflared points here
-DB_NAME=deck_hub                       # not the default "wit"
-CORS_ORIGINS=https://paparan.reddie.id
-APP_BASE_URL=https://paparan.reddie.id
-DB_PASSWORD=<generate a new one>       # fresh volume, so this is a fresh password
-JWT_SECRET=<openssl rand -base64 48>   # at least 32 characters
-BOOTSTRAP_ADMIN_PASSWORD=<generate>    # compose refuses to start without it
-SMTP_HOST=<your relay>                 # empty = nobody can finish signing up
-```
-
-`DB_PASSWORD` is free to be new because the volume is new: `POSTGRES_PASSWORD`
-only takes effect when Postgres initialises an empty data directory. Restoring
-a dump does not carry a password with it.
 
 ```bash
-# 5. Bring up ONLY the database, so nothing writes while the restore runs.
-docker compose -f docker-compose.ghcr.yml up -d db
-docker compose -f docker-compose.ghcr.yml exec -T db \
-  sh -c 'until pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do sleep 1; done'
+# 5. Fill in .env.new, then put it in place. Values specific to this host:
+#
+#   IMAGE_TAG=0.1.0                        no "v"
+#   APP_PORT=8098                          cloudflared points here, not 8080
+#   DB_USER=deck                           not the default "wit"
+#   DB_NAME=deck_hub                       not the default "wit"
+#   DB_PASSWORD=<the EXISTING password>    from step 1 — must not change
+#   JWT_SECRET=<openssl rand -base64 48>   new is fine; signs everyone out once
+#   BOOTSTRAP_ADMIN_PASSWORD=<generate>    compose refuses to start without it
+#   SMTP_HOST=<your relay>                 empty = nobody can finish signing up
+#   CORS_ORIGINS=https://paparan.reddie.id
+#   APP_BASE_URL=https://paparan.reddie.id
+#
+$EDITOR .env.new && cp .env .env.pre-0.1.0 2>/dev/null; mv .env.new .env
+chmod 600 .env
+```
 
-# 6. Restore. --no-owner because the roles in the dump need not exist here.
-docker compose -f docker-compose.ghcr.yml exec -T db \
-  pg_restore -U wit -d deck_hub --no-owner < ~/deck-hub-backup/deck_hub-preupgrade.dump
+```bash
+# 6. Pull and start. `migrate` runs 9 → 18 and the backend waits for it.
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
 
-# 7. Check the data arrived, and that it still says migration 9.
-docker compose -f docker-compose.ghcr.yml exec -T db psql -U wit -d deck_hub -c \
+docker compose -f docker-compose.ghcr.yml ps
+docker compose -f docker-compose.ghcr.yml logs migrate
+```
+
+`migrate` must show `Exited (0)`. If it restarted or exited non-zero, stop and
+read its log — the backend will not have started, so nothing is serving a
+half-migrated schema, and step 8 puts the old stack back.
+
+```bash
+# 7. The data is still the data.
+docker compose -f docker-compose.ghcr.yml exec -T db psql -U deck -d deck_hub -c \
   'select (select count(*) from decks) decks, (select count(*) from users) users'
-docker compose -f docker-compose.ghcr.yml exec -T db psql -U wit -d deck_hub -c \
+docker compose -f docker-compose.ghcr.yml exec -T db psql -U deck -d deck_hub -c \
   'select * from schema_migrations'
 ```
 
-`pg_restore` will print notices about the `public` schema and about extensions
-already existing. Those are expected. What matters is that step 7 shows 28
-decks and 7 users.
-
-```bash
-# 8. Now the rest. `migrate` runs 10 → 18 before the backend starts.
-docker compose -f docker-compose.ghcr.yml up -d
-docker compose -f docker-compose.ghcr.yml logs migrate
-docker compose -f docker-compose.ghcr.yml ps
-```
-
-The `migrate` container must show `Exited (0)`. If it restarts or exits
-non-zero, stop and read its log before anything else — the backend will not
-have started, so nothing is serving a half-migrated schema.
+28 decks, 7 users, version 18, `dirty=false`.
 
 ### After it is up
 
 Everything in [After the first deploy](#after-the-first-deploy-do-not-skip)
 applies — rotate the admin password, change the Demo Center PIN from `1234`,
-load the demo seed. Plus three checks specific to this jump:
+load the demo seed. Plus one check specific to this jump:
 
 ```bash
 # The navigation is built from taxonomy master data now. This reports any
 # category or industry a deck still refers to that the master list does not
-# have — those decks would be unreachable from the header.
+# have — those decks would exist but be unreachable from the header.
 curl -fsS https://paparan.reddie.id/api/taxonomy/categories/unknown
 curl -fsS https://paparan.reddie.id/api/taxonomy/industries/unknown
 ```
 
 Both should return an empty list. The seed in migration `000010` is the same
-list the frontend used to carry, so the 28 existing decks should already
-match — but "should" is why the endpoint exists.
+list the frontend used to carry, so the 28 existing decks should already match
+— but "should" is why the endpoint exists. Anything reported there is fixed by
+adding the term in Settings → Master Data, not by editing decks.
 
 Then, signed in as an admin: open a deck, add one and delete it again, and
 check Settings → Activity recorded all three against your account. The audit
-log starts empty; it records from migration `000015` onwards, not backwards.
+log starts empty — it records from migration `000015` forward, not backward.
 
-### If it goes wrong
+### 8. If it goes wrong
 
-The old volumes are untouched. Rolling back is putting the old stack back:
+The volume was never replaced, and the old compose file is still there:
 
 ```bash
-cd /opt/deck-hub && docker compose -f docker-compose.ghcr.yml down
-cd ~/deck-hub && docker compose up -d
+cd /home/wit/.openclaw/workspace/deck-hub
+docker compose -f docker-compose.ghcr.yml down          # again: no -v
+cp .env.pre-0.1.0 .env 2>/dev/null
+docker compose -f docker-compose.yml.pre-0.1.0 up -d
 ```
 
-Which is the entire reason step 3 does not pass `-v`. Leave the old volumes in
-place for at least a week after a successful upgrade, then remove them
-deliberately rather than as part of the same session.
+The migrations from 10 to 18 will have been applied and this does not undo
+them. That is survivable, because all nine only add — the old backend selects
+the columns it knows and ignores the rest. If the schema itself is the problem,
+that is what step 2's dump is for: recreate the database and restore it, per
+[`BACKUP.md`](BACKUP.md).
+
+Keep both backups for at least a week after a successful upgrade.
 
 ## Updating to a new version
 
