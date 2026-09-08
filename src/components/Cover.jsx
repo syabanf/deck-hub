@@ -17,6 +17,13 @@ const imageSrc = (deck, w = 800, h = 500) => {
 }
 
 // Netflix-style poster: photographic thumbnail with gradient overlay + title + badge.
+//
+// No backdrop-blur on any of this chrome, deliberately. Each blurred element
+// makes the browser sample and blur what is behind it on every frame it moves,
+// and there is one of these per badge per card: the home page carried 205 of
+// them against Settings' 2, which is the whole of the difference in how the
+// two pages scroll. The badges sit on bg-black/50 over dark artwork, so the
+// blur was buying almost nothing to look at.
 // Falls back to the gradient pattern if the image fails to load.
 // `minimal`: hides the bottom title block so the caller can render its own (used in grid views).
 export default function Cover({
@@ -125,7 +132,7 @@ export default function Cover({
       >
         <div className="flex items-center gap-1.5">
           {deck.featured && (
-            <span className="text-[10px] uppercase tracking-widest font-black text-deck-accent bg-black/50 backdrop-blur px-1.5 py-0.5 rounded">
+            <span className="text-[10px] uppercase tracking-widest font-black text-deck-accent bg-black/50 px-1.5 py-0.5 rounded">
               Featured
             </span>
           )}
@@ -136,19 +143,19 @@ export default function Cover({
                   e.stopPropagation()
                   onCategoryClick(deck.category)
                 }}
-                className="text-[10px] uppercase tracking-widest font-semibold text-white/90 bg-black/50 hover:bg-black/80 backdrop-blur px-1.5 py-0.5 rounded transition-colors"
+                className="text-[10px] uppercase tracking-widest font-semibold text-white/90 bg-black/50 hover:bg-black/80 px-1.5 py-0.5 rounded transition-colors"
                 title={`More in ${categoryLabel}`}
               >
                 {categoryLabel}
               </button>
             ) : (
-              <span className="text-[10px] uppercase tracking-widest font-semibold text-white/90 bg-black/50 backdrop-blur px-1.5 py-0.5 rounded">
+              <span className="text-[10px] uppercase tracking-widest font-semibold text-white/90 bg-black/50 px-1.5 py-0.5 rounded">
                 {categoryLabel}
               </span>
             )
           )}
         </div>
-        <span className="text-[10px] font-semibold text-white/90 bg-black/50 backdrop-blur rounded px-1.5 py-0.5">
+        <span className="text-[10px] font-semibold text-white/90 bg-black/50 rounded px-1.5 py-0.5">
           {deck.year}
         </span>
       </div>

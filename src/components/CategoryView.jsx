@@ -71,7 +71,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
               e.stopPropagation()
               toggle(deck)
             }}
-            className={`flex items-center justify-center w-8 h-8 rounded-full backdrop-blur border hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out ${
+            className={`flex items-center justify-center w-8 h-8 rounded-full border hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out ${
               isFav ? 'bg-white/20 border-white text-white' : 'bg-black/40 border-white/40 hover:border-white'
             }`}
             title={isFav ? 'In My Library' : 'Add to My Library'}
@@ -84,7 +84,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
               e.stopPropagation()
               onDetails(deck)
             }}
-            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
+            className="flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:border-white border border-white/40 hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
             title="More info"
           >
             <ChevronDown size={15} />
@@ -95,7 +95,7 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
                 e.stopPropagation()
                 onRemove(deck)
               }}
-              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 backdrop-blur hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
+              className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-black/40 hover:bg-red-600/80 border border-white/40 hover:scale-110 transition-[transform,background-color,border-color] duration-200 ease-out"
               title="Remove"
             >
               <TrashIcon size={14} />

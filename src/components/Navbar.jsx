@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import {
   SearchIcon,
   PlusIcon,
@@ -23,13 +23,113 @@ const TRAILING_ITEMS = [
 // with their own short labels — "Companies" for Company Profiles, "Pitch Decks"
 // for Iconic Pitch Decks — which meant a category added in Master Data got no
 // link, and one renamed there kept its old name up here.
+// How many nav items fit, and where the rest go.
+//
+// The list is as long as Master Data makes it, and the titles are whatever
+// someone typed there — so it will overflow, and it did: seven categories with
+// full names ran off the right of the screen and took Settings with them.
+//
+// Measured rather than capped at a guessed number, because the answer depends
+// on both the window width and how long the titles happen to be. Items are
+// laid out once at full width, their widths recorded, and everything past what
+// fits moves into a "More" menu.
+const useOverflow = (items, containerRef) => {
+  const [visibleCount, setVisibleCount] = useState(items.length)
+  const signature = items.map((i) => i.label).join('\u0000')
+
+  // Natural widths, kept from the render where every category was shown. An
+  // item hidden with `hidden` has no box to measure, so without this the count
+  // could only ever shrink and never recover when the window widened again.
+  const widthsRef = useRef([])
+
+  // Labels changed: the cached widths describe a different list.
+  useLayoutEffect(() => {
+    widthsRef.current = []
+    setVisibleCount(items.length)
+  }, [signature, items.length])
+
+  // useLayoutEffect, and no requestAnimationFrame: neither rAF nor a
+  // ResizeObserver delivers anything while the document is not being rendered,
+  // so opening the app in a background tab left the bar unmeasured. A layout
+  // effect runs after the DOM update either way, and getBoundingClientRect
+  // forces the layout it needs.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const compute = () => {
+      const children = [...el.children]
+      const overflowable = children.filter((c) => c.dataset.navItem === 'true')
+      if (!overflowable.length) return
+      if (visibleCount === items.length) {
+        widthsRef.current = overflowable.map((c) => c.getBoundingClientRect().width)
+      }
+      const widths = widthsRef.current
+      if (!widths.length) return
+
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0
+      // Home, Industries, My Library and Settings are sections of the app, not
+      // categories. They stay put and their width comes off the budget first —
+      // pushing Settings into a menu to make room for a category is the wrong
+      // trade, and it is what the first version of this did.
+      const fixed = children.filter((c) => c.dataset.navFixed === 'true')
+      const fixedWidth = fixed.reduce((sum, c) => sum + c.getBoundingClientRect().width + gap, 0)
+
+      const budget = el.getBoundingClientRect().width - fixedWidth - MORE_WIDTH
+      let used = 0
+      let n = 0
+      for (const w of widths) {
+        used += w + (n ? gap : 0)
+        if (used > budget) break
+        n += 1
+      }
+      setVisibleCount(n === widths.length ? widths.length : Math.max(0, n))
+    }
+
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [signature, visibleCount, items.length, containerRef])
+
+  return visibleCount
+}
+
+// One nav entry. `fixed` marks the app's own sections, which never move into
+// the overflow menu and whose width is subtracted from the budget first.
+function NavLink({ item, active, onSelect, fixed = false, hidden = false }) {
+  return (
+    <li
+      data-nav-item={fixed ? undefined : 'true'}
+      data-nav-fixed={fixed ? 'true' : undefined}
+      className={hidden ? 'hidden' : 'shrink-0'}
+    >
+      <button
+        onClick={() => onSelect(item.id)}
+        className={`relative transition-colors block max-w-[13rem] truncate ${
+          active ? 'text-white font-semibold' : 'text-white/70 hover:text-white'
+        }`}
+        title={item.label}
+      >
+        {item.label}
+        {active && (
+          <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-deck-accent" />
+        )}
+      </button>
+    </li>
+  )
+}
+
+// Enough for "More ▾" plus the gap either side.
+const MORE_WIDTH = 86
+
 const useNavItems = () => {
   const { categories } = useTaxonomy()
   const chips = useMemo(
     () => categories.map((c) => ({ id: c.id, label: c.title })),
     [categories],
   )
-  return { items: [...LEADING_ITEMS, ...chips, ...TRAILING_ITEMS], chips }
+  return { leading: LEADING_ITEMS, categories: chips, trailing: TRAILING_ITEMS, chips }
 }
 
 export default function Navbar({
@@ -43,8 +143,23 @@ export default function Navbar({
   activeCategory,
   onCategoryChange,
 }) {
-  const { items: navItems, chips: chipItems } = useNavItems()
+  const { leading, categories: navCategories, trailing, chips: chipItems } = useNavItems()
+  const navListRef = useRef(null)
+  const moreRef = useRef(null)
+  const visibleCount = useOverflow(navCategories, navListRef)
+  const overflowItems = navCategories.slice(visibleCount)
+  const [moreOpen, setMoreOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+
+  // Close the overflow menu on an outside click, the same as the account menu.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDown = (e) => {
+      if (!moreRef.current?.contains(e.target)) setMoreOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [moreOpen])
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40)
@@ -87,27 +202,79 @@ export default function Navbar({
         </button>
 
         {/* Center: nav items (only desktop) */}
-        <ul className="hidden lg:flex items-center justify-center gap-5 xl:gap-6 text-sm whitespace-nowrap">
-          {navItems.map((item) => {
-            const active = activeCategory === item.id
-            return (
-              <li key={item.id}>
-                <button
-                  onClick={() => onCategoryChange(item.id)}
-                  className={`relative transition-colors ${
-                    active
-                      ? 'text-white font-semibold'
-                      : 'text-white/70 hover:text-white'
-                  }`}
-                >
-                  {item.label}
-                  {active && (
-                    <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-deck-accent" />
-                  )}
-                </button>
-              </li>
-            )
-          })}
+        <ul
+          ref={navListRef}
+          className="hidden lg:flex items-center justify-center gap-5 xl:gap-6 text-sm whitespace-nowrap min-w-0"
+        >
+          {leading.map((item) => (
+            <NavLink
+              key={item.id}
+              item={item}
+              fixed
+              active={activeCategory === item.id}
+              onSelect={onCategoryChange}
+            />
+          ))}
+
+          {navCategories.map((item, i) => (
+            <NavLink
+              key={item.id}
+              item={item}
+              active={activeCategory === item.id}
+              onSelect={onCategoryChange}
+              // Hidden rather than unmounted: the widths have to stay
+              // measurable, or the list could never grow back.
+              hidden={i >= visibleCount}
+            />
+          ))}
+
+          {overflowItems.length > 0 && (
+            <li className="relative shrink-0" ref={moreRef}>
+              <button
+                onClick={() => setMoreOpen((v) => !v)}
+                className={`transition-colors ${
+                  overflowItems.some((i) => i.id === activeCategory)
+                    ? 'text-white font-semibold'
+                    : 'text-white/70 hover:text-white'
+                }`}
+                aria-expanded={moreOpen}
+              >
+                More ▾
+              </button>
+              {moreOpen && (
+                <ul className="absolute right-0 top-full mt-3 min-w-[13rem] max-h-[70vh] overflow-y-auto rounded-xl bg-deck-card border border-deck-border shadow-2xl py-1.5 z-50">
+                  {overflowItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        onClick={() => {
+                          setMoreOpen(false)
+                          onCategoryChange(item.id)
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm truncate transition-colors ${
+                          activeCategory === item.id
+                            ? 'text-white font-semibold bg-white/5'
+                            : 'text-white/70 hover:text-white hover:bg-white/5'
+                        }`}
+                        title={item.label}
+                      >
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          )}
+
+          {trailing.map((item) => (
+            <NavLink
+              key={item.id}
+              item={item}
+              fixed
+              active={activeCategory === item.id}
+              onSelect={onCategoryChange}
+            />
+          ))}
         </ul>
 
         {/* Spacer — below lg, categories live in the chip strip underneath. */}
