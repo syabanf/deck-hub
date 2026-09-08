@@ -182,10 +182,33 @@ body {
 .view-content {
   view-transition-name: wit-content;
 }
+
+/* The two pages are different heights — measured on this catalog: Strategy
+   1017px, Keynotes 1237px, Companies 1548px. By default the browser animates
+   the snapshot box between those sizes, so the outgoing page is squashed or
+   clipped on its way out while it fades. That size change is what reads as a
+   glitch rather than a cross-fade.
+   
+   Killing the group's animation makes the box take its new size at once and
+   leaves the two snapshots to do nothing but fade. */
+::view-transition-group(wit-content) {
+  animation: none;
+}
+/* Default is `isolate`, which puts the pair in its own stacking context and
+   makes the overlap darken mid-fade. */
+::view-transition-image-pair(wit-content) {
+  isolation: auto;
+}
 ::view-transition-old(wit-content),
 ::view-transition-new(wit-content) {
   animation-duration: 260ms;
   animation-timing-function: var(--ease-out-quint);
+  /* Natural height, anchored top-left, so neither snapshot is scaled to fit
+     the other page's box. */
+  block-size: auto;
+  inline-size: 100%;
+  object-fit: none;
+  object-position: top left;
   /* Snapshots overlap; blending them avoids a bright flash mid-swap. */
   mix-blend-mode: normal;
 }
