@@ -90,7 +90,9 @@ mkdir -p /opt/deck-hub && cd /opt/deck-hub
 curl -fsSLO https://raw.githubusercontent.com/syabanf/deck-hub/main/docker-compose.ghcr.yml
 curl -fsSLo .env https://raw.githubusercontent.com/syabanf/deck-hub/main/.env.production.example
 
-# 2. Fill it in. Every REQUIRED line, and IMAGE_TAG pinned to a real tag.
+# 2. Fill it in. Every REQUIRED line, and IMAGE_TAG pinned to a real version.
+#    IMAGE_TAG=0.1.0 — no "v". The git tag is v0.1.0; the image tag built
+#    from it is 0.1.0. A leading "v" here fails with "manifest unknown".
 chmod 600 .env && $EDITOR .env
 
 # 3. Pull and start. `migrate` runs first and the backend waits for it.
@@ -161,7 +163,7 @@ Demo Center needs the PIN as well.
 cd /opt/deck-hub
 
 # 1. Point at the new tag. Pin a version; never leave IMAGE_TAG=latest.
-$EDITOR .env          # IMAGE_TAG=v0.2.0
+$EDITOR .env          # IMAGE_TAG=0.2.0   — no "v"; see the note below
 
 # 2. Pull, then bring it up. Migrations run before the new backend starts.
 docker compose -f docker-compose.ghcr.yml pull
@@ -187,7 +189,7 @@ The images are immutable and every one CI built is still in the registry, so a
 rollback is choosing an older tag:
 
 ```bash
-$EDITOR .env    # IMAGE_TAG=v0.1.0, the tag that was working
+$EDITOR .env    # IMAGE_TAG=0.1.0, the version that was working
 docker compose -f docker-compose.ghcr.yml pull
 docker compose -f docker-compose.ghcr.yml up -d
 ```
@@ -298,5 +300,8 @@ logs every request with its duration, so a slow endpoint names itself.
   `docker compose exec`.
 - **Do not leave `IMAGE_TAG=latest`.** You lose the ability to say what is
   running and the ability to roll back to it.
+- **Do not put a `v` in `IMAGE_TAG`.** `0.1.0`, not `v0.1.0`. The git tag has
+  the `v` and the image tag does not; the error for getting it wrong is
+  `manifest unknown`, which looks like a build that never happened.
 - **Do not build images on the host.** The registry is the record of what was
   deployed; a locally built image is not in it.

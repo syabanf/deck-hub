@@ -469,8 +469,8 @@ branch ──▶ make test && make test-e2e && make docs   # gate
            npm test && npm run build
        ──▶ staging, opened and clicked through       # proof
        ──▶ PR ──▶ main                               # CI: tests, then :latest + :sha-<sha> to GHCR
-       ──▶ tag vX.Y.Z                                # CI: :vX.Y.Z, :X.Y
-       ──▶ production: IMAGE_TAG=vX.Y.Z docker compose … up -d
+       ──▶ tag vX.Y.Z                                # CI: :X.Y.Z, :X.Y (no "v")
+       ──▶ production: IMAGE_TAG=X.Y.Z docker compose … up -d
 ```
 
 CI runs that first line itself, and the image build `needs: test` — so nothing
@@ -480,9 +480,13 @@ not passed. The full list is in
 in [`docs/DEPLOY.md`](docs/DEPLOY.md), and the backup to take before it in
 [`docs/BACKUP.md`](docs/BACKUP.md).
 
-Production pins `IMAGE_TAG` to a version tag rather than `latest`. A rollback is
+Production pins `IMAGE_TAG` to a version rather than `latest`. A rollback is
 then editing one variable and running `up -d` again, instead of finding out
 which digest `latest` pointed at last Tuesday.
+
+The git tag carries a `v` and the image tag does not — `docker/metadata-action`
+strips it, which is the convention for image tags. So `git tag v0.1.0` produces
+`ghcr.io/…:0.1.0`, and that is what goes in `IMAGE_TAG`.
 
 `migrate` runs as its own service and the backend waits for it
 (`service_completed_successfully`), so a deploy carrying a new migration applies

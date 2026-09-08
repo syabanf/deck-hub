@@ -106,8 +106,15 @@ git tag -a v0.2.0 -m 'What changed, in a sentence'
 git push origin v0.2.0
 ```
 
-CI publishes `:v0.2.0`, `:0.2` and `:sha-<sha>`. Give Primmie the tag, not
-`latest`.
+CI publishes the images as `:0.2.0`, `:0.2` and `:sha-<sha>`.
+
+**The git tag keeps its `v`; the image tag loses it.** `docker/metadata-action`
+strips the prefix, because that is the convention for image tags — so the tag
+you push is `v0.2.0` and the value Primmie puts in `IMAGE_TAG` is `0.2.0`.
+Getting this wrong fails with `manifest unknown`, which reads like the image
+was never built.
+
+Give Primmie the image tag, not `latest`.
 
 For the deploy itself, and for what has to be done once on a fresh install
 (rotate the admin password, change the Demo Center PIN, load the demo seed),
