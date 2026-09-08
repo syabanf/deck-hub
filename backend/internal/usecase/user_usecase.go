@@ -277,3 +277,42 @@ func (uc *UserUsecase) UsesSeededPassword(ctx context.Context, email, seeded str
 	}
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(seeded)) == nil
 }
+
+// ChangePassword replaces a user's own password, after proving they know the
+// current one.
+//
+// Separate from Update, which is the admin path: an admin resetting somebody
+// else's password has no current password to offer, and a person changing
+// their own must not be able to skip that step. Folding the two together would
+// mean a stolen token could set a new password without the old one — which is
+// the difference between losing a session and losing an account.
+func (uc *UserUsecase) ChangePassword(ctx context.Context, id uuid.UUID, current, next string) error {
+	if len(next) < minPasswordLen {
+		return fmt.Errorf("%w: password must be at least %d characters", domain.ErrInvalidInput, minPasswordLen)
+	}
+	if current == next {
+		return fmt.Errorf("%w: the new password must differ from the current one", domain.ErrInvalidInput)
+	}
+
+	user, err := uc.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get user: %w", err)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(current)) != nil {
+		// Same error a wrong sign-in gets. Distinguishing "wrong current
+		// password" from anything else here tells a stolen token nothing it
+		// does not already know, but keeping the two identical costs nothing.
+		return fmt.Errorf("%w: current password is incorrect", domain.ErrUnauthorized)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	user.PasswordHash = string(hash)
+	user.UpdatedAt = time.Now().UTC()
+	if err := uc.repo.Update(ctx, user); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	return nil
+}

@@ -791,6 +791,7 @@ export default function App() {
   } else if (isSettings) {
     body = (
       <SettingsPage
+        user={user}
         users={users}
         currentEmail={user?.email}
         canManageUsers={isAdmin}

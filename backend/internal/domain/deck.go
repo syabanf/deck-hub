@@ -33,10 +33,15 @@ type Deck struct {
 	// frontend generates artwork from the deck id, which is the default and
 	// looks deliberate rather than missing.
 	CoverImage string `json:"coverImage"`
-	Featured    bool       `json:"featured"`
-	ViewCount   int        `json:"viewCount"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+
+	// CreatedBy is the account that added the deck, separate from Author,
+	// which is free text naming whoever made the presentation. Nil for every
+	// deck added before this was recorded — "unknown" rather than a guess.
+	CreatedBy *uuid.UUID `json:"createdBy,omitempty"`
+	Featured  bool       `json:"featured"`
+	ViewCount int        `json:"viewCount"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
 // SourceTypes are the kinds of content the player can actually render.
@@ -124,4 +129,9 @@ type DeckRepository interface {
 	Update(ctx context.Context, d *Deck) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	IncrementViews(ctx context.Context, id uuid.UUID) (*Deck, error)
+
+	// CountByCreator is what a profile page reports. A separate query rather
+	// than a filter on List: the answer is one number, and listing every deck
+	// to count them is the shape of a problem that only shows up later.
+	CountByCreator(ctx context.Context, userID uuid.UUID) (int, error)
 }

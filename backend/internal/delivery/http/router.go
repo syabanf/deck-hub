@@ -19,6 +19,7 @@ type RouterDeps struct {
 	Decks     *DeckHandler
 	Taxonomy  *TaxonomyHandler
 	Settings  *SettingsHandler
+	Me        *MeHandler
 	Uploads   *UploadHandler
 	Favorites *FavoriteHandler
 	Progress  *ProgressHandler
@@ -135,6 +136,17 @@ func NewRouter(d RouterDeps) http.Handler {
 			r.Post("/resend-verification", d.Register.Resend)
 		}
 	})
+
+	// The signed-in account's own record. Any role, because a viewer has every
+	// right to read and change their own and no business reading anyone
+	// else's — /users below is the admin path and returns everybody.
+	if d.Me != nil {
+		r.Route("/me", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Get("/", d.Me.Get)
+			r.Put("/password", d.Me.ChangePassword)
+		})
+	}
 
 	// Users: admin only, reads included.
 	//

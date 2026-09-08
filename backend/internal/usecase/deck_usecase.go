@@ -81,6 +81,10 @@ type CreateDeckInput struct {
 	Description string
 	CoverImage  string
 	Featured    bool
+
+	// CreatedBy is set from the token by the handler, never from the request
+	// body. A client naming its own author would make the record worthless.
+	CreatedBy *uuid.UUID
 }
 
 func validateDeckCore(title, category string, source domain.DeckSource) error {
@@ -121,6 +125,7 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 		Source:      in.Source,
 		Description: in.Description,
 		CoverImage:  strings.TrimSpace(in.CoverImage),
+		CreatedBy:   in.CreatedBy,
 		Featured:    in.Featured,
 		ViewCount:   0,
 		CreatedAt:   now,
@@ -318,4 +323,14 @@ func (uc *DeckUsecase) IncrementViews(ctx context.Context, id uuid.UUID) (*domai
 		return nil, fmt.Errorf("increment views: %w", err)
 	}
 	return d, nil
+}
+
+// CountByCreator returns how many decks an account has added. What a profile
+// page reports about itself.
+func (uc *DeckUsecase) CountByCreator(ctx context.Context, userID uuid.UUID) (int, error) {
+	n, err := uc.repo.CountByCreator(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("count decks: %w", err)
+	}
+	return n, nil
 }

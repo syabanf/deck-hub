@@ -123,6 +123,7 @@ func run() error {
 		Decks:       httpdelivery.NewDeckHandler(deckUC),
 		Taxonomy:    httpdelivery.NewTaxonomyHandler(taxonomyUC),
 		Settings:    httpdelivery.NewSettingsHandler(settingsUC),
+		Me:          httpdelivery.NewMeHandler(userUC, deckUC),
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
 		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:    httpdelivery.NewProgressHandler(progressUC),

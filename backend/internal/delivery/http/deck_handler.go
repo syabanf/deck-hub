@@ -54,6 +54,7 @@ func (h *DeckHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Source:      domain.DeckSource{Type: req.Source.Type, Value: req.Source.Value},
 		Description: req.Description,
 		CoverImage:  req.CoverImage,
+		CreatedBy:   creatorFromContext(r.Context()),
 		Featured:    req.Featured,
 	})
 	if err != nil {
@@ -245,4 +246,19 @@ func (h *DeckHandler) IncrementViews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toDeckResponse(deck))
+}
+
+// creatorFromContext is the account a deck is recorded against. Taken from the
+// token rather than the body: a client that could name its own creator makes
+// the column worth nothing.
+func creatorFromContext(ctx context.Context) *uuid.UUID {
+	raw, ok := UserIDFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	return &id
 }

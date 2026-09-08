@@ -221,3 +221,17 @@ type updateTermRequest struct {
 	Accent    *string `json:"accent"`
 	Secondary *string `json:"secondary"`
 }
+
+// ----- me -----
+
+// meResponse is the signed-in account plus what a profile page reports about
+// it. Embedded rather than duplicated, so the two never drift.
+type meResponse struct {
+	userResponse
+	DeckCount int `json:"deckCount"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}

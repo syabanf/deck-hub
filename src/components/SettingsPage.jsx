@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ROLES, USER_STATUSES } from '../lib/storage.js'
 import { PlusIcon, TrashIcon, UserIcon, CloseIcon } from '../lib/icons.jsx'
 import ManagePage from './ManagePage.jsx'
+import ProfilePage from './ProfilePage.jsx'
 import TaxonomyManager from './TaxonomyManager.jsx'
 
 const ROLE_META = {
@@ -19,6 +20,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export default function SettingsPage({
   manageProps,
+  user,
   users,
   currentEmail,
   canManageUsers = false,
@@ -26,7 +28,9 @@ export default function SettingsPage({
   onUpdateUser,
   onRemoveUser,
 }) {
-  const [tab, setTab] = useState('users')
+  // Profile first: it is the one tab every role can use, and the only one a
+  // viewer has any business on.
+  const [tab, setTab] = useState(canManageUsers ? 'users' : 'profile')
 
   return (
     <div className="px-6 md:px-12 pt-32 lg:pt-28 pb-16 min-h-screen">
@@ -43,6 +47,9 @@ export default function SettingsPage({
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-deck-border">
+        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>
+          Profile
+        </TabButton>
         <TabButton active={tab === 'users'} onClick={() => setTab('users')}>
           Users
           <span className="ml-2 text-[11px] font-bold text-deck-muted">{users.length}</span>
@@ -56,6 +63,7 @@ export default function SettingsPage({
       </div>
 
       <div className="mt-6">
+        {tab === 'profile' && <ProfilePage user={user} />}
         {tab === 'users' && (
           <UsersManager
             users={users}

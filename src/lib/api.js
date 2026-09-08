@@ -239,6 +239,11 @@ export const api = {
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
 
+  // The signed-in account's own record. Any role; /users is the admin path.
+  getMe: () => request('/me', { auth: true }),
+  changePassword: (currentPassword, newPassword) =>
+    request('/me/password', { method: 'PUT', body: { currentPassword, newPassword }, auth: true }),
+
   // Settings — read by anyone (the navigation needs them before sign-in),
   // written by admins.
   getSettings: () => request('/settings'),
