@@ -419,10 +419,28 @@ export default function App() {
       })
   }, [pageQuery, pageKey, page.loading, page.ids.length, page.total])
 
-  const pageDecks = useMemo(
-    () => page.ids.map((id) => byId.get(id)).filter(Boolean),
-    [page.ids, byId],
-  )
+  // While a listing is loading, show what is already in memory for that
+  // category rather than nothing.
+  //
+  // The fetch clears page.ids before it starts, and for one frame the grid
+  // renders its empty state — "no decks here yet" — under the new heading.
+  // Measured on a warm localhost it lasts about 15ms, which would be invisible
+  // except that the view transition snapshots the new page in exactly that
+  // frame. The cross-fade then plays from the old grid to an empty page, and
+  // the real cards appear after it finishes.
+  //
+  // The decks are already loaded: the home rows fetch 20 per category at
+  // startup, which is why navigating to Home never showed this. Only plain
+  // category listings can be answered from memory — a search or an industry
+  // filter has no cached equivalent, and there the empty frame is honest.
+  const pageDecks = useMemo(() => {
+    const fetched = page.ids.map((id) => byId.get(id)).filter(Boolean)
+    if (fetched.length) return fetched
+    // Nothing fetched for this listing yet. `page.key` is no use as the test —
+    // the effect sets it to the new key at the same moment it clears the ids,
+    // so it already matches while the grid is empty.
+    return pageQuery?.category ? byCategory[pageQuery.category] || [] : fetched
+  }, [page.ids, pageQuery, byId, byCategory])
 
   // ---- admin catalog table (Settings → Master Data) ----
   const isSettingsTab = activeCategory === 'settings'
