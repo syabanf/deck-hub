@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import Cover from './Cover.jsx'
 import ShareMenu from './ShareMenu.jsx'
+import { safeHref } from '../lib/link.js'
 import { useClosable } from '../lib/useClosable.js'
 import {
   PlayIcon,
@@ -190,7 +191,7 @@ export default function DetailsModal({
               {deck.source?.type === 'video' && (deck.source.platform || 'Video')}
               {deck.source?.type === 'url' && (
                 <a
-                  href={deck.source.value}
+                  href={safeHref(deck.source.value)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-emerald-300 hover:underline break-all"

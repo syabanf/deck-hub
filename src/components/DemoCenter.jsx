@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { clearDemoPin, loadDemoPin, saveDemoPin } from '../lib/demoPin.js'
+import { safeHref } from '../lib/link.js'
 import { copyToClipboard } from '../lib/share.js'
 import { PlusIcon, TrashIcon, SearchIcon } from '../lib/icons.jsx'
 
@@ -410,7 +411,7 @@ function DemoCard({ demo, canEdit, onEdit, onToggle, onAskDelete, onDelete, onCa
       </div>
 
       <div className="space-y-2">
-        <CopyRow label="Link" value={demo.url} href={demo.url} onNotify={onNotify} />
+        <CopyRow label="Link" value={demo.url} href={safeHref(demo.url)} onNotify={onNotify} />
         <CopyRow label="ID" value={demo.username} onNotify={onNotify} />
         <CopyRow label="Password" value={demo.password} mono secret onNotify={onNotify} />
       </div>

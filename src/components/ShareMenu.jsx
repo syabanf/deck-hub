@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
 
+import { safeHref } from '../lib/link.js'
 import { absoluteUrl } from '../lib/api.js'
 import {
   copyToClipboard,
@@ -114,7 +115,7 @@ export default function ShareMenu({ deck, onNotify }) {
   if (!deck) return null
   const url = deckUrl(deck)
   const file = downloadable(deck)
-  const source = deck.source?.raw ?? deck.source?.value ?? ''
+  const source = safeHref(deck.source?.raw ?? deck.source?.value ?? '')
 
   const copy = async () => {
     try {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toEmbedUrl } from '../lib/embed.js'
+import { safeHref } from '../lib/link.js'
 import {
   loadPdfDocument,
   loadPdfDocumentFromUrl,
@@ -91,7 +92,9 @@ const PdfSlideStage = ({ deck, index }) => {
 }
 
 const UrlStage = ({ deck }) => {
-  const url = deck.source.value
+  // Both the frame and the escape hatch below follow this value, so it goes
+  // through the same check as any other stored link — see safeHref.
+  const url = safeHref(deck.source.value)
   const embedUrl = toEmbedUrl(url)
   return (
     <div className="relative aspect-[16/9] w-full max-w-[1600px] mx-auto rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10 bg-black">

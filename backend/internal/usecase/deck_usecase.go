@@ -108,6 +108,19 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 	if err := uc.checkDeckTerms(ctx, in.Category, in.Industry, in.Source.Type); err != nil {
 		return nil, err
 	}
+	// The source and the cover both end up as an href or an iframe src — see
+	// normalizeLink for what that has to be protected from.
+	value, err := normalizeLink("the deck source", in.Source.Value)
+	if err != nil {
+		return nil, err
+	}
+	in.Source.Value = value
+	cover, err := normalizeLink("the cover image", in.CoverImage)
+	if err != nil {
+		return nil, err
+	}
+	in.CoverImage = cover
+
 	if in.Tags == nil {
 		in.Tags = []string{}
 	}
@@ -124,7 +137,7 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 		Tags:        in.Tags,
 		Source:      in.Source,
 		Description: in.Description,
-		CoverImage:  strings.TrimSpace(in.CoverImage),
+		CoverImage:  in.CoverImage,
 		CreatedBy:   in.CreatedBy,
 		Featured:    in.Featured,
 		ViewCount:   0,
@@ -270,6 +283,11 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 		if strings.TrimSpace(in.Source.Type) == "" || strings.TrimSpace(in.Source.Value) == "" {
 			return nil, fmt.Errorf("%w: source type and value are required", domain.ErrInvalidInput)
 		}
+		value, err := normalizeLink("the deck source", in.Source.Value)
+		if err != nil {
+			return nil, err
+		}
+		in.Source.Value = value
 		d.Source = *in.Source
 	}
 	if in.Description != nil {
@@ -278,7 +296,11 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 	if in.CoverImage != nil {
 		// Empty is meaningful: it clears an uploaded cover and hands the deck
 		// back to the generated artwork.
-		d.CoverImage = strings.TrimSpace(*in.CoverImage)
+		cover, err := normalizeLink("the cover image", *in.CoverImage)
+		if err != nil {
+			return nil, err
+		}
+		d.CoverImage = cover
 	}
 
 	// Only the fields this request set. A deck that already carries a retired

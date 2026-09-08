@@ -130,6 +130,14 @@ func (uc *DemoUsecase) Create(ctx context.Context, in DemoInput) (*domain.Demo, 
 		}
 	}
 
+	// A demo's URL is the button people click. See normalizeLink: a bare
+	// "dashboard.example.com" is a relative link that goes nowhere, and a
+	// javascript: one is script running on this origin.
+	link, err := normalizeLink("the demo URL", in.URL)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	d := &domain.Demo{
 		ID:          uuid.New(),
@@ -137,7 +145,7 @@ func (uc *DemoUsecase) Create(ctx context.Context, in DemoInput) (*domain.Demo, 
 		Category:    strings.TrimSpace(in.Category),
 		Environment: strings.TrimSpace(in.Environment),
 		Status:      strings.TrimSpace(in.Status),
-		URL:         strings.TrimSpace(in.URL),
+		URL:         link,
 		Username:    in.Username,
 		// Not trimmed. A password can legitimately start or end with a space,
 		// and silently changing one is a credential that no longer works with
@@ -179,7 +187,11 @@ func (uc *DemoUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDemoIn
 		d.Status = strings.TrimSpace(*in.Status)
 	}
 	if in.URL != nil {
-		d.URL = strings.TrimSpace(*in.URL)
+		link, err := normalizeLink("the demo URL", *in.URL)
+		if err != nil {
+			return nil, err
+		}
+		d.URL = link
 	}
 	if in.Username != nil {
 		d.Username = *in.Username
