@@ -21,52 +21,6 @@ const imageSrc = (deck, w = 400, h = 250) => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-// Development affordance only — see SHOW_DEMO_ACCOUNTS below before adding to
-// this list. One account per role, so the role gating is immediately visible.
-// Seeded by migrations 000001 + 000003.
-const DEMO_ACCOUNTS = [
-  {
-    role: 'Admin',
-    email: 'admin@wit.id',
-    password: 'admin1234',
-    can: 'Decks + users',
-    color: '#fb7185',
-  },
-  {
-    role: 'Editor',
-    email: 'editor@wit.id',
-    password: 'editor1234',
-    can: 'Add & remove decks',
-    color: '#60a5fa',
-  },
-  {
-    role: 'Viewer',
-    email: 'viewer@wit.id',
-    password: 'viewer1234',
-    can: 'Browse only',
-    color: '#8a8a99',
-  },
-]
-
-// This block signs people in with passwords published in this repository, and
-// prints them on the page. Two things are supposed to make that harmless in
-// production — migration 000009 removes the accounts, and setting
-// BOOTSTRAP_ADMIN_PASSWORD rotates the seeded admin — but both live on the
-// server, and neither was true on the deployment this was found on. A page
-// that hands out an admin password should not depend on someone else having
-// remembered a setting.
-//
-// So it is compiled out of production builds instead. Opt-in rather than
-// opt-out: a forgotten variable then costs a demo button, not an admin account.
-//
-//   VITE_SHOW_DEMO_ACCOUNTS=true npm run build   # demo build
-//
-// Defined in vite.config.js rather than read from import.meta.env, so the
-// value is a literal at build time and the block below is genuinely removed
-// rather than merely hidden. Verify with:
-//
-//   npm run build && grep -r admin1234 dist/    # must find nothing
-const SHOW_DEMO_ACCOUNTS = __SHOW_DEMO_ACCOUNTS__
 
 export default function LoginPage({ onLogin, notice }) {
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
@@ -78,7 +32,6 @@ export default function LoginPage({ onLogin, notice }) {
   const [error, setError] = useState('')
   const [shake, setShake] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [demoPending, setDemoPending] = useState(null)
   // Set once registration succeeds — the account exists but cannot sign in yet,
   // so the form is replaced by "check your inbox" rather than cleared.
   const [pendingEmail, setPendingEmail] = useState(null)
@@ -107,8 +60,7 @@ export default function LoginPage({ onLogin, notice }) {
       onLogin({ ...user, token, remember, since: Date.now() })
     } catch (err) {
       setSubmitting(false)
-      setDemoPending(null)
-      if (err.code === 'email_not_verified') {
+        if (err.code === 'email_not_verified') {
         // Not a credentials problem — the password was right. Offer the inbox,
         // not another attempt at the form.
         setNeedsVerify(true)
@@ -153,15 +105,6 @@ export default function LoginPage({ onLogin, notice }) {
     if (!password) return fail('Enter your password.')
 
     await doLogin(email, password)
-  }
-
-  const signInAsDemo = async (account) => {
-    if (submitting) return
-    // Mirror the credentials into the form so it's clear what was used.
-    setEmail(account.email)
-    setPassword(account.password)
-    setDemoPending(account.role)
-    await doLogin(account.email, account.password)
   }
 
   const resendVerification = async () => {
@@ -415,47 +358,6 @@ export default function LoginPage({ onLogin, notice }) {
             </button>
           </form>
 
-          {/* Demo accounts — one click per role, no typing required. */}
-          {SHOW_DEMO_ACCOUNTS && (
-          <>
-          <div className="flex items-center gap-3 my-5">
-            <span className="flex-1 h-px bg-white/10" />
-            <span className="text-[10px] uppercase tracking-widest text-white/40 whitespace-nowrap">
-              or try a demo account
-            </span>
-            <span className="flex-1 h-px bg-white/10" />
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            {DEMO_ACCOUNTS.map((account) => (
-              <button
-                key={account.role}
-                type="button"
-                onClick={() => signInAsDemo(account)}
-                disabled={submitting}
-                title={`${account.email} · ${account.password}`}
-                className="flex flex-col items-center justify-center gap-1 px-2 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <span className="flex items-center gap-1.5 text-sm font-bold">
-                  {demoPending === account.role ? (
-                    <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <span
-                      className="w-1.5 h-1.5 rounded-full"
-                      style={{ background: account.color }}
-                    />
-                  )}
-                  {account.role}
-                </span>
-                <span className="text-[10px] text-white/45 leading-tight text-center">
-                  {account.can}
-                </span>
-              </button>
-            ))}
-          </div>
-          </>
-          )}
-
           <div className="flex items-center gap-3 my-5">
             <span className="flex-1 h-px bg-white/10" />
             <span className="text-xs uppercase tracking-widest text-white/40">or</span>
@@ -499,14 +401,6 @@ export default function LoginPage({ onLogin, notice }) {
       {/* Footer note */}
       <div className="relative z-10 text-center text-xs text-white/35 pb-6 px-4">
         Signs in against the WIT API
-        {SHOW_DEMO_ACCOUNTS && (
-          <>
-            {' '}· demo passwords are{' '}
-            <span className="text-white/60">admin1234</span> /{' '}
-            <span className="text-white/60">editor1234</span> /{' '}
-            <span className="text-white/60">viewer1234</span>
-          </>
-        )}
       </div>
     </div>
   )

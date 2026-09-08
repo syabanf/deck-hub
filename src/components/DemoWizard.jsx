@@ -13,25 +13,14 @@ import {
   CheckIcon,
 } from '../lib/icons.jsx'
 
-// Role chips reused by the last step. The tour ships everywhere; only the
-// credentials behind the tooltip are held back, on the same build-time flag
-// LoginPage uses. This was the second place those passwords were written out.
-const DEMO_ACCOUNTS = [
+// Role chips reused by the last step. They describe what each role can do;
+// the accounts themselves are provisioned by an admin, so no credentials
+// appear here.
+const ROLE_CHIPS = [
   { role: 'Admin', can: 'Decks + users', color: '#fb7185' },
   { role: 'Editor', can: 'Add & remove decks', color: '#60a5fa' },
   { role: 'Viewer', can: 'Browse only', color: '#8a8a99' },
 ]
-
-// The whole object literal has to sit inside the branch, not be filtered out
-// afterwards: a string the source hands to a runtime `.map` is still a string
-// in the bundle. Only a branch the minifier can prove dead takes it away.
-const DEMO_CREDENTIALS = __SHOW_DEMO_ACCOUNTS__
-  ? {
-      Admin: 'admin@wit.id · admin1234',
-      Editor: 'editor@wit.id · editor1234',
-      Viewer: 'viewer@wit.id · viewer1234',
-    }
-  : {}
 
 const STEPS = [
   {
@@ -172,11 +161,10 @@ export default function DemoWizard({ onClose, onStartDemo }) {
 
           {s.accounts && (
             <div className="mt-3 grid grid-cols-3 gap-2">
-              {DEMO_ACCOUNTS.map((a) => (
+              {ROLE_CHIPS.map((a) => (
                 <div
                   key={a.role}
                   className="rounded-lg bg-white/5 border border-white/10 px-2 py-2 text-center"
-                  title={DEMO_CREDENTIALS[a.role]}
                 >
                   <div className="flex items-center justify-center gap-1.5 text-sm font-bold">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: a.color }} />
