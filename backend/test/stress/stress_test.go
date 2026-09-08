@@ -122,6 +122,7 @@ func TestMain(m *testing.M) {
 		// table and 000001 drops decks, which covers both.
 		"000011_drop_source_type_terms.up.sql",
 		"000012_deck_cover_image.up.sql",
+		"000013_app_settings.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)

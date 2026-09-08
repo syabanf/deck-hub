@@ -75,6 +75,7 @@ func mountedRoutes(t *testing.T) map[string]bool {
 		Users:     httpdelivery.NewUserHandler(nil),
 		Decks:     httpdelivery.NewDeckHandler(nil),
 		Taxonomy:  httpdelivery.NewTaxonomyHandler(nil),
+		Settings:  httpdelivery.NewSettingsHandler(nil),
 		Uploads:   httpdelivery.NewUploadHandler(nil, 0),
 		Favorites: httpdelivery.NewFavoriteHandler(nil),
 		Progress:  httpdelivery.NewProgressHandler(nil),

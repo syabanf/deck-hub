@@ -8,6 +8,7 @@ import {
   InfoIcon,
   PlayIcon,
 } from '../lib/icons.jsx'
+import { settingNumber, useSettings } from '../lib/settings.jsx'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 
 // Sections of the app, as opposed to categories of deck. These are fixed:
@@ -146,7 +147,12 @@ export default function Navbar({
   const { leading, categories: navCategories, trailing, chips: chipItems } = useNavItems()
   const navListRef = useRef(null)
   const moreRef = useRef(null)
-  const visibleCount = useOverflow(navCategories, navListRef)
+  // Two limits, and the smaller wins. The measurement stops the bar running
+  // off the screen; the setting is the editorial choice about how many belong
+  // there at all, which no amount of screen width should override.
+  const { settings } = useSettings()
+  const measured = useOverflow(navCategories, navListRef)
+  const visibleCount = Math.min(measured, settingNumber(settings, 'nav_max_categories', 5))
   const overflowItems = navCategories.slice(visibleCount)
   const [moreOpen, setMoreOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)

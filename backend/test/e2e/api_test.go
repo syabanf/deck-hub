@@ -83,6 +83,7 @@ func TestMain(m *testing.M) {
 		// table and 000001 drops decks, which covers both.
 		"000011_drop_source_type_terms.up.sql",
 		"000012_deck_cover_image.up.sql",
+		"000013_app_settings.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -114,6 +115,7 @@ func TestMain(m *testing.M) {
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
 	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
 	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
+	settingsUC := usecase.NewSettingsUsecase(postgres.NewSettingsRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
@@ -135,6 +137,7 @@ func TestMain(m *testing.M) {
 		Users:     httpdelivery.NewUserHandler(userUC),
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
 		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:  httpdelivery.NewProgressHandler(progressUC),

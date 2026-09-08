@@ -18,6 +18,7 @@ type RouterDeps struct {
 	Users     *UserHandler
 	Decks     *DeckHandler
 	Taxonomy  *TaxonomyHandler
+	Settings  *SettingsHandler
 	Uploads   *UploadHandler
 	Favorites *FavoriteHandler
 	Progress  *ProgressHandler
@@ -188,6 +189,18 @@ func NewRouter(d RouterDeps) http.Handler {
 				r.Put("/{slug}", d.Taxonomy.Update)
 				r.Delete("/{slug}", d.Taxonomy.Delete)
 			})
+		})
+	}
+
+	// Settings: read by anyone, because the navigation needs them before a
+	// visitor has signed in and none of the values are secret. Written by
+	// admins only.
+	if d.Settings != nil {
+		r.Get("/settings", d.Settings.Get)
+		r.Group(func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Use(RequireRole("admin"))
+			r.Put("/settings", d.Settings.Update)
 		})
 	}
 

@@ -239,6 +239,11 @@ export const api = {
   updateUser: (id, patch) => request(`/users/${id}`, { method: 'PUT', body: patch, auth: true }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE', auth: true }),
 
+  // Settings — read by anyone (the navigation needs them before sign-in),
+  // written by admins.
+  getSettings: () => request('/settings'),
+  updateSettings: (patch) => request('/settings', { method: 'PUT', body: patch, auth: true }),
+
   // Taxonomy — the master lists the catalog is browsed by. Reads are public;
   // writes are admin-only, so `auth: true` on all four.
   //

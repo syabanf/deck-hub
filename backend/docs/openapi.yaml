@@ -75,6 +75,7 @@ tags:
   - name: Health
   - name: Auth
   - name: Decks
+  - name: Settings
   - name: Taxonomy
   - name: Users
   - name: Favorites
@@ -454,6 +455,64 @@ paths:
               schema: { $ref: "#/components/schemas/Deck" }
         "400": { $ref: "#/components/responses/InvalidInput" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Read the application settings
+      description: |
+        Public. The navigation reads these before anyone has signed in, and
+        none of the values are secret.
+
+        Always complete: every known key is returned with its default filled
+        in, so a client never has to know which keys exist in order to read
+        them.
+      responses:
+        "200":
+          description: Every setting, defaults applied
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: string }
+              example:
+                nav_max_categories: "5"
+    put:
+      tags: [Settings]
+      summary: Change settings
+      description: |
+        Requires `admin`. Partial: keys left out keep their current value.
+
+        Unknown keys are refused rather than stored. A key nothing reads is a
+        setting somebody believes they changed, and the failure would be
+        silent. Values are validated against what their key means, and the
+        whole body is checked before any of it is written — a half-applied
+        batch leaves the settings in a state nobody asked for.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+              properties:
+                nav_max_categories:
+                  type: string
+                  description: |
+                    How many categories the header shows before the rest move
+                    into its "More" menu. A whole number from 1 to 20; the
+                    frontend still drops any that do not fit the window.
+      responses:
+        "200":
+          description: The settings after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: string }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /taxonomy/{kind}:
     parameters:

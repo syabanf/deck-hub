@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
+import { settingNumber, useSettings } from '../lib/settings.jsx'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { PlusIcon, TrashIcon, CloseIcon } from '../lib/icons.jsx'
 
@@ -165,6 +166,8 @@ export default function TaxonomyManager({ canManage = false }) {
 
   return (
     <div>
+      {canManage && <NavLimit onError={setError} />}
+
       <div className="flex items-center gap-1 mb-5 flex-wrap">
         {KINDS.map((k) => (
           <button
@@ -513,6 +516,59 @@ export default function TaxonomyManager({ canManage = false }) {
         decks pointing at a value that no longer exists. Retire a term to take it out of
         circulation without touching the decks that already use it.
       </p>
+    </div>
+  )
+}
+
+// How many categories the header shows before the rest fold into "More".
+//
+// It lives on this screen because it is a decision about the same list: the
+// order comes from the Order column below, and this is how far down that order
+// the header reaches.
+function NavLimit({ onError }) {
+  const { settings, save } = useSettings()
+  const current = settingNumber(settings, 'nav_max_categories', 5)
+  const [busy, setBusy] = useState(false)
+
+  const set = async (n) => {
+    setBusy(true)
+    onError?.(null)
+    try {
+      await save({ nav_max_categories: String(n) })
+    } catch (e) {
+      onError?.(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mb-5 rounded-xl bg-deck-card border border-deck-border px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex-1 min-w-[16rem]">
+        <div className="text-[11px] uppercase tracking-widest text-deck-muted font-bold">
+          Categories in the header
+        </div>
+        <p className="text-xs text-deck-muted mt-1 leading-snug">
+          The first {current} by the Order column below. The rest move into “More”, and a
+          narrow window may fold in more than this on its own.
+        </p>
+      </div>
+      <div className="flex items-center gap-1">
+        {[3, 4, 5, 6, 7, 8].map((n) => (
+          <button
+            key={n}
+            disabled={busy}
+            onClick={() => set(n)}
+            className={`w-9 h-9 rounded-lg text-sm font-bold transition-colors disabled:opacity-50 ${
+              n === current
+                ? 'bg-white text-black'
+                : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

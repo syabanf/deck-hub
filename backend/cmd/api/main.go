@@ -51,6 +51,7 @@ func run() error {
 	favoriteRepo := postgres.NewFavoriteRepository(pool)
 	progressRepo := postgres.NewProgressRepository(pool)
 	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
+	settingsRepo := postgres.NewSettingsRepository(pool)
 
 	// --- Usecases (depend only on domain interfaces) ---
 	userUC := usecase.NewUserUsecase(userRepo)
@@ -58,6 +59,7 @@ func run() error {
 	favoriteUC := usecase.NewFavoriteUsecase(favoriteRepo)
 	progressUC := usecase.NewProgressUsecase(progressRepo)
 	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
+	settingsUC := usecase.NewSettingsUsecase(settingsRepo)
 
 	// Take ownership of the seeded admin. Migration 000001 ships a published
 	// password so a fresh checkout works; production must not keep it.
@@ -120,6 +122,7 @@ func run() error {
 		Users:       httpdelivery.NewUserHandler(userUC),
 		Decks:       httpdelivery.NewDeckHandler(deckUC),
 		Taxonomy:    httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings:    httpdelivery.NewSettingsHandler(settingsUC),
 		Uploads:     httpdelivery.NewUploadHandler(fileStore, cfg.MaxUploadBytes()),
 		Favorites:   httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:    httpdelivery.NewProgressHandler(progressUC),
