@@ -21,8 +21,9 @@ const imageSrc = (deck, w = 400, h = 250) => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-// One-click demo sign-in, one account per role, so the role gating is
-// immediately visible. Seeded by migrations 000001 + 000003.
+// Development affordance only — see SHOW_DEMO_ACCOUNTS below before adding to
+// this list. One account per role, so the role gating is immediately visible.
+// Seeded by migrations 000001 + 000003.
 const DEMO_ACCOUNTS = [
   {
     role: 'Admin',
@@ -46,6 +47,26 @@ const DEMO_ACCOUNTS = [
     color: '#8a8a99',
   },
 ]
+
+// This block signs people in with passwords published in this repository, and
+// prints them on the page. Two things are supposed to make that harmless in
+// production — migration 000009 removes the accounts, and setting
+// BOOTSTRAP_ADMIN_PASSWORD rotates the seeded admin — but both live on the
+// server, and neither was true on the deployment this was found on. A page
+// that hands out an admin password should not depend on someone else having
+// remembered a setting.
+//
+// So it is compiled out of production builds instead. Opt-in rather than
+// opt-out: a forgotten variable then costs a demo button, not an admin account.
+//
+//   VITE_SHOW_DEMO_ACCOUNTS=true npm run build   # demo build
+//
+// Defined in vite.config.js rather than read from import.meta.env, so the
+// value is a literal at build time and the block below is genuinely removed
+// rather than merely hidden. Verify with:
+//
+//   npm run build && grep -r admin1234 dist/    # must find nothing
+const SHOW_DEMO_ACCOUNTS = __SHOW_DEMO_ACCOUNTS__
 
 export default function LoginPage({ onLogin, notice }) {
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
@@ -395,6 +416,8 @@ export default function LoginPage({ onLogin, notice }) {
           </form>
 
           {/* Demo accounts — one click per role, no typing required. */}
+          {SHOW_DEMO_ACCOUNTS && (
+          <>
           <div className="flex items-center gap-3 my-5">
             <span className="flex-1 h-px bg-white/10" />
             <span className="text-[10px] uppercase tracking-widest text-white/40 whitespace-nowrap">
@@ -430,6 +453,8 @@ export default function LoginPage({ onLogin, notice }) {
               </button>
             ))}
           </div>
+          </>
+          )}
 
           <div className="flex items-center gap-3 my-5">
             <span className="flex-1 h-px bg-white/10" />
@@ -473,10 +498,15 @@ export default function LoginPage({ onLogin, notice }) {
 
       {/* Footer note */}
       <div className="relative z-10 text-center text-xs text-white/35 pb-6 px-4">
-        Signs in against the WIT API · demo passwords are{' '}
-        <span className="text-white/60">admin1234</span> /{' '}
-        <span className="text-white/60">editor1234</span> /{' '}
-        <span className="text-white/60">viewer1234</span>
+        Signs in against the WIT API
+        {SHOW_DEMO_ACCOUNTS && (
+          <>
+            {' '}· demo passwords are{' '}
+            <span className="text-white/60">admin1234</span> /{' '}
+            <span className="text-white/60">editor1234</span> /{' '}
+            <span className="text-white/60">viewer1234</span>
+          </>
+        )}
       </div>
     </div>
   )
