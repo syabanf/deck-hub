@@ -202,20 +202,22 @@ func toTermResponses(terms []*domain.TaxonomyTerm) []termResponse {
 
 // createTermRequest carries the slug because it is chosen once, on create.
 type createTermRequest struct {
-	Slug      string `json:"slug"`
-	Title     string `json:"title"`
-	SortOrder int    `json:"sortOrder"`
-	Active    *bool  `json:"active"`
-	Accent    string `json:"accent"`
-	Secondary string `json:"secondary"`
+	Slug      string  `json:"slug"`
+	Title     string  `json:"title"`
+	SortOrder *int    `json:"sortOrder"`
+	Active    *bool   `json:"active"`
+	Accent    *string `json:"accent"`
+	Secondary *string `json:"secondary"`
 }
 
 // updateTermRequest has no slug: renaming it would orphan every deck storing
-// the old value.
+// the old value. Everything else is a pointer, so an omitted field is left
+// alone and a zero one is applied — sortOrder 0 and an empty colour are both
+// edits somebody meant to make.
 type updateTermRequest struct {
-	Title     string `json:"title"`
-	SortOrder int    `json:"sortOrder"`
-	Active    *bool  `json:"active"`
-	Accent    string `json:"accent"`
-	Secondary string `json:"secondary"`
+	Title     string  `json:"title"`
+	SortOrder *int    `json:"sortOrder"`
+	Active    *bool   `json:"active"`
+	Accent    *string `json:"accent"`
+	Secondary *string `json:"secondary"`
 }

@@ -33,12 +33,17 @@ const maxTermTitle = 120
 
 // TermInput carries the editable fields of a term. Slug is separate because it
 // is the identity, supplied on create and never changed after.
+//
+// Pointers on everything optional, because the zero values are all meaningful
+// here: sortOrder 0 puts a term first, and an empty colour clears a gradient.
+// Treating those as "not supplied" would make the two edits that need them
+// impossible, and silently — the request would succeed and change nothing.
 type TermInput struct {
 	Title     string
-	SortOrder int
+	SortOrder *int
 	Active    *bool
-	Accent    string
-	Secondary string
+	Accent    *string
+	Secondary *string
 }
 
 func (uc *TaxonomyUsecase) List(ctx context.Context, kind domain.TaxonomyKind, activeOnly bool) ([]*domain.TaxonomyTerm, error) {
@@ -63,7 +68,7 @@ func (uc *TaxonomyUsecase) Create(ctx context.Context, kind domain.TaxonomyKind,
 	if err != nil {
 		return nil, err
 	}
-	accent, secondary, err := validColors(in.Accent, in.Secondary)
+	accent, secondary, err := validColors(deref(in.Accent), deref(in.Secondary))
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +76,10 @@ func (uc *TaxonomyUsecase) Create(ctx context.Context, kind domain.TaxonomyKind,
 	// A new term goes to the end of its list unless placed explicitly. Landing
 	// silently at position zero would reorder the navigation of a site nobody
 	// meant to touch.
-	order := in.SortOrder
+	order := 0
+	if in.SortOrder != nil {
+		order = *in.SortOrder
+	}
 	if order == 0 {
 		existing, err := uc.repo.List(ctx, domain.TaxonomyFilter{Kind: kind})
 		if err != nil {
@@ -110,14 +118,23 @@ func (uc *TaxonomyUsecase) Update(ctx context.Context, kind domain.TaxonomyKind,
 			return nil, err
 		}
 	}
-	if in.SortOrder != 0 {
-		current.SortOrder = in.SortOrder
+	if in.SortOrder != nil {
+		current.SortOrder = *in.SortOrder
 	}
 	if in.Active != nil {
 		current.Active = *in.Active
 	}
-	if in.Accent != "" || in.Secondary != "" {
-		if current.Accent, current.Secondary, err = validColors(in.Accent, in.Secondary); err != nil {
+	// Both or neither: they are the two stops of one gradient, and validColors
+	// refuses a half-set pair for the same reason.
+	if in.Accent != nil || in.Secondary != nil {
+		accent, secondary := deref(in.Accent), deref(in.Secondary)
+		if in.Accent == nil {
+			accent = current.Accent
+		}
+		if in.Secondary == nil {
+			secondary = current.Secondary
+		}
+		if current.Accent, current.Secondary, err = validColors(accent, secondary); err != nil {
 			return nil, err
 		}
 	}
@@ -146,6 +163,13 @@ func (uc *TaxonomyUsecase) Delete(ctx context.Context, kind domain.TaxonomyKind,
 			domain.ErrConflict, term.DeckCount, slug)
 	}
 	return uc.repo.Delete(ctx, kind, slug)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func validTitle(s string) (string, error) {

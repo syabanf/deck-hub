@@ -586,10 +586,18 @@ paths:
               type: object
               properties:
                 title:     { type: string, maxLength: 120 }
-                sortOrder: { type: integer }
+                sortOrder:
+                  type: integer
+                  description: |
+                    Omitted leaves the order alone; 0 is a real value that puts
+                    the term first.
                 active:    { type: boolean }
-                accent:    { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
-                secondary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+                accent:
+                  type: string
+                  description: |
+                    Empty string clears the gradient. Omitted leaves it alone.
+                    Accent and secondary are always written as a pair.
+                secondary: { type: string }
       responses:
         "200":
           description: Updated

@@ -40,6 +40,13 @@ export default function TaxonomyManager({ canManage = false }) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState(blankDraft)
   const [busySlug, setBusySlug] = useState(null)
+  // Editing and deleting both happen in the row. window.prompt and
+  // window.confirm were doing this job, and a Chrome dialog dropped on top of
+  // the app is jarring enough that people hesitate over it — besides only ever
+  // being able to ask for one string, which left the gradient uneditable after
+  // creation.
+  const [editing, setEditing] = useState(null)
+  const [confirming, setConfirming] = useState(null)
   const { refresh: refreshBrowse } = useTaxonomy()
 
   // Unfiltered: the admin needs to see retired terms. The browse context asks
@@ -114,6 +121,25 @@ export default function TaxonomyManager({ canManage = false }) {
     }
   }
 
+  const saveEdit = async () => {
+    const t = terms.find((x) => x.slug === editing.slug)
+    if (!t) return
+    const body = {}
+    if (editing.title.trim() && editing.title.trim() !== t.title) body.title = editing.title.trim()
+    const order = Number(editing.sortOrder)
+    if (Number.isFinite(order) && order !== t.sortOrder) body.sortOrder = order
+    if (kind.colored && (editing.accent !== (t.accent || '') || editing.secondary !== (t.secondary || ''))) {
+      body.accent = editing.accent
+      body.secondary = editing.secondary
+    }
+    if (Object.keys(body).length === 0) {
+      setEditing(null)
+      return
+    }
+    await patch(t, body)
+    setEditing(null)
+  }
+
   const remove = async (term) => {
     // The API refuses this while decks still point at the term, but saying so
     // before the round trip is kinder than a 409 the user has to decode.
@@ -124,7 +150,7 @@ export default function TaxonomyManager({ canManage = false }) {
       ))
       return
     }
-    if (!window.confirm(`Delete the ${kind.noun} “${term.title}”? This cannot be undone.`)) return
+    setConfirming(null)
     setBusySlug(term.slug)
     setError(null)
     try {
@@ -143,7 +169,13 @@ export default function TaxonomyManager({ canManage = false }) {
         {KINDS.map((k) => (
           <button
             key={k.id}
-            onClick={() => { setKind(k); setAdding(false); setError(null) }}
+            onClick={() => {
+              setKind(k)
+              setAdding(false)
+              setEditing(null)
+              setConfirming(null)
+              setError(null)
+            }}
             className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
               k.id === kind.id
                 ? 'bg-white text-black'
@@ -289,23 +321,83 @@ export default function TaxonomyManager({ canManage = false }) {
               {!loading && terms.length === 0 && (
                 <tr><td colSpan={6} className="px-3 py-6 text-center text-deck-muted">Nothing here yet.</td></tr>
               )}
-              {terms.map((t) => (
-                <tr key={t.slug} className="border-t border-deck-border/60">
+              {terms.map((t) => {
+                const isEditing = editing?.slug === t.slug
+                return (
+                <tr key={t.slug} className={`border-t border-deck-border/60 ${isEditing ? 'bg-white/[0.03]' : ''}`}>
                   <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      {t.accent && (
-                        <span
-                          className="w-3 h-3 rounded-full shrink-0"
-                          style={{ background: `linear-gradient(135deg, ${t.accent}, ${t.secondary})` }}
+                    {isEditing ? (
+                      <div className="flex items-center gap-2">
+                        {kind.colored && (
+                          <span
+                            className="w-3 h-3 rounded-full shrink-0"
+                            style={{
+                              background: `linear-gradient(135deg, ${editing.accent || '#1b1b22'}, ${
+                                editing.secondary || '#1b1b22'
+                              })`,
+                            }}
+                          />
+                        )}
+                        <input
+                          autoFocus
+                          value={editing.title}
+                          onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveEdit()
+                            if (e.key === 'Escape') setEditing(null)
+                          }}
+                          className="w-full h-8 px-2 rounded bg-black/40 border border-white/20 focus:border-white/40 outline-none text-sm font-semibold"
                         />
-                      )}
-                      <span className={t.active ? 'font-semibold' : 'font-semibold text-white/45'}>
-                        {t.title}
-                      </span>
-                    </div>
+                        {kind.colored && (
+                          <>
+                            <input
+                              type="color"
+                              value={/^#[0-9a-fA-F]{6}$/.test(editing.accent) ? editing.accent : '#1b1b22'}
+                              onChange={(e) => setEditing({ ...editing, accent: e.target.value })}
+                              className="w-8 h-8 shrink-0 rounded bg-black/40 border border-white/10 cursor-pointer p-0.5"
+                              aria-label="Accent colour"
+                            />
+                            <input
+                              type="color"
+                              value={/^#[0-9a-fA-F]{6}$/.test(editing.secondary) ? editing.secondary : '#1b1b22'}
+                              onChange={(e) => setEditing({ ...editing, secondary: e.target.value })}
+                              className="w-8 h-8 shrink-0 rounded bg-black/40 border border-white/10 cursor-pointer p-0.5"
+                              aria-label="Secondary colour"
+                            />
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        {t.accent && (
+                          <span
+                            className="w-3 h-3 rounded-full shrink-0"
+                            style={{ background: `linear-gradient(135deg, ${t.accent}, ${t.secondary})` }}
+                          />
+                        )}
+                        <span className={t.active ? 'font-semibold' : 'font-semibold text-white/45'}>
+                          {t.title}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-deck-muted">{t.slug}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-deck-muted">{t.sortOrder}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-deck-muted">
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        value={editing.sortOrder}
+                        onChange={(e) => setEditing({ ...editing, sortOrder: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEdit()
+                          if (e.key === 'Escape') setEditing(null)
+                        }}
+                        className="w-20 h-8 px-2 rounded bg-black/40 border border-white/20 focus:border-white/40 outline-none text-sm text-right tabular-nums"
+                      />
+                    ) : (
+                      t.sortOrder
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums">{t.deckCount}</td>
                   <td className="px-3 py-2">
                     <span
@@ -322,45 +414,104 @@ export default function TaxonomyManager({ canManage = false }) {
                   {canManage && (
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          disabled={busySlug === t.slug}
-                          onClick={() => patch(t, { active: !t.active })}
-                          className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 disabled:opacity-50"
-                        >
-                          {t.active ? 'Retire' : 'Restore'}
-                        </button>
-                        <button
-                          disabled={busySlug === t.slug}
-                          onClick={() => {
-                            const title = window.prompt(`Rename “${t.title}” to:`, t.title)
-                            if (title && title.trim() && title !== t.title) patch(t, { title: title.trim() })
-                          }}
-                          className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 disabled:opacity-50"
-                        >
-                          Rename
-                        </button>
-                        <button
-                          disabled={busySlug === t.slug}
-                          onClick={() => remove(t)}
-                          title={t.deckCount > 0 ? 'Decks still use this term' : 'Delete'}
-                          className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-red-300 disabled:opacity-50"
-                        >
-                          <TrashIcon className="w-4 h-4" />
-                        </button>
+                        {isEditing ? (
+                          <>
+                            <button
+                              disabled={busySlug === t.slug}
+                              onClick={saveEdit}
+                              className="text-xs font-bold px-3 py-1 rounded bg-deck-accent disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditing(null)}
+                              className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : confirming === t.slug ? (
+                          <>
+                            {/* An inline confirmation rather than window.confirm:
+                                same pause before an irreversible click, without
+                                a browser dialog landing on top of the app. */}
+                            <span className="text-xs text-white/60">Delete for good?</span>
+                            <button
+                              disabled={busySlug === t.slug}
+                              onClick={() => remove(t)}
+                              className="text-xs font-bold px-3 py-1 rounded bg-red-500/80 hover:bg-red-500 disabled:opacity-50"
+                            >
+                              Delete
+                            </button>
+                            <button
+                              onClick={() => setConfirming(null)}
+                              className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              disabled={busySlug === t.slug}
+                              onClick={() => patch(t, { active: !t.active })}
+                              className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 disabled:opacity-50"
+                            >
+                              {t.active ? 'Retire' : 'Restore'}
+                            </button>
+                            <button
+                              disabled={busySlug === t.slug}
+                              onClick={() => {
+                                setConfirming(null)
+                                setError(null)
+                                setEditing({
+                                  slug: t.slug,
+                                  title: t.title,
+                                  sortOrder: String(t.sortOrder),
+                                  accent: t.accent || '',
+                                  secondary: t.secondary || '',
+                                })
+                              }}
+                              className="text-xs font-semibold px-2 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 disabled:opacity-50"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              disabled={busySlug === t.slug}
+                              onClick={() => {
+                                // Say why up front. Offering a delete that the
+                                // server will refuse wastes the click and reads
+                                // as a bug rather than a rule.
+                                if (t.deckCount > 0) {
+                                  remove(t)
+                                  return
+                                }
+                                setEditing(null)
+                                setConfirming(t.slug)
+                              }}
+                              title={t.deckCount > 0 ? 'Decks still use this term' : 'Delete'}
+                              className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-red-300 disabled:opacity-50"
+                            >
+                              <TrashIcon className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   )}
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
       <p className="text-xs text-deck-muted mt-3">
-        A slug is what every deck stores, so it cannot be edited — renaming it would leave
-        those decks pointing at a value that no longer exists. Retire a term to take it out
-        of circulation without touching the decks that already use it.
+        Edit changes the title, the browse order and — for industries — the gradient. The
+        slug is what every deck stores, so it stays fixed: changing it would leave those
+        decks pointing at a value that no longer exists. Retire a term to take it out of
+        circulation without touching the decks that already use it.
       </p>
     </div>
   )

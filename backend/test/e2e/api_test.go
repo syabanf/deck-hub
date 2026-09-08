@@ -1558,6 +1558,50 @@ func TestTaxonomy(t *testing.T) {
 		requireStatus(t, http.StatusNoContent, status, raw)
 	})
 
+	t.Run("an edit can set order to zero and clear a gradient", func(t *testing.T) {
+		// Both are zero values, and both are edits somebody meant to make.
+		// While these fields were plain ints and strings the request succeeded
+		// and changed nothing, which is the worst of the three outcomes.
+		const slug = "e2e-industry"
+		t.Cleanup(func() { do(t, http.MethodDelete, "/taxonomy/industries/"+slug, admin, nil) })
+
+		status, raw := do(t, http.MethodPost, "/taxonomy/industries", admin, map[string]any{
+			"slug": slug, "title": "E2E Industry",
+			"accent": "#00c6fb", "secondary": "#005bea",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var term struct {
+			SortOrder int    `json:"sortOrder"`
+			Accent    string `json:"accent"`
+			Secondary string `json:"secondary"`
+		}
+		decode(t, raw, &term)
+		if term.SortOrder == 0 {
+			t.Fatal("a new term should land at the end, not at zero")
+		}
+
+		status, raw = do(t, http.MethodPut, "/taxonomy/industries/"+slug, admin,
+			map[string]any{"sortOrder": 0, "accent": "", "secondary": ""})
+		requireStatus(t, http.StatusOK, status, raw)
+		decode(t, raw, &term)
+		if term.SortOrder != 0 {
+			t.Fatalf("sortOrder 0 was ignored, got %d", term.SortOrder)
+		}
+		if term.Accent != "" || term.Secondary != "" {
+			t.Fatalf("clearing the gradient was ignored, got %q/%q", term.Accent, term.Secondary)
+		}
+
+		// An omitted field is still left alone.
+		status, raw = do(t, http.MethodPut, "/taxonomy/industries/"+slug, admin,
+			map[string]any{"title": "E2E Industry Renamed"})
+		requireStatus(t, http.StatusOK, status, raw)
+		decode(t, raw, &term)
+		if term.SortOrder != 0 {
+			t.Fatalf("an unrelated edit moved sortOrder to %d", term.SortOrder)
+		}
+	})
+
 	t.Run("unknown values are reported, not hidden", func(t *testing.T) {
 		// The columns are plain text with no foreign key, so a value written
 		// before this table existed still resolves to nothing. Writing one
