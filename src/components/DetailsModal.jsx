@@ -199,59 +199,7 @@ export default function DetailsModal({
           </div>
         </div>
 
-        {/* Attachments — only shown when present */}
-        {deck.attachments && deck.attachments.length > 0 && (
-          <div className="px-6 pb-6">
-            <div className="text-xs uppercase tracking-wider text-deck-muted mb-3 flex items-center gap-2">
-              <span>Materials</span>
-              <span className="text-white/40 normal-case font-normal">
-                · {deck.attachments.length} attached
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {deck.attachments.map((a) => {
-                // Build a "sub-deck" so onPlay can render this attachment in the player
-                const subDeck = {
-                  ...deck,
-                  title: a.label || deck.title,
-                  source: {
-                    type: a.type,
-                    value: a.value,
-                    kind: a.kind,
-                    platform: a.platform,
-                  },
-                }
-                return (
-                  <button
-                    key={a.id}
-                    onClick={() => onPlay(subDeck)}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-deck-card border border-deck-border hover:border-white/40 transition-colors group"
-                  >
-                    <span
-                      className="w-9 h-9 rounded flex items-center justify-center text-sm font-black text-white flex-shrink-0"
-                      style={{ background: a.color || '#444' }}
-                    >
-                      {a.icon || '↗'}
-                    </span>
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="text-sm font-semibold truncate">
-                        {a.label}
-                      </div>
-                      <div className="text-xs text-deck-muted truncate">
-                        {a.platform} · {a.type === 'video' ? 'plays as video' : 'opens embedded'}
-                      </div>
-                    </div>
-                    <span className="text-xs text-white/40 group-hover:text-white">
-                      Open ›
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-      </div>
+</div>
     </div>
   )
 }

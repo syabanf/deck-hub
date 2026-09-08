@@ -344,8 +344,8 @@ export const normalizeDeck = (d) => {
 export const normalizeDecks = (list) => (Array.isArray(list) ? list.map(normalizeDeck) : [])
 
 // Map an AddDeckModal deck (rich, client-side) → the backend createDeck body.
-// Presentation-only fields (gradient, pattern, attachments, slidesCount) are
-// dropped — the backend doesn't store them; they're re-derived on read.
+// Presentation-only fields (gradient, pattern, slidesCount) are dropped — the
+// backend doesn't store them; they're re-derived on read.
 export const toCreateRequest = (deck) => ({
   title: deck.title || '',
   subtitle: deck.subtitle || '',

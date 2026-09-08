@@ -5,7 +5,6 @@ import { loadPdfDocument, fileToArrayBuffer, renderPdfPageToCanvas } from '../li
 import { uploadFile } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
-import { detectAttachment } from '../lib/attachments.js'
 import { useClosable } from '../lib/useClosable.js'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 
@@ -210,11 +209,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const [videoFile, setVideoFile] = useState(null) // { name, size, dataUrl }
   const [videoDrag, setVideoDrag] = useState(false)
 
-  // Multiple attachments
-  const [attachments, setAttachments] = useState([])
-  const [newAttachUrl, setNewAttachUrl] = useState('')
-  const [newAttachLabel, setNewAttachLabel] = useState('')
-
   // Success
   const [successDeck, setSuccessDeck] = useState(null)
 
@@ -245,7 +239,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
 
   const platform = useMemo(() => detectPlatform(url), [url])
   const videoInfo = useMemo(() => detectVideo(videoUrl), [videoUrl])
-  const newAttachDetected = useMemo(() => detectAttachment(newAttachUrl.trim()), [newAttachUrl])
 
   const tags = useMemo(
     () =>
@@ -304,31 +297,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
     setVideoFile({ name: file.name, size: file.size, file })
     setVideoUrl('') // clear URL since we now have a file
     if (!title) setTitle(file.name.replace(/\.[^.]+$/, ''))
-  }
-
-  const addAttachment = () => {
-    const trimmed = newAttachUrl.trim()
-    if (!trimmed) return
-    const detected = detectAttachment(trimmed)
-    if (!detected) {
-      setError("Couldn't recognize that link")
-      return
-    }
-    setAttachments((prev) => [
-      ...prev,
-      {
-        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: newAttachLabel.trim() || detected.platform,
-        ...detected,
-      },
-    ])
-    setNewAttachUrl('')
-    setNewAttachLabel('')
-    setError(null)
-  }
-
-  const removeAttachment = (id) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id))
   }
 
   const handlePdfFile = async (file) => {
@@ -448,9 +416,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
           slidesCount: 1,
           source: { type: 'video', value: videoInfo.embedUrl, kind: videoInfo.kind, platform: videoInfo.platform },
         }
-      }
-      if (attachments.length > 0) {
-        deck.attachments = attachments
       }
       setSuccessDeck(deck)
       setTimeout(() => onAdd(deck), 900)
@@ -652,17 +617,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
                     </label>
                   </div>
                 )}
-
-                <AttachmentsSection
-                  attachments={attachments}
-                  removeAttachment={removeAttachment}
-                  addAttachment={addAttachment}
-                  newAttachUrl={newAttachUrl}
-                  setNewAttachUrl={setNewAttachUrl}
-                  newAttachLabel={newAttachLabel}
-                  setNewAttachLabel={setNewAttachLabel}
-                  detected={newAttachDetected}
-                />
 
                 <CoverPicker cover={cover} busy={coverBusy} onPick={setCover} />
 
@@ -968,109 +922,6 @@ function VideoPanel({
           {info.platform} {info.kind === 'iframe' ? 'embed' : 'native player'} ready
         </div>
       )}
-    </div>
-  )
-}
-
-function AttachmentsSection({
-  attachments,
-  removeAttachment,
-  addAttachment,
-  newAttachUrl,
-  setNewAttachUrl,
-  newAttachLabel,
-  setNewAttachLabel,
-  detected,
-}) {
-  return (
-    <div className="space-y-3 rounded-xl border border-deck-border bg-white/[0.02] p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-xs uppercase tracking-widest font-bold text-deck-muted">
-          Additional materials
-        </div>
-        <span className="text-[10px] text-white/40">
-          {attachments.length} attached
-        </span>
-      </div>
-
-      {/* Existing attachments */}
-      {attachments.length > 0 && (
-        <div className="space-y-1.5">
-          {attachments.map((a) => (
-            <div
-              key={a.id}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-deck-card border border-deck-border"
-            >
-              <span
-                className="w-7 h-7 rounded flex items-center justify-center text-xs font-black text-white flex-shrink-0"
-                style={{ background: a.color || '#444' }}
-                title={a.platform}
-              >
-                {a.icon || '↗'}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold truncate">{a.label}</div>
-                <div className="text-xs text-deck-muted truncate flex items-center gap-1.5">
-                  <span>{a.platform}</span>
-                  <span>·</span>
-                  <span className="truncate">{a.value}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => removeAttachment(a.id)}
-                className="text-xs text-deck-muted hover:text-red-400 transition-colors px-2"
-                title="Remove"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add new attachment row */}
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <input
-            value={newAttachUrl}
-            onChange={(e) => setNewAttachUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addAttachment()}
-            placeholder="Paste a Canva, YouTube, Slides, or any link…"
-            className="flex-1 px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40"
-          />
-          <input
-            value={newAttachLabel}
-            onChange={(e) => setNewAttachLabel(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addAttachment()}
-            placeholder="Label (optional)"
-            className="w-36 px-3 py-2 rounded-lg bg-deck-card border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40"
-          />
-          <button
-            onClick={addAttachment}
-            disabled={!newAttachUrl.trim()}
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            +
-          </button>
-        </div>
-        {detected && (
-          <div
-            className="text-xs flex items-center gap-1.5"
-            style={{ color: detected.color }}
-          >
-            <span
-              className="w-4 h-4 rounded flex items-center justify-center text-white font-black text-[10px]"
-              style={{ background: detected.color }}
-            >
-              {detected.icon}
-            </span>
-            Detected as <span className="font-bold">{detected.platform}</span>
-            {detected.type === 'video' && (
-              <span className="text-white/60">· will play as video</span>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

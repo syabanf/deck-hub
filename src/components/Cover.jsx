@@ -83,13 +83,7 @@ export default function Cover({
             </span>
           </>
         )}
-        {deck.attachments && deck.attachments.length > 0 && (
-          <>
-            <span>·</span>
-            <span className="text-amber-300">+{deck.attachments.length}</span>
-          </>
-        )}
-      </div>
+</div>
     </div>
   ) : null
 
