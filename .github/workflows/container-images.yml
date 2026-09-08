@@ -17,8 +17,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Nothing reaches the registry — and therefore production — without this
+  # having passed first. The build job used to be the whole workflow, which
+  # meant an image could be published from a commit whose tests had never been
+  # run anywhere but somebody's laptop.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    services:
+      # The e2e suite talks to a real database on purpose: most of what it
+      # checks — cascades, constraints, the SQL itself — does not exist in a
+      # mock.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wit
+          POSTGRES_PASSWORD: wit
+          POSTGRES_DB: wit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wit -d wit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: backend/go.sum
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Unit tests
+        working-directory: backend
+        run: go test ./... -count=1
+
+      - name: API reference matches the routes
+        working-directory: backend
+        run: make docs
+
+      - name: End-to-end tests
+        working-directory: backend
+        env:
+          E2E_DATABASE_URL: postgres://wit:wit@localhost:5432/wit_test?sslmode=disable
+        run: go test ./test/e2e/... -count=1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend build
+        run: npm run build
+
   build:
     name: Build ${{ matrix.image }}
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
