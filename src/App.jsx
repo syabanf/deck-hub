@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTaxonomy } from './lib/taxonomy.jsx'
+import { sharedDeckId, syncDeckUrl } from './lib/share.js'
 import {
   api,
   normalizeDecks,
@@ -84,7 +85,16 @@ const matchesQuery = (deck, q) => {
 
 export default function App() {
   const { categories, industries } = useTaxonomy()
-  const [user, setUser] = useState(() => loadAuth())
+  // A link shared with a client has to open the deck, not a sign-in form.
+  // Reads are public at the API already, so the link is the access — which is
+  // what the share menu says on it.
+  //
+  // Not persisted: this guest lasts as long as the tab. Someone who came for
+  // one deck should not silently acquire a lasting account on the catalog.
+  const [sharedId] = useState(() => sharedDeckId())
+  const [user, setUser] = useState(
+    () => loadAuth() || (sharedDeckId() ? { name: 'Guest', email: null, guest: true, since: Date.now() } : null),
+  )
   const [decks, setDecks] = useState([])
   const [users, setUsers] = useState([])
   const [status, setStatus] = useState('loading') // 'loading' | 'ready' | 'error'
@@ -327,6 +337,30 @@ export default function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
+
+  // Open the deck a shared link names. Fetched by id rather than looked up in
+  // the catalog: the link may point at a deck no home row happens to carry.
+  const openedShared = useRef(false)
+  useEffect(() => {
+    if (!sharedId || openedShared.current || status !== 'ready') return
+    openedShared.current = true
+    api
+      .listDecksByIds([sharedId])
+      .then((res) => {
+        const [deck] = normalizeDecks(res.data || [])
+        if (deck) setPlaying({ deck, startIndex: 0 })
+        else setToast({ type: 'error', title: 'That deck is gone', message: 'The link points at a deck that no longer exists.' })
+      })
+      .catch(() => {
+        setToast({ type: 'error', title: "Couldn't open that deck", message: 'The link looks right, but the catalog did not answer.' })
+      })
+  }, [sharedId, status])
+
+  // Keep the address bar on whatever is open, so copying from the browser
+  // gives the same link the share menu does.
+  useEffect(() => {
+    syncDeckUrl(playing?.deck || detailsDeck || null)
+  }, [playing, detailsDeck])
 
   const byId = useMemo(() => new Map(decks.map((d) => [d.id, d])), [decks])
 
@@ -854,6 +888,7 @@ export default function App() {
           onClose={() => setDetailsDeck(null)}
           onPlay={handlePlay}
           onRemove={canEdit ? handleRemove : undefined}
+          onNotify={setToast}
           isFavorite={favSet.has(detailsDeck.id)}
           onToggleFavorite={() => toggleFavorite(detailsDeck)}
           onSearch={(q) => {

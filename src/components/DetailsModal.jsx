@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import Cover from './Cover.jsx'
+import ShareMenu from './ShareMenu.jsx'
 import { useClosable } from '../lib/useClosable.js'
 import {
   PlayIcon,
@@ -11,6 +12,7 @@ import {
 } from '../lib/icons.jsx'
 
 export default function DetailsModal({
+  onNotify,
   deck,
   onClose,
   onPlay,
@@ -73,6 +75,7 @@ export default function DetailsModal({
               )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              <ShareMenu deck={deck} onNotify={onNotify} />
               {onToggleFavorite && (
                 <button
                   onClick={onToggleFavorite}
