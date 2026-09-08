@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTaxonomy } from './lib/taxonomy.jsx'
+import { clearDemoPin } from './lib/demoPin.js'
 import { sharedDeckId, syncDeckUrl } from './lib/share.js'
 import {
   api,
@@ -40,6 +41,7 @@ import OfflineBanner from './components/OfflineBanner.jsx'
 import LoadMore from './components/LoadMore.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import VerifyPage from './components/VerifyPage.jsx'
+import ConfirmDialog from './components/ConfirmDialog.jsx'
 import DemoCenter from './components/DemoCenter.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import DemoWizard from './components/DemoWizard.jsx'
@@ -105,6 +107,10 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState('home')
   const [detailsDeck, setDetailsDeck] = useState(null)
   const [playing, setPlaying] = useState(null) // { deck, startIndex }
+  // The deck waiting on a confirmation. Declared here with the rest of the
+  // state: below the sign-in early return it would be a hook that only exists
+  // for signed-in renders, and React counts them.
+  const [pendingRemoval, setPendingRemoval] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   // The deck currently open in the editor, plus its in-flight save state.
   const [editingDeck, setEditingDeck] = useState(null)
@@ -616,6 +622,10 @@ export default function App() {
 
   const handleLogout = () => {
     clearAuth()
+    // The PIN belongs to whoever typed it, not to the machine. Leaving it
+    // behind let the next person to sign in walk straight into the Demo
+    // Center without being asked.
+    clearDemoPin()
     setUser(null)
     setActiveCategory('home')
     setQuery('')
@@ -688,9 +698,12 @@ export default function App() {
     }
   }
 
-  const handleRemove = async (deck) => {
+  const handleRemove = (deck) => {
     if (!canEdit) return
-    if (!confirm(`Remove "${deck.title}" from the catalog? This can't be undone.`)) return
+    setPendingRemoval(deck)
+  }
+
+  const removeDeck = async (deck) => {
     try {
       await api.deleteDeck(deck.id)
       setDecks((prev) => prev.filter((d) => d.id !== deck.id))
@@ -906,6 +919,19 @@ export default function App() {
           })}
         />
       )}
+
+      <ConfirmDialog
+        open={!!pendingRemoval}
+        title="Remove this deck?"
+        message={
+          pendingRemoval
+            ? `"${pendingRemoval.title}" will be taken out of the catalog. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Remove"
+        onConfirm={() => removeDeck(pendingRemoval)}
+        onClose={() => setPendingRemoval(null)}
+      />
 
       {playing && (
         <DeckPlayer

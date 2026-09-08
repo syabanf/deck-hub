@@ -449,7 +449,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
               <CloseIcon size={18} />
             </button>
 
-            <div className="px-7 pt-7 pb-3">
+            <div className="px-4 pt-6 pb-3 sm:px-7 sm:pt-7">
               <h2 className="text-2xl font-black tracking-tight">Add a deck</h2>
               <p className="text-sm text-deck-muted mt-1">
                 Upload a PDF, paste a hosted slides link, or embed a video demo.
@@ -462,7 +462,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
               <Tab active={tab === 'video'} onClick={() => setTab('video')} icon={<VideoIcon width={16} height={16} />} label="Video demo" />
             </div>
 
-            <div className="grid md:grid-cols-[1fr_240px] gap-6 p-7 max-h-[70vh] overflow-y-auto thin-scroll">
+            <div className="grid md:grid-cols-[1fr_240px] gap-5 sm:gap-6 p-4 sm:p-7 max-h-[76vh] sm:max-h-[70vh] overflow-y-auto thin-scroll">
               <div className="space-y-4">
                 <div key={tab} className="animate-tab-slide">
                   {tab === 'upload' && (

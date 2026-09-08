@@ -54,8 +54,10 @@ function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
       <div className="aspect-deck relative rounded-md overflow-hidden ring-1 ring-deck-border bg-deck-card shadow-lg card-tilt group-hover:ring-white/20">
         <Cover deck={deck} sizeClass="text-sm" minimal onCategoryClick={onCategoryClick} />
 
-        {/* Hover action cluster over a scrim — matches the home-row cards. */}
-        <div className="absolute inset-x-0 bottom-0 p-3 pt-10 flex items-center gap-1.5 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Action cluster over a scrim. There is no hover on a touch screen, so
+            below md the cluster is simply always visible — otherwise play and
+            bookmark are unreachable on a phone. */}
+        <div className="absolute inset-x-0 bottom-0 p-3 pt-10 flex items-center gap-1.5 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
               e.stopPropagation()

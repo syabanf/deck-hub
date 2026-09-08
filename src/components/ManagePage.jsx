@@ -167,7 +167,8 @@ export default function ManagePage({
 
       {/* Table */}
       <div className="rounded-xl border border-deck-border overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[520px]">
           <thead className="bg-white/5 text-[10px] uppercase tracking-widest text-deck-muted">
             <tr>
               <th className="text-left px-3 py-2 font-bold">Deck</th>
@@ -262,6 +263,7 @@ export default function ManagePage({
             })}
           </tbody>
         </table>
+        </div>
       </div>
       <LoadMore loaded={decks.length} total={total} loading={loading} onLoadMore={onLoadMore} />
     </div>

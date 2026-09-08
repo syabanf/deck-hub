@@ -2,25 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
+import { clearDemoPin, loadDemoPin, saveDemoPin } from '../lib/demoPin.js'
 import { copyToClipboard } from '../lib/share.js'
 import { PlusIcon, TrashIcon, SearchIcon } from '../lib/icons.jsx'
 
 const blank = {
   name: '', category: '', url: '', username: '', password: '',
   notes: '', environment: '', status: '',
-}
-
-// The PIN lives in sessionStorage, so it lasts the tab and no longer. A gate
-// that survives closing the browser is a gate that stops meaning anything.
-const PIN_KEY = 'wit.demoPin'
-const loadPin = () => {
-  try { return sessionStorage.getItem(PIN_KEY) || '' } catch { return '' }
-}
-const savePin = (pin) => {
-  try { sessionStorage.setItem(PIN_KEY, pin) } catch { /* private mode */ }
-}
-const clearPin = () => {
-  try { sessionStorage.removeItem(PIN_KEY) } catch { /* private mode */ }
 }
 
 const ENVIRONMENT_COLOR = {
@@ -33,7 +21,7 @@ const ENVIRONMENT_COLOR = {
 // The credentials for WIT's own product demos, with one click to copy each
 // field into whatever form is asking for it.
 export default function DemoCenter({ canEdit = false, onNotify }) {
-  const [pin, setPin] = useState(loadPin)
+  const [pin, setPin] = useState(loadDemoPin)
   const [pinInput, setPinInput] = useState('')
   const [pinError, setPinError] = useState(null)
   const [demos, setDemos] = useState([])
@@ -60,7 +48,7 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
       // an error over an empty page. It can go stale on its own: an admin
       // changing it invalidates every tab still holding the old one.
       if (e?.code === 'demo_pin_required') {
-        clearPin()
+        clearDemoPin()
         setPin('')
         setPinError('That PIN is no longer accepted. Ask an admin for the current one.')
       } else {
@@ -85,7 +73,7 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
       // rejected here rather than looking accepted until the list comes back
       // empty.
       await api.listDemos(entered)
-      savePin(entered)
+      saveDemoPin(entered)
       setPin(entered)
       setPinInput('')
     } catch (err) {
@@ -378,7 +366,10 @@ export default function DemoCenter({ canEdit = false, onNotify }) {
 
 function DemoCard({ demo, canEdit, onEdit, onToggle, onAskDelete, onDelete, onCancelDelete, confirming, onNotify }) {
   return (
-    <div className={`rounded-xl bg-deck-card border p-4 flex flex-col gap-3 ${demo.active ? 'border-deck-border' : 'border-amber-500/25 bg-amber-500/[0.03]'}`}>
+    // min-w-0: a grid item defaults to min-width:auto, so a long unbreakable
+    // URL stops the card shrinking and it grows past the column — on a phone
+    // that meant a 505px card in a 327px grid, running off the screen.
+    <div className={`min-w-0 rounded-xl bg-deck-card border p-4 flex flex-col gap-3 ${demo.active ? 'border-deck-border' : 'border-amber-500/25 bg-amber-500/[0.03]'}`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="font-bold truncate">{demo.name}</div>

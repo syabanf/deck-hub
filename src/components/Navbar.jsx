@@ -18,9 +18,13 @@ const TRAILING_ITEMS = [
   { id: 'industries', label: 'Industries' },
   // Demo Center carries working credentials, so it is not offered to a guest —
   // and the API refuses them anyway, which is what actually enforces it.
-  { id: 'demos', label: 'Demo Center', requiresAccount: true },
+  // Marked out from the categories either side of it: it is not a shelf of
+  // decks, it hands out credentials, and somebody who does not know it exists
+  // will not go looking for it.
+  { id: 'demos', label: 'Demo Center', requiresAccount: true, accent: true },
   { id: 'mine', label: 'My Library' },
-  { id: 'settings', label: 'Settings' },
+  // Settings is reached from the account menu, which is where the rest of
+  // "things about you and this install" already lives.
 ]
 
 // The categories themselves come from Master Data. They used to be listed here
@@ -102,6 +106,32 @@ const useOverflow = (items, containerRef) => {
 // One nav entry. `fixed` marks the app's own sections, which never move into
 // the overflow menu and whose width is subtracted from the budget first.
 function NavLink({ item, active, onSelect, fixed = false, hidden = false }) {
+  // An accented entry is a different kind of thing from the categories around
+  // it — a tool rather than a shelf of decks — so it gets a border and a key
+  // instead of sitting in the row looking like one more category.
+  if (item.accent) {
+    return (
+      <li
+        data-nav-fixed={fixed ? 'true' : undefined}
+        data-nav-item={fixed ? undefined : 'true'}
+        className={hidden ? 'hidden' : 'shrink-0'}
+      >
+        <button
+          onClick={() => onSelect(item.id)}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
+            active
+              ? 'border-deck-accent/70 bg-deck-accent/15 text-white font-semibold'
+              : 'border-white/20 text-white/75 hover:text-white hover:border-white/45'
+          }`}
+          title="Credentials for the product demos"
+        >
+          <KeyIcon />
+          {item.label}
+        </button>
+      </li>
+    )
+  }
+
   return (
     <li
       data-nav-item={fixed ? undefined : 'true'}
@@ -121,6 +151,18 @@ function NavLink({ item, active, onSelect, fixed = false, hidden = false }) {
         )}
       </button>
     </li>
+  )
+}
+
+// Drawn inline rather than pulled from icons.jsx: it is the only place that
+// needs it, and it is six lines.
+function KeyIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="M10.7 12.3 21 2" />
+      <path d="m17 6 3 3" />
+    </svg>
   )
 }
 
@@ -149,6 +191,8 @@ export default function Navbar({
 }) {
   const { leading, categories: navCategories, trailing: allTrailing, chips: chipItems } = useNavItems()
   const trailing = allTrailing.filter((i) => !i.requiresAccount || (user && !user.guest))
+  // Rendered on its own below lg, where the desktop nav is hidden entirely.
+  const demoItem = trailing.find((i) => i.accent)
   const navListRef = useRef(null)
   const moreRef = useRef(null)
   // Two limits, and the smaller wins. The measurement stops the bar running
@@ -335,6 +379,22 @@ export default function Navbar({
           strip. Without this, phones had no way to browse categories at all. */}
       <div className="lg:hidden border-t border-deck-border/60">
         <div className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
+          {/* Demo Center leads the strip on small screens. It is not in the
+              bottom tab bar and the desktop nav does not exist here, so
+              without this there was no way to reach it from a phone at all. */}
+          {demoItem && (
+            <button
+              onClick={() => onCategoryChange(demoItem.id)}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border transition-colors ${
+                activeCategory === demoItem.id
+                  ? 'border-deck-accent/70 bg-deck-accent/20 text-white'
+                  : 'border-white/25 text-white/80 active:bg-white/15'
+              }`}
+            >
+              <KeyIcon />
+              {demoItem.label}
+            </button>
+          )}
           {chipItems.map((item) => {
             const active = activeCategory === item.id
             return (
