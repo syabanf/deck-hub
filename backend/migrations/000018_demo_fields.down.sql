@@ -1,4 +1,4 @@
 -- 000018_demo_fields.down.sql
-ALTER TABLE demos DROP COLUMN IF EXISTS status;
-ALTER TABLE demos DROP COLUMN IF EXISTS environment;
-ALTER TABLE demos RENAME COLUMN category TO product;
+ALTER TABLE IF EXISTS demos DROP COLUMN IF EXISTS status;
+ALTER TABLE IF EXISTS demos DROP COLUMN IF EXISTS environment;
+ALTER TABLE IF EXISTS demos RENAME COLUMN category TO product;
