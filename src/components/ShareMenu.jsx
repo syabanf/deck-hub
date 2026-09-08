@@ -6,6 +6,8 @@ import { absoluteUrl } from '../lib/api.js'
 import {
   copyToClipboard,
   deckUrl,
+  downloadFilename,
+  downloadUrl,
   downloadable,
   mailtoUrl,
   whatsappUrl,
@@ -180,10 +182,11 @@ export default function ShareMenu({ deck, onNotify }) {
 
           {file ? (
             <a
-              href={absoluteUrl(source)}
-              download
+              href={downloadUrl(deck, absoluteUrl)}
+              download={downloadFilename(deck)}
               className={item}
               onClick={() => setOpen(false)}
+              title={downloadFilename(deck)}
             >
               <span className="w-5 text-center">⇩</span>
               Download the file

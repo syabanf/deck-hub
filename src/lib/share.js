@@ -58,6 +58,33 @@ export const downloadable = (deck) => {
   return typeof raw === 'string' && raw.startsWith('/uploads/')
 }
 
+// What the file should be called once it lands in someone's Downloads folder.
+//
+// Uploads are stored as a UUID plus extension, so without this a client
+// receives be3eb919-349e-4dde-8ab4-ccac581c268a.pdf and has no idea what it
+// is. The deck title is the right name: the Add-deck form fills it in from the
+// uploaded file to begin with, so in the usual case this hands back the very
+// name that was uploaded, and when a deck has been renamed since, the new name
+// is the one that means something.
+export const downloadFilename = (deck) => {
+  const raw = deck?.source?.raw ?? deck?.source?.value ?? ''
+  const ext = (String(raw).match(/\.[a-z0-9]{1,10}$/i) || [''])[0]
+  const base = (deck?.title || 'deck')
+    .replace(/[\\/:*?"<>|]/g, '-') // characters Windows and macOS refuse in a filename
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120)
+  return `${base}${ext}`
+}
+
+// The server sets Content-Disposition from this. It has to come from the
+// server: the `download` attribute is ignored cross-origin, and in development
+// the app and the API sit on different ports.
+export const downloadUrl = (deck, absolute) => {
+  const raw = deck?.source?.raw ?? deck?.source?.value ?? ''
+  return `${absolute(raw)}?download=${encodeURIComponent(downloadFilename(deck))}`
+}
+
 export const copyToClipboard = async (text) => {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)

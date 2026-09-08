@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +36,35 @@ type RouterDeps struct {
 	// the defaults.
 	AuthRateIP      int
 	AuthRateAccount int
+}
+
+// downloadName sanitises a requested download filename.
+//
+// It ends up inside a Content-Disposition header, so anything that could close
+// the quoted string or start a new header line has to go — a name carrying a
+// newline could otherwise inject a header of the caller's choosing. Path
+// separators go too: the value is a filename, and browsers differ on what they
+// do with a path in one.
+func downloadName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r < 0x20 || r == 0x7f: // control characters, newlines included
+			continue
+		case r == '"' || r == '\\' || r == '/' || r == ';':
+			b.WriteRune('-')
+		default:
+			b.WriteRune(r)
+		}
+		if b.Len() > 150 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // NewRouter builds the chi router with middleware and all mounted routes.
@@ -179,6 +209,19 @@ func NewRouter(d RouterDeps) http.Handler {
 			// but without nosniff a browser may ignore that label, sniff the
 			// HTML and execute its scripts against this origin.
 			w.Header().Set("X-Content-Type-Options", "nosniff")
+
+			// ?download=<name> saves the file under a readable name instead of
+			// the UUID it is stored as. The stored name stays a UUID on
+			// purpose — a client-supplied filename in the path could traverse
+			// directories or overwrite an existing upload — so the readable
+			// name is carried here, where it names a download and nothing else.
+			//
+			// The header rather than the frontend's `download` attribute,
+			// because that attribute is ignored cross-origin, and in
+			// development the app and the API are on different ports.
+			if name := downloadName(r.URL.Query().Get("download")); name != "" {
+				w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+			}
 			fileServer.ServeHTTP(w, r)
 		})
 	}
