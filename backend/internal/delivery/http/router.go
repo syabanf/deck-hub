@@ -16,6 +16,7 @@ type RouterDeps struct {
 	Register  *RegistrationHandler
 	Users     *UserHandler
 	Decks     *DeckHandler
+	Taxonomy  *TaxonomyHandler
 	Uploads   *UploadHandler
 	Favorites *FavoriteHandler
 	Progress  *ProgressHandler
@@ -137,6 +138,28 @@ func NewRouter(d RouterDeps) http.Handler {
 			r.Delete("/{id}", d.Decks.Delete)
 		})
 	})
+
+	// Taxonomy: the master lists decks are browsed by — categories, industries
+	// and source types. Reads are public because the browse UI needs them
+	// before anyone signs in; writes are admin only. An editor adding a deck
+	// picks from these lists, but adding to them changes the shape of the
+	// catalog and the site's own navigation, which is not a per-deck decision.
+	if d.Taxonomy != nil {
+		r.Route("/taxonomy/{kind}", func(r chi.Router) {
+			r.Get("/", d.Taxonomy.List)
+			// Before /{slug}, or "unknown" is parsed as a term to look up.
+			r.Get("/unknown", d.Taxonomy.Unknown)
+			r.Get("/{slug}", d.Taxonomy.Get)
+
+			r.Group(func(r chi.Router) {
+				r.Use(d.Tokens.JWTAuth)
+				r.Use(RequireRole("admin"))
+				r.Post("/", d.Taxonomy.Create)
+				r.Put("/{slug}", d.Taxonomy.Update)
+				r.Delete("/{slug}", d.Taxonomy.Delete)
+			})
+		})
+	}
 
 	// Uploads: writing requires an authenticated admin/editor; the stored files
 	// themselves are served publicly so decks can reference them.

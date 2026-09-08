@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
 	// tests assert on counts and would break if the catalog grew.
 	for _, f := range []string{
+		"000010_taxonomy_terms.down.sql",     // reads decks; drop before they go
 		"000008_viewing_progress.down.sql",   // FK → users, decks
 		"000007_email_verification.down.sql", // FK → users
 		"000004_favorites.down.sql",          // FK → users, decks
@@ -73,6 +74,10 @@ func TestMain(m *testing.M) {
 		"000005_deck_indexes.up.sql",
 		"000007_email_verification.up.sql",
 		"000008_viewing_progress.up.sql",
+		// The master lists deck writes are validated against. Without it every
+		// create in this suite would be rejected for naming a category that
+		// does not exist.
+		"000010_taxonomy_terms.up.sql",
 	} {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
@@ -102,7 +107,9 @@ func TestMain(m *testing.M) {
 
 	// Same wiring as cmd/api/main.go — this is what makes it end-to-end.
 	userUC := usecase.NewUserUsecase(postgres.NewUserRepository(pool))
-	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool))
+	taxonomyRepo := postgres.NewTaxonomyRepository(pool)
+	taxonomyUC := usecase.NewTaxonomyUsecase(taxonomyRepo)
+	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
@@ -122,6 +129,7 @@ func TestMain(m *testing.M) {
 		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
 		Users:     httpdelivery.NewUserHandler(userUC),
 		Decks:     httpdelivery.NewDeckHandler(deckUC),
+		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
 		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
 		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
 		Progress:  httpdelivery.NewProgressHandler(progressUC),
@@ -1388,4 +1396,187 @@ func TestAuthRateLimit(t *testing.T) {
 	if !rl.Allow("ip:203.0.113.9") {
 		t.Fatal("a different address was refused because of another's usage")
 	}
+}
+
+// TestTaxonomy covers the master lists the catalog is browsed by: who may
+// change them, and the two rules that keep a change from quietly breaking
+// decks — a term in use cannot be deleted, and a retired one cannot be
+// attached to anything new.
+func TestTaxonomy(t *testing.T) {
+	admin := adminToken(t)
+
+	t.Run("reads are public", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/taxonomy/categories", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var terms []struct {
+			Slug      string `json:"slug"`
+			Title     string `json:"title"`
+			Active    bool   `json:"active"`
+			DeckCount int    `json:"deckCount"`
+		}
+		decode(t, raw, &terms)
+		if len(terms) == 0 {
+			t.Fatal("no categories returned; migration 000010 should have seeded six")
+		}
+	})
+
+	t.Run("an unknown kind is a 404, not an empty list", func(t *testing.T) {
+		// An empty array would read as "there are none of those", which is a
+		// different and much more confusing answer than "no such collection".
+		status, raw := do(t, http.MethodGet, "/taxonomy/colours", "", nil)
+		requireStatus(t, http.StatusNotFound, status, raw)
+	})
+
+	t.Run("a non-admin cannot change the lists", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "E2E Taxonomy Editor", "email": "e2e-taxonomy-editor@wit.id",
+			"password": "editor12345", "role": "editor", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var created struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+created.ID, admin, nil) })
+
+		// An editor may create decks, but not the lists decks are filed under.
+		editor := login(t, "e2e-taxonomy-editor@wit.id", "editor12345")
+		status, raw = do(t, http.MethodPost, "/taxonomy/categories", editor,
+			map[string]any{"slug": "editor-made", "title": "Editor made"})
+		requireStatus(t, http.StatusForbidden, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/taxonomy/categories", "",
+			map[string]any{"slug": "anon-made", "title": "Anon made"})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a slug must be url-safe", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/taxonomy/categories", admin,
+			map[string]any{"slug": "Not A Slug", "title": "Nope"})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("colours come in pairs", func(t *testing.T) {
+		// One half of a two-stop gradient renders as a flat black card rather
+		// than as an obvious mistake.
+		status, raw := do(t, http.MethodPost, "/taxonomy/industries", admin,
+			map[string]any{"slug": "half-painted", "title": "Half painted", "accent": "#ff0000"})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("lifecycle", func(t *testing.T) {
+		const slug = "e2e-category"
+		t.Cleanup(func() { do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil) })
+
+		status, raw := do(t, http.MethodPost, "/taxonomy/categories", admin,
+			map[string]any{"slug": slug, "title": "E2E Category"})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var term struct {
+			Slug      string `json:"slug"`
+			SortOrder int    `json:"sortOrder"`
+			Active    bool   `json:"active"`
+			DeckCount int    `json:"deckCount"`
+		}
+		decode(t, raw, &term)
+		if !term.Active {
+			t.Fatal("a new term should be active")
+		}
+		if term.SortOrder == 0 {
+			t.Fatal("a new term should land at the end of the list, not at position zero")
+		}
+
+		// The same slug twice is a conflict, not a silent overwrite.
+		status, raw = do(t, http.MethodPost, "/taxonomy/categories", admin,
+			map[string]any{"slug": slug, "title": "Duplicate"})
+		requireStatus(t, http.StatusConflict, status, raw)
+
+		// A deck can now be filed under it.
+		body := newDeckBody("E2E Taxonomy Deck")
+		body["category"] = slug
+		status, raw = do(t, http.MethodPost, "/decks", admin, body)
+		requireStatus(t, http.StatusCreated, status, raw)
+		var deck struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &deck)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+deck.ID, admin, nil) })
+
+		// And while it does, the term cannot be deleted out from under it.
+		status, raw = do(t, http.MethodGet, "/taxonomy/categories/"+slug, "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		decode(t, raw, &term)
+		if term.DeckCount != 1 {
+			t.Fatalf("expected deckCount 1, got %d", term.DeckCount)
+		}
+
+		status, raw = do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil)
+		requireStatus(t, http.StatusConflict, status, raw)
+
+		// Retiring is the reversible alternative: the deck keeps its category,
+		// and nothing new can be filed under it.
+		status, raw = do(t, http.MethodPut, "/taxonomy/categories/"+slug, admin,
+			map[string]any{"active": false})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		body = newDeckBody("Should Not Exist")
+		body["category"] = slug
+		status, raw = do(t, http.MethodPost, "/decks", admin, body)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+
+		status, raw = do(t, http.MethodGet, "/decks/"+deck.ID, "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		// A retired term is still listed by default, or the only control that
+		// could bring it back would be invisible.
+		status, raw = do(t, http.MethodGet, "/taxonomy/categories?active=true", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		if bytes.Contains(raw, []byte(slug)) {
+			t.Fatal("active=true still returned a retired term")
+		}
+		status, raw = do(t, http.MethodGet, "/taxonomy/categories", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		if !bytes.Contains(raw, []byte(slug)) {
+			t.Fatal("the unfiltered listing hid a retired term")
+		}
+
+		// Once nothing points at it, it can go.
+		status, raw = do(t, http.MethodDelete, "/decks/"+deck.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+		status, raw = do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+	})
+
+	t.Run("unknown values are reported, not hidden", func(t *testing.T) {
+		// The columns are plain text with no foreign key, so a value written
+		// before this table existed still resolves to nothing. Writing one
+		// directly is the only way to reproduce that now.
+		ctx := context.Background()
+		pool, err := postgres.NewPool(ctx, os.Getenv("E2E_DATABASE_URL"))
+		if err != nil {
+			t.Fatalf("pool: %v", err)
+		}
+		defer pool.Close()
+
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO decks (title, category, source_type, source_value)
+			 VALUES ('Orphan', 'no-such-category', 'url', 'https://example.com')`); err != nil {
+			t.Fatalf("insert orphan deck: %v", err)
+		}
+		t.Cleanup(func() {
+			pool2, err := postgres.NewPool(context.Background(), os.Getenv("E2E_DATABASE_URL"))
+			if err != nil {
+				return
+			}
+			defer pool2.Close()
+			pool2.Exec(context.Background(), `DELETE FROM decks WHERE title = 'Orphan'`)
+		})
+
+		status, raw := do(t, http.MethodGet, "/taxonomy/categories/unknown", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		if !bytes.Contains(raw, []byte("no-such-category")) {
+			t.Fatalf("orphaned category not reported: %s", raw)
+		}
+	})
 }

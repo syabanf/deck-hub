@@ -75,6 +75,7 @@ tags:
   - name: Health
   - name: Auth
   - name: Decks
+  - name: Taxonomy
   - name: Users
   - name: Favorites
   - name: Progress
@@ -454,6 +455,170 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /taxonomy/{kind}:
+    parameters:
+      - $ref: "#/components/parameters/TaxonomyKind"
+    get:
+      tags: [Taxonomy]
+      summary: List the terms of one master list
+      description: |
+        Public. These are the lists the catalog is browsed by; they were
+        compiled into the frontend bundle until migration `000010` moved them
+        here, so changing one meant a deploy.
+
+        Retired terms are included by default. Pass `active=true` for the
+        browse UI; the admin screen needs the full list, because a term you
+        cannot see is a term you cannot bring back.
+      parameters:
+        - name: active
+          in: query
+          schema: { type: string, enum: ["true"] }
+          description: Only terms still offered for new decks.
+      responses:
+        "200":
+          description: Terms, ordered by `sortOrder` then `slug`
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Taxonomy]
+      summary: Add a term
+      description: |
+        Requires `admin`. Editors create decks and pick from these lists;
+        changing the lists changes the site's own navigation.
+
+        Omitting `sortOrder` places the term at the end rather than at zero,
+        which would silently reorder the home page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, title]
+              properties:
+                slug:
+                  type: string
+                  pattern: "^[a-z0-9][a-z0-9-]{0,63}$"
+                  description: |
+                    What decks store. Chosen once — it cannot be edited later,
+                    because every deck referring to the old value would be
+                    orphaned with nothing to notice.
+                title:     { type: string, maxLength: 120 }
+                sortOrder: { type: integer }
+                active:    { type: boolean, default: true }
+                accent:    { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+                secondary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A term with this slug already exists for this kind
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /taxonomy/{kind}/unknown:
+    parameters:
+      - $ref: "#/components/parameters/TaxonomyKind"
+    get:
+      tags: [Taxonomy]
+      summary: Values in use that no term defines
+      description: |
+        `decks.category`, `decks.industry` and `decks.source_type` are plain
+        text with no foreign key, so a deck can carry a value no list contains
+        — invisible to every filter that would otherwise find it. This is how
+        those are found and reconciled deliberately, rather than by a migration
+        that fails.
+      responses:
+        "200":
+          description: Unknown values, most used first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    value:     { type: string }
+                    deckCount: { type: integer }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /taxonomy/{kind}/{slug}:
+    parameters:
+      - $ref: "#/components/parameters/TaxonomyKind"
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Taxonomy]
+      summary: Fetch one term
+      responses:
+        "200":
+          description: The term
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Taxonomy]
+      summary: Edit a term
+      description: |
+        Requires `admin`. Everything except the slug, which is the identity
+        decks store. Set `active: false` to retire a term: decks already using
+        it keep working, and it stops being offered for new ones.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:     { type: string, maxLength: 120 }
+                sortOrder: { type: integer }
+                active:    { type: boolean }
+                accent:    { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+                secondary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxonomyTerm" }
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Taxonomy]
+      summary: Remove a term
+      description: |
+        Requires `admin`, and refused while any deck still refers to it. There
+        is no foreign key to stop that, so deleting would leave those decks
+        unreachable from the filter that used to find them. Retire it instead,
+        or move the decks first.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Decks still use this term; the message carries the count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /users:
     get:
       tags: [Users]
@@ -741,7 +906,48 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+  parameters:
+    TaxonomyKind:
+      name: kind
+      in: path
+      required: true
+      description: |
+        Which master list. Plural and hyphenated in the URL; stored singular
+        and snake-cased. An unrecognised value is a 404 — the URL names a
+        collection that does not exist.
+      schema:
+        type: string
+        enum: [categories, industries, source-types]
+
   schemas:
+    TaxonomyTerm:
+      type: object
+      properties:
+        kind:      { type: string, enum: [category, industry, source_type] }
+        slug:
+          type: string
+          description: The value decks store. Immutable after creation.
+        title:     { type: string }
+        sortOrder: { type: integer, description: Browse order; ties break on slug }
+        active:
+          type: boolean
+          description: |
+            False means retired — still valid on existing decks, no longer
+            offered for new ones.
+        accent:
+          type: string
+          description: |
+            Gradient start for the industry cards. Empty for the other kinds,
+            and only ever set together with `secondary`.
+        secondary: { type: string, description: Gradient end; see `accent` }
+        deckCount:
+          type: integer
+          description: |
+            Decks currently using this slug, counted per request rather than
+            stored. Zero is what makes a term safe to delete.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
     Role:
       type: string
       enum: [admin, editor, viewer]

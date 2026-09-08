@@ -12,14 +12,52 @@ import (
 )
 
 // DeckUsecase holds application business rules for decks. It depends only on
-// the domain DeckRepository interface.
+// domain interfaces.
 type DeckUsecase struct {
 	repo domain.DeckRepository
+
+	// taxonomy is what turns the master lists into master data rather than a
+	// list of suggestions. Required, not optional: a wiring that forgot it
+	// would accept anything and nothing would say so until a deck went missing
+	// from its own category.
+	taxonomy domain.TaxonomyRepository
 }
 
-// NewDeckUsecase wires a DeckUsecase with its repository dependency.
-func NewDeckUsecase(repo domain.DeckRepository) *DeckUsecase {
-	return &DeckUsecase{repo: repo}
+// NewDeckUsecase wires a DeckUsecase with its repository dependencies.
+func NewDeckUsecase(repo domain.DeckRepository, taxonomy domain.TaxonomyRepository) *DeckUsecase {
+	return &DeckUsecase{repo: repo, taxonomy: taxonomy}
+}
+
+// checkTerm rejects a value no active term defines.
+//
+// Empty passes: industry is optional, and category and source type are already
+// required by validateDeckCore. Retired terms are rejected too — that is what
+// retiring is for, and decks already carrying one are left alone because this
+// only runs on the fields a write actually touches.
+func (uc *DeckUsecase) checkTerm(ctx context.Context, kind domain.TaxonomyKind, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	ok, err := uc.taxonomy.Exists(ctx, kind, value)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", kind, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: no active %s %q", domain.ErrInvalidInput, kind, value)
+	}
+	return nil
+}
+
+// checkDeckTerms validates every taxonomy field a write is setting.
+func (uc *DeckUsecase) checkDeckTerms(ctx context.Context, category, industry, sourceType string) error {
+	if err := uc.checkTerm(ctx, domain.KindCategory, category); err != nil {
+		return err
+	}
+	if err := uc.checkTerm(ctx, domain.KindIndustry, industry); err != nil {
+		return err
+	}
+	return uc.checkTerm(ctx, domain.KindSourceType, sourceType)
 }
 
 // CreateDeckInput carries the fields needed to create a deck.
@@ -52,6 +90,9 @@ func validateDeckCore(title, category string, source domain.DeckSource) error {
 // Create validates input and persists a new deck.
 func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.Deck, error) {
 	if err := validateDeckCore(in.Title, in.Category, in.Source); err != nil {
+		return nil, err
+	}
+	if err := uc.checkDeckTerms(ctx, in.Category, in.Industry, in.Source.Type); err != nil {
 		return nil, err
 	}
 	if in.Tags == nil {
@@ -217,6 +258,23 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 	}
 	if in.Description != nil {
 		d.Description = *in.Description
+	}
+
+	// Only the fields this request set. A deck that already carries a retired
+	// term keeps it through an unrelated edit; changing it means opting into
+	// the current lists.
+	var newCategory, newIndustry, newSourceType string
+	if in.Category != nil {
+		newCategory = d.Category
+	}
+	if in.Industry != nil {
+		newIndustry = d.Industry
+	}
+	if in.Source != nil {
+		newSourceType = d.Source.Type
+	}
+	if err := uc.checkDeckTerms(ctx, newCategory, newIndustry, newSourceType); err != nil {
+		return nil, err
 	}
 	if in.Featured != nil {
 		d.Featured = *in.Featured
