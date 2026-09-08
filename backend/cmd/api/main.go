@@ -123,6 +123,24 @@ func run() error {
 	// --- Transport: token manager + handlers ---
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
 
+	// Every authenticated request re-reads the account the token names, so
+	// removing or suspending someone takes effect now rather than whenever
+	// their token happens to expire. See SetAccountLookup.
+	tokens.SetAccountLookup(func(ctx context.Context, id string) (string, bool) {
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return "", false
+		}
+		u, err := userUC.GetByID(ctx, uid)
+		if err != nil {
+			return "", false
+		}
+		if u.Status == domain.StatusSuspended {
+			return "", false
+		}
+		return string(u.Role), true
+	})
+
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
 		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
 		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
