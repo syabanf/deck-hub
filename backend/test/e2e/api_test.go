@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	"github.com/wit/wit-backend/internal/domain"
 	logmailer "github.com/wit/wit-backend/internal/mailer/log"
 	"github.com/wit/wit-backend/internal/repository/postgres"
 	"github.com/wit/wit-backend/internal/storage/local"
@@ -63,7 +65,7 @@ func TestMain(m *testing.M) {
 	// be dropped before 000001 can drop those tables, then re-created after. The
 	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
 	// tests assert on counts and would break if the catalog grew.
-	for _, f := range []string{
+	for _, f := range append([]string{
 		// audit_log references users, so it has to go before 000001 drops them.
 		// demos references users too.
 		"000016_demos.down.sql",
@@ -73,26 +75,7 @@ func TestMain(m *testing.M) {
 		"000007_email_verification.down.sql", // FK → users
 		"000004_favorites.down.sql",          // FK → users, decks
 		"000001_init.down.sql",
-		"000001_init.up.sql",
-		"000004_favorites.up.sql",
-		"000005_deck_indexes.up.sql",
-		"000007_email_verification.up.sql",
-		"000008_viewing_progress.up.sql",
-		// The master lists deck writes are validated against. Without it every
-		// create in this suite would be rejected for naming a category that
-		// does not exist.
-		"000010_taxonomy_terms.up.sql",
-		// 000011 narrows the kind constraint; 000012 adds decks.cover_image.
-		// Their down files are not listed above because 000010 drops the whole
-		// table and 000001 drops decks, which covers both.
-		"000011_drop_source_type_terms.up.sql",
-		"000012_deck_cover_image.up.sql",
-		"000013_app_settings.up.sql",
-		"000014_deck_owner.up.sql",
-		"000015_audit_log.up.sql",
-		"000016_demos.up.sql",
-		"000017_demo_pin.up.sql",
-	} {
+	}, schemaUps()...) {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
 			os.Exit(1)
@@ -132,6 +115,23 @@ func TestMain(m *testing.M) {
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
 	tokens := httpdelivery.NewTokenManager(jwtTestSecret, time.Hour)
 
+	// The same wiring production uses, so the suite exercises what actually
+	// runs: a token whose account has been deleted or suspended is refused.
+	tokens.SetAccountLookup(func(ctx context.Context, id string) (string, bool) {
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return "", false
+		}
+		u, err := userUC.GetByID(ctx, uid)
+		if err != nil {
+			return "", false
+		}
+		if u.Status == domain.StatusSuspended {
+			return "", false
+		}
+		return string(u.Role), true
+	})
+
 	// The dev mailer writes the link to the log rather than sending it; the tests
 	// assert on stored state instead of on the message, so nothing here needs a
 	// real transport.
@@ -170,6 +170,47 @@ func TestMain(m *testing.M) {
 	defer srv.Close()
 
 	os.Exit(m.Run())
+}
+
+// schemaUps lists the up-migrations that build the schema these tests run
+// against, in migration order.
+//
+// Read from the directory rather than written out here. The hand-kept list
+// this replaced fell a migration behind — 000018 renamed a column the demo
+// repository selects, and because nothing in the suite touched that table the
+// gap was invisible: the tests were passing against a schema production does
+// not have, which is worse than not testing it at all.
+//
+// The seeds are the deliberate omissions. 000002/000003/000006 fill the
+// catalog and add demo accounts, and this suite asserts on counts; 000009
+// only removes what 000003 added.
+func schemaUps() []string {
+	skip := map[string]bool{
+		"000002_seed_catalog.up.sql":         true,
+		"000003_seed_demo_accounts.up.sql":   true,
+		"000006_seed_team_accounts.up.sql":   true,
+		"000009_remove_demo_accounts.up.sql": true,
+	}
+	matches, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	if err != nil {
+		fmt.Printf("list migrations: %v\n", err)
+		os.Exit(1)
+	}
+	if len(matches) == 0 {
+		fmt.Println("no migrations found — is the working directory right?")
+		os.Exit(1)
+	}
+	sort.Strings(matches)
+
+	ups := make([]string, 0, len(matches))
+	for _, m := range matches {
+		name := filepath.Base(m)
+		if skip[name] {
+			continue
+		}
+		ups = append(ups, name)
+	}
+	return ups
 }
 
 // execSQLFile runs a whole .sql script. The simple protocol is required so a
@@ -230,6 +271,52 @@ func do(t *testing.T, method, path, token string, body any) (int, []byte) {
 		t.Fatalf("read body: %v", err)
 	}
 	return res.StatusCode, respBody
+}
+
+// doWithHeaders is `do` plus extra request headers — the Demo Center's PIN
+// travels in one.
+func doWithHeaders(t *testing.T, method, path, token string, body any, extra map[string]string) (int, []byte) {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		reader = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequest(method, srv.URL+path, reader)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer res.Body.Close()
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return res.StatusCode, respBody
+}
+
+// withPin is the header a Demo Center call carries.
+func withPin(pin string) map[string]string {
+	return map[string]string{httpdelivery.PinHeader: pin}
 }
 
 func decode(t *testing.T, raw []byte, into any) {
@@ -1650,5 +1737,280 @@ func TestTaxonomy(t *testing.T) {
 		if !bytes.Contains(raw, []byte("no-such-category")) {
 			t.Fatalf("orphaned category not reported: %s", raw)
 		}
+	})
+}
+
+// TestDemoCenter covers the gate in front of the credentials.
+//
+// The Demo Center hands out working sign-ins to other people's systems, so its
+// two locks are the ones worth testing directly: an account is required, and
+// so is the shared PIN. Neither had a test, which is how the schema underneath
+// it drifted a migration behind without anybody noticing.
+func TestDemoCenter(t *testing.T) {
+	admin := adminToken(t)
+	const pin = "1234" // the PIN migration 000017 seeds
+
+	t.Run("no token is refused before the PIN is even considered", func(t *testing.T) {
+		status, raw := doWithHeaders(t, http.MethodGet, "/demos", "", nil, withPin(pin))
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a signed-in caller without the PIN gets its own error code", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/demos", admin, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+
+		var out struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		decode(t, raw, &out)
+		// The frontend keys on this to show the PIN screen rather than
+		// signing the person out of the whole app.
+		if out.Error.Code != "demo_pin_required" {
+			t.Fatalf("error code = %q, want demo_pin_required", out.Error.Code)
+		}
+	})
+
+	t.Run("lifecycle", func(t *testing.T) {
+		status, raw := doWithHeaders(t, http.MethodPost, "/demos", admin, map[string]any{
+			"name":        "E2E Demo",
+			"category":    "Testing",
+			"url":         "https://demo.example.com",
+			"username":    "demo@wit.id",
+			"password":    "  spaces matter  ",
+			"environment": "Development",
+			"status":      "Active",
+		}, withPin(pin))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var created struct {
+			ID       string `json:"id"`
+			URL      string `json:"url"`
+			Password string `json:"password"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() {
+			doWithHeaders(t, http.MethodDelete, "/demos/"+created.ID, admin, nil, withPin(pin))
+		})
+
+		// A demo password is copied into someone else's login form, so it has
+		// to come back exactly as it was stored — leading spaces included.
+		if created.Password != "  spaces matter  " {
+			t.Fatalf("password = %q, want it untrimmed", created.Password)
+		}
+
+		status, raw = doWithHeaders(t, http.MethodGet, "/demos/"+created.ID, admin, nil, withPin(pin))
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = doWithHeaders(t, http.MethodPut, "/demos/"+created.ID, admin,
+			map[string]any{"category": "Edited"}, withPin(pin))
+		requireStatus(t, http.StatusOK, status, raw)
+	})
+
+	t.Run("a URL is stored as something a browser can follow", func(t *testing.T) {
+		// A bare host in an href is a relative link: it resolves against this
+		// app and goes nowhere. One of the imported rows was exactly that.
+		status, raw := doWithHeaders(t, http.MethodPost, "/demos", admin, map[string]any{
+			"name": "E2E Schemeless", "url": "dashboard.example.com/app",
+		}, withPin(pin))
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var created struct {
+			ID  string `json:"id"`
+			URL string `json:"url"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() {
+			doWithHeaders(t, http.MethodDelete, "/demos/"+created.ID, admin, nil, withPin(pin))
+		})
+		if created.URL != "https://dashboard.example.com/app" {
+			t.Fatalf("url = %q, want the scheme filled in", created.URL)
+		}
+
+		// And a scheme that executes rather than navigates is refused outright.
+		status, raw = doWithHeaders(t, http.MethodPost, "/demos", admin, map[string]any{
+			"name": "E2E Script", "url": "javascript:alert(1)",
+		}, withPin(pin))
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("a viewer may read the credentials but not change them", func(t *testing.T) {
+		const email, pass = "e2e-demo-viewer@wit.id", "viewer12345"
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "Demo Viewer", "email": email, "password": pass,
+			"role": "viewer", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var viewer struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &viewer)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+viewer.ID, admin, nil) })
+
+		viewerToken := login(t, email, pass)
+
+		status, raw = doWithHeaders(t, http.MethodGet, "/demos", viewerToken, nil, withPin(pin))
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = doWithHeaders(t, http.MethodPost, "/demos", viewerToken,
+			map[string]any{"name": "nope"}, withPin(pin))
+		requireStatus(t, http.StatusForbidden, status, raw)
+
+		// The PIN is not the permission. Holding it does not make a viewer an
+		// editor, and not holding it does not make an admin one either.
+		status, raw = do(t, http.MethodPut, "/demos/pin", viewerToken, map[string]string{"pin": "9999"})
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+
+	t.Run("wrong PINs are rate limited", func(t *testing.T) {
+		// A four-digit PIN is 10,000 guesses. Without a limit an account could
+		// work through them; with one, the same search takes days and is loud.
+		const email, pass = "e2e-pin-bruteforce@wit.id", "viewer12345"
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "PIN Prober", "email": email, "password": pass,
+			"role": "viewer", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var prober struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &prober)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+prober.ID, admin, nil) })
+
+		token := login(t, email, pass)
+
+		limited := false
+		for i := 0; i < 20; i++ {
+			status, _ := doWithHeaders(t, http.MethodGet, "/demos", token, nil, withPin("0000"))
+			if status == http.StatusTooManyRequests {
+				limited = true
+				break
+			}
+			if status != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: status = %d, want 401 or 429", i, status)
+			}
+		}
+		if !limited {
+			t.Fatal("twenty wrong PINs in a row were all answered — the guesses are not being counted")
+		}
+	})
+}
+
+// TestTokenRevocation is the other half of "remove this user".
+//
+// A JWT is a snapshot: nothing about deleting an account or suspending it
+// reaches a token already in a browser, so without a check on every request
+// the button in the admin screen does nothing for as long as the token lives.
+func TestTokenRevocation(t *testing.T) {
+	admin := adminToken(t)
+
+	newUser := func(t *testing.T, email, pass, role string) (string, string) {
+		t.Helper()
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "Revocation Subject", "email": email, "password": pass,
+			"role": role, "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var u struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &u)
+		return u.ID, login(t, email, pass)
+	}
+
+	t.Run("a deleted account's token stops working", func(t *testing.T) {
+		id, token := newUser(t, "e2e-revoked@wit.id", "revoked12345", "editor")
+
+		status, raw := do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = do(t, http.MethodDelete, "/users/"+id, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		status, raw = do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a suspended account's token stops working", func(t *testing.T) {
+		id, token := newUser(t, "e2e-suspended@wit.id", "suspended12345", "editor")
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+id, admin, nil) })
+
+		status, raw := do(t, http.MethodPut, "/users/"+id, admin, map[string]string{"status": "suspended"})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("a demotion takes effect on the next request", func(t *testing.T) {
+		id, token := newUser(t, "e2e-demoted@wit.id", "demoted12345", "editor")
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+id, admin, nil) })
+
+		// The token still says "editor" — the database is what decides.
+		status, raw := do(t, http.MethodPut, "/users/"+id, admin, map[string]string{"role": "viewer"})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/decks", token, newDeckBody("after demotion"))
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+}
+
+// TestMeProfile covers the account's own page: what it can read, and the one
+// thing it can change.
+func TestMeProfile(t *testing.T) {
+	admin := adminToken(t)
+
+	const email, first, second = "e2e-profile@wit.id", "profile12345", "profile-second-67890"
+	status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+		"name": "Profile Owner", "email": email, "password": first,
+		"role": "editor", "status": "active",
+	})
+	requireStatus(t, http.StatusCreated, status, raw)
+	var u struct {
+		ID string `json:"id"`
+	}
+	decode(t, raw, &u)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+u.ID, admin, nil) })
+
+	token := login(t, email, first)
+
+	t.Run("reads its own record and deck count", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/me", token, nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var me struct {
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			DeckCount int    `json:"deckCount"`
+		}
+		decode(t, raw, &me)
+		if me.Email != email || me.Role != "editor" {
+			t.Fatalf("me = %+v, want %s/editor", me, email)
+		}
+		if me.DeckCount != 0 {
+			t.Fatalf("deckCount = %d, want 0 before this account has added anything", me.DeckCount)
+		}
+	})
+
+	t.Run("the current password has to be right", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/me/password", token, map[string]string{
+			"currentPassword": "not-the-password", "newPassword": second,
+		})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("changing it invalidates the old one", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/me/password", token, map[string]string{
+			"currentPassword": first, "newPassword": second,
+		})
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		status, raw = do(t, http.MethodPost, "/auth/login", "", map[string]string{
+			"email": email, "password": first,
+		})
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+
+		login(t, email, second) // fatals if the new one does not work
 	})
 }
