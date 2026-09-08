@@ -24,8 +24,18 @@ info:
     | `editor` | create/update/delete decks, upload files  |
     | `viewer` | read, and manage their own favourites     |
 
-    Reads on `/decks` and `/users` are public. A 401 on an authenticated call
-    means the token is missing, malformed, or expired.
+    Reads on `/decks` are public; `/users` is admin-only.
+
+    A 401 on an authenticated call means the token is missing, malformed,
+    expired — **or that the account behind it no longer exists or has been
+    suspended**. Every authenticated request re-reads that account, and the
+    role that governs the request is the one in the database, not the one in
+    the token. A JWT is a snapshot of the moment it was signed; without that
+    check, deleting a user would do nothing until their token happened to
+    expire, which is a whole day at the default `JWT_TTL`.
+
+    So a client cannot treat a 401 as "sign in again and it will work". It
+    might, or the account may be gone.
 
     ## Errors
 
@@ -50,6 +60,12 @@ info:
     Exceeding either returns `429` with `Retry-After`. Defaults are 10 per
     minute per address and 5 per account (`AUTH_RATE_IP`, `AUTH_RATE_ACCOUNT`) —
     raise the first for an office behind a single NAT.
+
+    Two other places verify a secret and are limited for the same reasons:
+    `PUT /me/password`, per account, and the Demo Center's `X-Demo-Pin`, five
+    *wrong* PINs per account per minute. A correct PIN spends nothing, so the
+    app calling `/demos` on every page load never meets the limit — but a
+    four-digit PIN stops being ten thousand cheap guesses.
 
     ## Paging
 
@@ -559,6 +575,11 @@ paths:
         be able to skip proving they know it. Without that step a stolen token
         could replace the password outright, which is the difference between
         losing a session and losing an account.
+
+        Rate limited per account, like signing in and for the same two
+        reasons: verifying the current password makes this an oracle for
+        guessing it, and each attempt costs the server a bcrypt comparison
+        that any authenticated client could otherwise demand on repeat.
       requestBody:
         required: true
         content:
@@ -577,6 +598,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /settings:
     get:
@@ -1022,6 +1044,11 @@ paths:
         A PIN that has never been set refuses everything rather than serving
         the credentials ungated.
 
+        Wrong PINs are counted, per account, and five a minute is the
+        allowance: a four-digit PIN is only ten thousand guesses, and an
+        endpoint that counts nothing is an endpoint that hands them over. A
+        correct PIN costs nothing, so ordinary use never meets the limit.
+
         Retired demos are included by default. Pass `active=true` for a list to
         hand somebody; the manage view needs all of them, or retiring one would
         hide the way back.
@@ -1030,7 +1057,7 @@ paths:
         - name: search
           in: query
           schema: { type: string }
-          description: Matches the name or the product. `%` and `_` are literal.
+          description: Matches the name or the category. `%` and `_` are literal.
         - name: active
           in: query
           schema: { type: string, enum: ["true"] }
@@ -1043,6 +1070,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Demo" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
     post:
       tags: [Demos]
       summary: Add a demo
@@ -1064,6 +1092,7 @@ paths:
               schema: { $ref: "#/components/schemas/Demo" }
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /demos/{id}:
@@ -1083,6 +1112,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Demo" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [Demos]
@@ -1104,6 +1134,7 @@ paths:
               schema: { $ref: "#/components/schemas/Demo" }
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
@@ -1113,6 +1144,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -1341,16 +1373,23 @@ components:
     DeckSource:
       type: object
       description: |
-        Where the deck's content lives. `value` is stored verbatim: a YouTube
-        watch URL stays a watch URL, and an uploaded file stays a server-relative
-        `/uploads/...` path. Clients that rewrite it for playback (embed URLs,
-        absolute URLs) must not write the rewritten form back.
+        Where the deck's content lives. `value` keeps the form it was given: a
+        YouTube watch URL stays a watch URL, and an uploaded file stays a
+        server-relative `/uploads/...` path. Clients that rewrite it for
+        playback (embed URLs, absolute URLs) must not write the rewritten form
+        back.
+
+        The one change made on write is the scheme. A `/uploads/...` path is
+        left alone; anything else must be `http://` or `https://`, a missing
+        scheme is filled in with `https://`, and any other scheme is a `400`.
+        The value ends up in an `href` and an iframe `src`, where
+        `javascript:` is script running on the application's own origin.
       required: [type, value]
       properties:
         type:
           type: string
           enum: [pdf, url, video, gslides, embed]
-          description: Not validated as a closed set server-side; these are the values in use.
+          description: A closed set — anything else is a `400`.
         value: { type: string }
 
     Demo:
@@ -1358,8 +1397,28 @@ components:
       properties:
         id:        { type: string, format: uuid }
         name:      { type: string }
-        product:   { type: string, description: Free text; the products are not a master list }
-        url:       { type: string }
+        category:
+          type: string
+          description: |
+            Free text; the categories here are not a master list. What kind of
+            work the demo shows — "Shopfloor", "Human Resources" — which is
+            what the sheet this list came from calls it.
+        environment:
+          type: string
+          description: |
+            Free text: "Development", "Demo WIT", "Confidential". Says how
+            freely the demo may be shown, which is not the same question as
+            whether it works — see `status` — and not the same as `active`.
+        status:
+          type: string
+          description: Free text; whether the demo works today.
+        url:
+          type: string
+          description: |
+            Always `http://` or `https://` when it comes back. A value stored
+            without a scheme is normalised on write — a bare host in a link is
+            a *relative* URL and would resolve against the app itself — and any
+            other scheme is refused, `javascript:` above all.
         username:  { type: string }
         password:
           type: string
@@ -1381,9 +1440,16 @@ components:
       type: object
       description: All fields optional on PUT; `name` is required on POST.
       properties:
-        name:      { type: string, maxLength: 500 }
-        product:   { type: string, maxLength: 500 }
-        url:       { type: string, maxLength: 500 }
+        name:        { type: string, maxLength: 500 }
+        category:    { type: string, maxLength: 500 }
+        environment: { type: string, maxLength: 500 }
+        status:      { type: string, maxLength: 500 }
+        url:
+          type: string
+          maxLength: 500
+          description: |
+            `http://` or `https://`. A missing scheme is filled in with
+            `https://`; anything else — `javascript:`, `data:` — is a `400`.
         username:  { type: string, maxLength: 500 }
         password:
           type: string
@@ -1477,6 +1543,20 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: No such resource
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: |
+        Too many attempts. Carries `Retry-After` in seconds, and code
+        `rate_limited`. Applies where a request verifies a secret — signing in,
+        changing your own password, offering the Demo Center PIN — because
+        those are the requests worth guessing at, and each one costs the server
+        a bcrypt comparison.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before trying again.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

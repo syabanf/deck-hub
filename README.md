@@ -24,6 +24,10 @@ Deeper references, all kept in sync with the code:
 | [`backend/docs/API.md`](backend/docs/API.md) | The same reference in Markdown, with runnable curl |
 | [`backend/docs/ACCOUNTS.md`](backend/docs/ACCOUNTS.md) | Demo accounts, in Indonesian, for walkthroughs |
 | [`backend/README.md`](backend/README.md) | Backend internals: architecture, env vars, make targets |
+| [`docs/DEV_SETUP.md`](docs/DEV_SETUP.md) | This machine: ports, databases, what not to touch |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Deploying to production, step by step |
+| [`docs/BACKUP.md`](docs/BACKUP.md) | What to back up, how, and how to restore it |
+| [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | The gates to clear before a release |
 
 ---
 
@@ -347,6 +351,17 @@ npm run build    # frontend, from the repo root
 over `httptest` — no mocks. It is opt-in via `E2E_DATABASE_URL` so a plain
 `go test ./...` skips it, and it **drops and recreates the schema on every run**:
 
+> A skipped suite still prints `ok`. `go test ./...` reports `ok` for
+> `test/e2e` and `test/stress` without having run either, which makes "all
+> tests passed" from that command alone untrue. `make test-e2e` is the one
+> that runs them, and CI runs it on every push — see
+> [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
+
+The schema it builds is read from `backend/migrations/` in order rather than
+from a list in the test file. The list drifted once — one migration behind,
+which meant the suite was proving things about a schema production did not
+have.
+
 ```bash
 createdb wit_test && psql -d wit_test -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
 make test-e2e    # targets $(DB_NAME)_test — never point this at a database you care about
@@ -393,9 +408,10 @@ proxies same-origin, which is why the browser never sees a cross-origin call.
 VITE_API_URL=/api npm run build
 ```
 
-The backend needs `JWT_SECRET` and refuses to start without one. `CORS_ORIGINS`
-must list the browser origins allowed to call it. Run `make migrate-up` **before**
-deploying a build that depends on a new migration.
+The backend needs `JWT_SECRET` and refuses to start without one — or with one
+shorter than 32 characters, which is guessable offline from any token it ever
+signs. `CORS_ORIGINS` must list the browser origins allowed to call it. Run
+`make migrate-up` **before** deploying a build that depends on a new migration.
 
 Four settings decide whether a deployment is actually safe, and the server tells
 you at boot when they are missing:
@@ -406,6 +422,11 @@ you at boot when they are missing:
 | `SMTP_HOST` | Verification emails go to the server log. Nobody can finish signing up |
 | `CORS_ORIGINS` | The browser blocks every call, with nothing in the server log to explain it |
 | `APP_BASE_URL` | Verification links point at the recipient's own machine |
+
+And one that no variable controls, because it lives in the database: the **Demo
+Center PIN** ships as `1234`, hashed in migration `000017` and therefore public.
+Change it from Settings → Master Data on a fresh deployment, before the site is
+used. It is the gate in front of working credentials for client systems.
 
 `/auth/*` is rate limited per address and per account. `/users` is admin-only —
 it returns every account's email and role, which is the target list an attacker
@@ -423,7 +444,7 @@ come from — same compose shape, same nginx, same Postgres major.
 | Tier | Host | Brought up with | Origin |
 | --- | --- | --- | --- |
 | Development | a developer's laptop | `npm run dev` + `go run ./cmd/api` | `:5173`, API on `:8080` |
-| Staging | the same laptop | `docker compose --env-file .env.staging up -d --build` | `:8081` |
+| Staging | the same laptop | [`./staging/staging.sh up`](staging/staging.sh) | `:8081` |
 | Production | the deploy host | `docker compose -f docker-compose.ghcr.yml up -d` | `https://paparan.reddie.id` |
 
 Development is deliberately *not* containerised: Vite's HMR and `go run` are
@@ -435,15 +456,29 @@ production bug this project has had so far lived in exactly that gap.
 Staging builds from the working tree, production pulls tagged images that CI
 already built. Nothing is ever built on the production host.
 
+The staging script runs on the host rather than in Docker, because the machine
+this project is developed on has no Docker daemon. It still closes the gap that
+matters: a production build with `VITE_API_URL=/api`, nginx serving it with the
+repo's own config, `/api` proxied to a second API process on its own database.
+See [`docs/DEV_SETUP.md`](docs/DEV_SETUP.md).
+
 ### Releasing
 
 ```
-branch ──▶ make test && make docs && npm run build   # gate
+branch ──▶ make test && make test-e2e && make docs   # gate
+           npm test && npm run build
        ──▶ staging, opened and clicked through       # proof
-       ──▶ PR ──▶ main                               # CI: :latest and :sha-<sha> to GHCR
+       ──▶ PR ──▶ main                               # CI: tests, then :latest + :sha-<sha> to GHCR
        ──▶ tag vX.Y.Z                                # CI: :vX.Y.Z, :X.Y
        ──▶ production: IMAGE_TAG=vX.Y.Z docker compose … up -d
 ```
+
+CI runs that first line itself, and the image build `needs: test` — so nothing
+reaches the registry, and therefore production, from a commit whose tests have
+not passed. The full list is in
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md); the deploy itself is
+in [`docs/DEPLOY.md`](docs/DEPLOY.md), and the backup to take before it in
+[`docs/BACKUP.md`](docs/BACKUP.md).
 
 Production pins `IMAGE_TAG` to a version tag rather than `latest`. A rollback is
 then editing one variable and running `up -d` again, instead of finding out
