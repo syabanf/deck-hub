@@ -140,6 +140,8 @@ accident. Get the file from the team over a private channel, then:
 
 ```bash
 # Copy it to the host first; do not pipe it through anything that logs.
+# -U and -d are DB_USER and DB_NAME from .env — on the existing production
+# host those are `deck` and `deck_hub`, not these defaults.
 docker compose -f docker-compose.ghcr.yml exec -T db \
   psql -U wit -d wit < seed-demos.local.sql
 
@@ -147,9 +149,13 @@ docker compose -f docker-compose.ghcr.yml exec -T db \
 shred -u seed-demos.local.sql   # or: rm -P on macOS
 ```
 
-The script is idempotent: it inserts rows that are missing and updates the
-ones that exist, matched on name. Running it twice does nothing the first run
-did not already do.
+The script is idempotent: it updates the rows that exist and inserts the ones
+that do not, matched on name. Running it twice leaves 29 rows, not 58 — which
+is worth stating because the first version of it did not, and the difference
+only shows on the second run.
+
+A demo retired in the app stays retired: `active` is set when a row is created
+and never overwritten afterwards.
 
 **4. Check what is public.** Deck browsing is public by design — a shared link
 opens a deck without a sign-in, which is the point of the share button. Users,
@@ -270,8 +276,12 @@ docker compose down
 ```bash
 # 4. Put the new compose file in the SAME directory, so the project name stays
 #    `deck-hub` and the existing volumes are the ones that get mounted.
-#    Keep the old one — it is the rollback.
-cp docker-compose.yml docker-compose.yml.pre-0.1.0
+#
+#    `mv`, not `cp`: with no docker-compose.yml left in the directory, a bare
+#    `docker compose up -d` typed by anyone later fails loudly instead of
+#    quietly starting the old stack on top of a schema that has moved on.
+#    The renamed file is the rollback.
+mv docker-compose.yml docker-compose.yml.pre-0.1.0
 curl -fsSLO https://raw.githubusercontent.com/syabanf/deck-hub/main/docker-compose.ghcr.yml
 curl -fsSLo .env.new https://raw.githubusercontent.com/syabanf/deck-hub/main/.env.production.example
 ```
@@ -290,8 +300,9 @@ curl -fsSLo .env.new https://raw.githubusercontent.com/syabanf/deck-hub/main/.en
 #   CORS_ORIGINS=https://paparan.reddie.id
 #   APP_BASE_URL=https://paparan.reddie.id
 #
-$EDITOR .env.new && cp .env .env.pre-0.1.0 2>/dev/null; mv .env.new .env
-chmod 600 .env
+cp .env .env.pre-0.1.0 2>/dev/null || true   # if the old stack had one
+$EDITOR .env.new
+mv .env.new .env && chmod 600 .env
 ```
 
 ```bash
@@ -317,6 +328,24 @@ docker compose -f docker-compose.ghcr.yml exec -T db psql -U deck -d deck_hub -c
 
 28 decks, 7 users, version 18, `dirty=false`.
 
+```bash
+# 8. Load the demo credentials. The file is not in git and arrives out of
+#    band — see "After the first deploy" for why.
+#
+#    Note the flags: -U deck -d deck_hub. The generic instructions elsewhere
+#    in this document say -U wit -d wit, which are the defaults and are both
+#    wrong on this host.
+docker compose -f docker-compose.ghcr.yml exec -T db \
+  psql -U deck -d deck_hub < seed-demos.local.sql
+
+# 29 rows, and 29 again if it is ever run a second time.
+docker compose -f docker-compose.ghcr.yml exec -T db psql -U deck -d deck_hub -c \
+  'select count(*) total, count(distinct name) unik from demos'
+
+# Then remove it from the host.
+shred -u seed-demos.local.sql
+```
+
 ### After it is up
 
 Everything in [After the first deploy](#after-the-first-deploy-do-not-skip)
@@ -340,7 +369,7 @@ Then, signed in as an admin: open a deck, add one and delete it again, and
 check Settings → Activity recorded all three against your account. The audit
 log starts empty — it records from migration `000015` forward, not backward.
 
-### 8. If it goes wrong
+### 9. If it goes wrong
 
 The volume was never replaced, and the old compose file is still there:
 
