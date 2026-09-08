@@ -45,16 +45,16 @@ import AutoDemo from './components/AutoDemo.jsx'
 
 // Left/right order for swiping between browse sections on touch devices.
 // Settings is intentionally excluded — it's reached by tap, not by swiping.
-const SWIPE_SECTIONS = [
-  'home',
-  'company-profile',
-  'industries',
-  'iconic',
-  'design',
-  'engineering',
-  'strategy',
-  'keynotes',
-  'mine',
+// Sections a swipe steps through, and — via pageQuery below — the set of
+// values that count as a browsable category at all. It used to be this list,
+// hardcoded, which meant a category added in Master Data had no page: the
+// listing query returned null and its grid stayed empty for good.
+const APP_SECTIONS_BEFORE = ['home']
+const APP_SECTIONS_AFTER = ['industries', 'mine']
+const swipeSections = (categoryIds) => [
+  ...APP_SECTIONS_BEFORE,
+  ...categoryIds,
+  ...APP_SECTIONS_AFTER,
 ]
 
 // Bounded fetch sizes. The home page needs a handful of decks per row, not the
@@ -218,12 +218,13 @@ export default function App() {
   // means a swipe that starts on a row carousel scrolls the row instead.
   const navigateSection = (dir) => {
     if (query.trim() || activeIndustry) return // not while searching/filtering
-    const i = SWIPE_SECTIONS.indexOf(activeCategory)
+    const sections = swipeSections(categories.map((c) => c.id))
+    const i = sections.indexOf(activeCategory)
     if (i < 0) return
     const j = i + dir
-    if (j < 0 || j >= SWIPE_SECTIONS.length) return
+    if (j < 0 || j >= sections.length) return
     withPageFade(() => {
-      setActiveCategory(SWIPE_SECTIONS[j])
+      setActiveCategory(sections[j])
       setQuery('')
     }, contentEl.current)
   }
@@ -363,12 +364,13 @@ export default function App() {
   const pageQuery = useMemo(() => {
     if (query.trim()) return { search: query.trim(), industry: activeIndustry || undefined }
     if (activeIndustry) return { industry: activeIndustry }
-    if (SWIPE_SECTIONS.includes(activeCategory) && activeCategory !== 'home' && activeCategory !== 'mine'
-        && activeCategory !== 'industries') {
+    // Any category Master Data knows about is browsable. Checking against the
+    // list rather than a hardcoded set is what lets a new one have a page.
+    if (categories.some((c) => c.id === activeCategory)) {
       return { category: activeCategory }
     }
     return null
-  }, [query, activeIndustry, activeCategory])
+  }, [query, activeIndustry, activeCategory, categories])
 
   const pageKey = pageQuery ? JSON.stringify(pageQuery) : null
 
@@ -1023,6 +1025,13 @@ function HomeRows({
   onAddClick,
   onCategoryNav,
 }) {
+  const { categories } = useTaxonomy()
+  // The six the rows above cover by hand.
+  const curated = ['company-profile', 'iconic', 'design', 'engineering', 'strategy', 'keynotes']
+  const extraCategories = categories.filter(
+    (c) => !curated.includes(c.id) && (byCategory[c.id]?.length ?? 0) > 0,
+  )
+
   return (
     <>
       <Row
@@ -1114,6 +1123,25 @@ function HomeRows({
         onTitleClick={() => onCategoryNav('keynotes')}
         onCategoryClick={onCategoryNav}
       />
+
+      {/* Anything added in Master Data since. The rows above are editorial —
+          hand-written subtitles, interleaved with Most Viewed and Continue
+          watching, one of them a Top Ten — so they are not generated from the
+          list. But a category with no row of its own was invisible on the home
+          page entirely, which made adding one feel like nothing happened. An
+          empty one still gets no row: a title over a blank strip is worse than
+          no title. */}
+      {extraCategories.map((c) => (
+        <Row
+          key={c.id}
+          title={c.title}
+          decks={byCategory[c.id]}
+          onPlay={onPlay}
+          onDetails={onDetails}
+          onTitleClick={() => onCategoryNav(c.id)}
+          onCategoryClick={onCategoryNav}
+        />
+      ))}
 
       <Footer onAddClick={onAddClick} />
     </>

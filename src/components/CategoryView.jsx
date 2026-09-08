@@ -2,6 +2,7 @@ import Cover from './Cover.jsx'
 import DeckFilters, { useDeckFilters } from './DeckFilters.jsx'
 import LoadMore from './LoadMore.jsx'
 import { useFavorites } from '../lib/favoritesContext.jsx'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { PlayIcon, ChevronDown, TrashIcon, BookmarkIcon, BookmarkFilledIcon } from '../lib/icons.jsx'
 
 const HEADERS = {
@@ -140,7 +141,16 @@ export default function CategoryView({
   onCategoryClick,
   canEdit = false,
 }) {
-  const meta = HEADERS[categoryId] || { title: 'Decks', description: '' }
+  const { categories } = useTaxonomy()
+  // Curated copy where it exists; Master Data otherwise. A category added
+  // there used to land here as a page titled "Decks", because HEADERS only
+  // knew the six that shipped with the app.
+  const term = categories.find((c) => c.id === categoryId)
+  const meta = HEADERS[categoryId] || {
+    title: term?.title || 'Decks',
+    description: '',
+    accent: term?.accent,
+  }
   const isEmpty = decks.length === 0
   const { filtered, controls } = useDeckFilters(decks)
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   SearchIcon,
   PlusIcon,
@@ -8,25 +8,29 @@ import {
   InfoIcon,
   PlayIcon,
 } from '../lib/icons.jsx'
+import { useTaxonomy } from '../lib/taxonomy.jsx'
 
-const NAV_ITEMS = [
-  { id: 'home', label: 'Home' },
-  { id: 'company-profile', label: 'Companies' },
+// Sections of the app, as opposed to categories of deck. These are fixed:
+// there is no Master Data entry that could add or remove "Settings".
+const LEADING_ITEMS = [{ id: 'home', label: 'Home' }]
+const TRAILING_ITEMS = [
   { id: 'industries', label: 'Industries' },
-  { id: 'iconic', label: 'Pitch Decks' },
-  { id: 'design', label: 'Design' },
-  { id: 'engineering', label: 'Engineering' },
-  { id: 'strategy', label: 'Strategy' },
-  { id: 'keynotes', label: 'Keynotes' },
   { id: 'mine', label: 'My Library' },
   { id: 'settings', label: 'Settings' },
 ]
 
-// Content categories for the sub-lg chip strip. Home/Industries/Library/
-// Settings are reachable from the bottom tab bar, so they're omitted here.
-const CHIP_ITEMS = NAV_ITEMS.filter((i) =>
-  ['company-profile', 'iconic', 'design', 'engineering', 'strategy', 'keynotes'].includes(i.id),
-)
+// The categories themselves come from Master Data. They used to be listed here
+// with their own short labels — "Companies" for Company Profiles, "Pitch Decks"
+// for Iconic Pitch Decks — which meant a category added in Master Data got no
+// link, and one renamed there kept its old name up here.
+const useNavItems = () => {
+  const { categories } = useTaxonomy()
+  const chips = useMemo(
+    () => categories.map((c) => ({ id: c.id, label: c.title })),
+    [categories],
+  )
+  return { items: [...LEADING_ITEMS, ...chips, ...TRAILING_ITEMS], chips }
+}
 
 export default function Navbar({
   user,
@@ -39,6 +43,7 @@ export default function Navbar({
   activeCategory,
   onCategoryChange,
 }) {
+  const { items: navItems, chips: chipItems } = useNavItems()
   const [scrolled, setScrolled] = useState(false)
 
   useEffect(() => {
@@ -83,7 +88,7 @@ export default function Navbar({
 
         {/* Center: nav items (only desktop) */}
         <ul className="hidden lg:flex items-center justify-center gap-5 xl:gap-6 text-sm whitespace-nowrap">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const active = activeCategory === item.id
             return (
               <li key={item.id}>
@@ -153,7 +158,7 @@ export default function Navbar({
           strip. Without this, phones had no way to browse categories at all. */}
       <div className="lg:hidden border-t border-deck-border/60">
         <div className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
-          {CHIP_ITEMS.map((item) => {
+          {chipItems.map((item) => {
             const active = activeCategory === item.id
             return (
               <button
