@@ -16,8 +16,9 @@ import { useTaxonomy } from '../lib/taxonomy.jsx'
 const LEADING_ITEMS = [{ id: 'home', label: 'Home' }]
 const TRAILING_ITEMS = [
   { id: 'industries', label: 'Industries' },
-  // Demo Center carries working credentials, so it is not offered to a guest —
-  // and the API refuses them anyway, which is what actually enforces it.
+  // Demo Center carries working credentials. Reaching it needs an account and
+  // the shared PIN, both enforced by the API — this flag only keeps it out of
+  // the navigation for anyone who could not use it.
   // Marked out from the categories either side of it: it is not a shelf of
   // decks, it hands out credentials, and somebody who does not know it exists
   // will not go looking for it.
@@ -190,7 +191,7 @@ export default function Navbar({
   onCategoryChange,
 }) {
   const { leading, categories: navCategories, trailing: allTrailing, chips: chipItems } = useNavItems()
-  const trailing = allTrailing.filter((i) => !i.requiresAccount || (user && !user.guest))
+  const trailing = allTrailing.filter((i) => !i.requiresAccount || !!user)
   // Rendered on its own below lg, where the desktop nav is hidden entirely.
   const demoItem = trailing.find((i) => i.accent)
   const navListRef = useRef(null)
@@ -437,7 +438,6 @@ function AccountMenu({ user, onLogout, onNavigate, onOpenTour, onStartDemo }) {
 
   if (!user) return null
 
-  const isGuest = !!user.guest
   const initial = (user.name || user.email || 'U').trim().charAt(0).toUpperCase()
 
   const go = (id) => {
@@ -453,12 +453,8 @@ function AccountMenu({ user, onLogout, onNavigate, onOpenTour, onStartDemo }) {
         aria-label="Account menu"
         aria-expanded={open}
       >
-        <span
-          className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-black ${
-            isGuest ? 'bg-white/15 text-white/80' : 'bg-deck-accent text-white'
-          }`}
-        >
-          {isGuest ? <UserIcon size={15} /> : initial}
+        <span className="flex items-center justify-center w-7 h-7 rounded-full text-xs font-black bg-deck-accent text-white">
+          {initial}
         </span>
         <svg
           width="12"
@@ -479,18 +475,12 @@ function AccountMenu({ user, onLogout, onNavigate, onOpenTour, onStartDemo }) {
         <div className="absolute right-0 mt-2 w-60 rounded-xl bg-deck-bg/95 backdrop-blur-xl border border-deck-border shadow-2xl shadow-black/60 overflow-hidden animate-scale-in origin-top-right z-50">
           {/* Identity */}
           <div className="flex items-center gap-3 px-4 py-3.5 border-b border-deck-border">
-            <span
-              className={`flex items-center justify-center w-10 h-10 rounded-full text-sm font-black shrink-0 ${
-                isGuest ? 'bg-white/15 text-white/80' : 'bg-deck-accent text-white'
-              }`}
-            >
-              {isGuest ? <UserIcon size={18} /> : initial}
+            <span className="flex items-center justify-center w-10 h-10 rounded-full text-sm font-black shrink-0 bg-deck-accent text-white">
+              {initial}
             </span>
             <div className="min-w-0">
               <div className="text-sm font-bold truncate">{user.name || 'You'}</div>
-              <div className="text-xs text-deck-muted truncate">
-                {isGuest ? 'Guest session' : user.email}
-              </div>
+              <div className="text-xs text-deck-muted truncate">{user.email}</div>
             </div>
           </div>
 

@@ -16,22 +16,8 @@ export default function ProfilePage({ user }) {
   const [notice, setNotice] = useState(null)
 
   useEffect(() => {
-    if (user?.guest) return
     api.getMe().then(setMe).catch(setLoadError)
   }, [user])
-
-  // A guest has no account to show. Saying so beats an empty page or a
-  // spinner that never resolves.
-  if (user?.guest) {
-    return (
-      <div className="rounded-xl bg-deck-card border border-deck-border px-5 py-8 text-center">
-        <p className="font-semibold">You are browsing as a guest</p>
-        <p className="text-sm text-deck-muted mt-1">
-          Sign in with an account to see a profile and change a password.
-        </p>
-      </div>
-    )
-  }
 
   const submit = async (e) => {
     e.preventDefault()

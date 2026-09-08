@@ -38,9 +38,9 @@ const safeParse = (raw, fallback) => {
 // ─────────── Viewing history (client-side) ───────────
 // Per-slide resume position powers "Continue watching".
 //
-// Signed-in users sync it to the backend so the shelf follows the account;
-// guests keep it here only. The local copy is always the render source, with
-// the server treated as the durable store behind it.
+// Synced to the backend so the shelf follows the account rather than the
+// browser. The local copy is always the render source, with the server treated
+// as the durable store behind it.
 export const loadHistory = () =>
   safeParse(localStorage.getItem(HISTORY_KEY), {})
 
@@ -84,7 +84,7 @@ export const mergeRemoteHistory = (items) => {
 }
 
 // ─────────── Auth (real JWT from the Go backend) ───────────
-// Stores the signed-in user plus their JWT token (guests have no token).
+// Stores the signed-in user plus their JWT token.
 // The api client reads loadAuth()?.token to authorize requests.
 export const loadAuth = () => safeParse(localStorage.getItem(AUTH_KEY), null)
 

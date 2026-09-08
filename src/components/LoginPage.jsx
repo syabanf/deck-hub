@@ -126,15 +126,6 @@ export default function LoginPage({ onLogin, notice }) {
     setPassword('')
   }
 
-  const continueAsGuest = () => {
-    if (submitting) return
-    setSubmitting(true)
-    setTimeout(
-      () => onLogin({ name: 'Guest', email: null, guest: true, since: Date.now() }),
-      250,
-    )
-  }
-
 
   const switchMode = (next) => {
     setMode(next)
@@ -368,19 +359,11 @@ export default function LoginPage({ onLogin, notice }) {
           <div className="space-y-2.5">
             <button
               type="button"
-              onClick={() => fail('Social sign-in is mocked in this demo. Use email or continue as guest.')}
+              onClick={() => fail('Social sign-in is not wired up. Sign in with your email and password.')}
               className="w-full h-11 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/25 font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors"
             >
               <GoogleIcon size={18} />
               Continue with Google
-            </button>
-            <button
-              type="button"
-              onClick={continueAsGuest}
-              disabled={submitting}
-              className="w-full h-11 rounded-lg bg-transparent hover:bg-white/5 border border-dashed border-white/15 hover:border-white/30 text-sm text-white/80 hover:text-white font-semibold transition-colors disabled:opacity-60"
-            >
-              Continue as guest
             </button>
           </div>
 

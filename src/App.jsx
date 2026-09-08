@@ -40,6 +40,7 @@ import IndustriesPage from './components/IndustriesPage.jsx'
 import OfflineBanner from './components/OfflineBanner.jsx'
 import LoadMore from './components/LoadMore.jsx'
 import LoginPage from './components/LoginPage.jsx'
+import SharedDeckPage from './components/SharedDeckPage.jsx'
 import VerifyPage from './components/VerifyPage.jsx'
 import ConfirmDialog from './components/ConfirmDialog.jsx'
 import DemoCenter from './components/DemoCenter.jsx'
@@ -92,12 +93,16 @@ export default function App() {
   // Reads are public at the API already, so the link is the access — which is
   // what the share menu says on it.
   //
-  // Not persisted: this guest lasts as long as the tab. Someone who came for
-  // one deck should not silently acquire a lasting account on the catalog.
+  // It is access to that one deck, though, and nothing more. This used to mint
+  // a guest session, which rendered the entire application around the player:
+  // close the deck and a stranger was standing in the dashboard, free to browse
+  // everything the company had ever published. A link to one deck now opens one
+  // deck, in SharedDeckPage, which has no way into the rest of the app.
   const [sharedId] = useState(() => sharedDeckId())
-  const [user, setUser] = useState(
-    () => loadAuth() || (sharedDeckId() ? { name: 'Guest', email: null, guest: true, since: Date.now() } : null),
-  )
+  // Set when someone on the shared page asks to sign in, so the link stops
+  // short-circuiting the login screen.
+  const [leftShared, setLeftShared] = useState(false)
+  const [user, setUser] = useState(() => loadAuth())
   const [decks, setDecks] = useState([])
   const [users, setUsers] = useState([])
   const [status, setStatus] = useState('loading') // 'loading' | 'ready' | 'error'
@@ -145,9 +150,10 @@ export default function App() {
   // Ordered newest-first; the source of truth for "My Library".
   const [favoriteIds, setFavoriteIds] = useState(() => loadLocalFavorites())
 
-  const canEdit = !!user && !user.guest && (user.role === 'admin' || user.role === 'editor')
-  const isAdmin = !!user && !user.guest && user.role === 'admin'
-  // Signed-in users persist favorites to the backend; guests use localStorage.
+  const canEdit = !!user && (user.role === 'admin' || user.role === 'editor')
+  const isAdmin = !!user && user.role === 'admin'
+  // Favorites live on the server. localStorage is the pre-response render
+  // source, not a separate store for anyone.
   const favBackend = !!user && !!user.token
   const favSet = useMemo(() => new Set(favoriteIds), [favoriteIds])
   const online = useOnline()
@@ -179,7 +185,7 @@ export default function App() {
       // The user directory is admin-only, and it sits in the same Promise.all as
       // the catalog — so for anyone else a 403 here would fail the whole load and
       // show the error screen instead of the app. Only ask when it's allowed.
-      const wantsUsers = !!user && !user.guest && user.role === 'admin'
+      const wantsUsers = !!user && user.role === 'admin'
 
       const [statsRes, heroRes, topRes, userList, ...rowRes] = await Promise.all([
         api.deckStats(),
@@ -261,8 +267,7 @@ export default function App() {
     [swipeRef],
   )
 
-  // Route progress writes to the backend while signed in. Guests fall through to
-  // localStorage alone, exactly as before.
+  // Route progress writes to the backend while signed in.
   useEffect(() => {
     if (!favBackend) {
       setProgressRecorder(null)
@@ -292,8 +297,7 @@ export default function App() {
     }
   }, [favBackend, user])
 
-  // Pull the signed-in user's favorites from the backend; guests keep whatever
-  // is in localStorage.
+  // Pull the signed-in user's favorites from the backend.
   useEffect(() => {
     if (!favBackend) return
     let cancelled = false
@@ -365,9 +369,15 @@ export default function App() {
 
   // Keep the address bar on whatever is open, so copying from the browser
   // gives the same link the share menu does.
+  //
+  // Only once there is somebody signed in. These hooks still run on the render
+  // that hands a visitor SharedDeckPage instead of the app, and with nothing
+  // open this would strip ?deck= from the address bar — so the link worked
+  // until the visitor pressed reload, and then dropped them on a sign-in form.
   useEffect(() => {
+    if (!user) return
     syncDeckUrl(playing?.deck || detailsDeck || null)
-  }, [playing, detailsDeck])
+  }, [playing, detailsDeck, user])
 
   const byId = useMemo(() => new Map(decks.map((d) => [d.id, d])), [decks])
 
@@ -594,6 +604,11 @@ export default function App() {
     )
   }
 
+  // Before the sign-in screen: a shared link is meant to open without one.
+  if (!user && sharedId && !leftShared) {
+    return <SharedDeckPage deckId={sharedId} onSignIn={() => setLeftShared(true)} />
+  }
+
   if (!user) {
     return (
       <LoginPage
@@ -657,8 +672,7 @@ export default function App() {
 
   const handleDetails = (deck) => setDetailsDeck(deck)
 
-  // Toggle a deck in "My Library". Optimistic, with a revert on API failure;
-  // guests persist to localStorage instead of the backend.
+  // Toggle a deck in "My Library". Optimistic, with a revert on API failure.
   const toggleFavorite = (deck) => {
     const id = deck.id
     const wasFav = favSet.has(id)

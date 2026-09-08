@@ -1,6 +1,6 @@
-// Guest favorites live in localStorage; signed-in users' favorites live in the
-// backend (see api.listFavorites/addFavorite/removeFavorite). App picks which
-// path to use based on whether there's an auth token.
+// Favorites live in the backend (see api.listFavorites/addFavorite/
+// removeFavorite). The copy kept here is what renders before the server has
+// answered, and what a failed write reverts to — not a separate store.
 
 const KEY = 'wit.favorites.v1'
 
