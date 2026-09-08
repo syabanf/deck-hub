@@ -937,10 +937,6 @@ export default function App() {
         <DeckPlayer
           deck={playing.deck}
           startIndex={playing.startIndex}
-          // Siblings from the same category, so "next deck" stays contextual
-          // rather than jumping across the whole catalog.
-          playlist={decks.filter((d) => d.category === playing.deck.category)}
-          onSelectDeck={(d) => handlePlay(d)}
           onClose={() => setPlaying(null)}
         />
       )}

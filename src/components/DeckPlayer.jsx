@@ -155,9 +155,6 @@ export default function DeckPlayer({
   deck,
   startIndex = 0,
   onClose,
-  // Sibling decks so "next" means something even for embeds we can't page.
-  playlist = [],
-  onSelectDeck,
 }) {
   const { closing, requestClose } = useClosable(onClose)
   const [index, setIndex] = useState(startIndex)
@@ -194,14 +191,11 @@ export default function DeckPlayer({
   const goPrev = () => canNavigate && setIndex((i) => Math.max(0, i - 1))
   const goNext = () => canNavigate && setIndex((i) => Math.min(totalSlides - 1, i + 1))
 
-  // Deck-level navigation. Cross-origin embeds (Google Slides, YouTube) can't
-  // be paged from here, so for those this *is* the "next" control.
-  const deckPos = playlist.findIndex((d) => d.id === deck.id)
-  const hasDeckNav = !!onSelectDeck && deckPos !== -1 && playlist.length > 1
-  const hasPrevDeck = hasDeckNav && deckPos > 0
-  const hasNextDeck = hasDeckNav && deckPos < playlist.length - 1
-  const goPrevDeck = () => hasPrevDeck && onSelectDeck(playlist[deckPos - 1])
-  const goNextDeck = () => hasNextDeck && onSelectDeck(playlist[deckPos + 1])
+  // There is deliberately no deck-to-deck navigation here. The player opens
+  // the deck it was given and that is all it does: someone sent a link to one
+  // deck, and stepping sideways out of it into the rest of the catalog is not
+  // something the player should offer — least of all to a person holding a
+  // shared link, who is not meant to be browsing at all.
 
   // Slides start from the top whenever the deck changes.
   useEffect(() => {
@@ -217,16 +211,6 @@ export default function DeckPlayer({
       if (e.key === 'Escape') return requestClose()
       if (e.key === 'f' || e.key === 'F') return toggleFullscreen()
 
-      // N / P always step decks, whichever kind of deck is open.
-      if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault()
-        return goNextDeck()
-      }
-      if (e.key === 'p' || e.key === 'P') {
-        e.preventDefault()
-        return goPrevDeck()
-      }
-
       const next = e.key === 'ArrowRight' || e.key === ' ' || e.key === 'l' || e.key === 'j'
       const prev = e.key === 'ArrowLeft' || e.key === 'h' || e.key === 'k'
 
@@ -235,13 +219,9 @@ export default function DeckPlayer({
         if (prev) { e.preventDefault(); goPrev() }
         if (e.key === 'Home') setIndex(0)
         if (e.key === 'End') setIndex(totalSlides - 1)
-        return
       }
-
-      // Embeds have no slides of our own to page — arrows move between decks.
-      // Space is left alone so it still plays/pauses the embedded player.
-      if (e.key === 'ArrowRight') { e.preventDefault(); goNextDeck() }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); goPrevDeck() }
+      // An embed has no slides of ours to page. Its own controls are inside
+      // the frame, so every key is left to it.
     }
     document.addEventListener('keydown', handler)
     document.body.style.overflow = 'hidden'
@@ -249,7 +229,7 @@ export default function DeckPlayer({
       document.removeEventListener('keydown', handler)
       document.body.style.overflow = ''
     }
-  }, [requestClose, totalSlides, canNavigate, deckPos, playlist.length])
+  }, [requestClose, totalSlides, canNavigate])
 
   useEffect(() => {
     recordView(deck.id, index, totalSlides)
@@ -278,8 +258,8 @@ export default function DeckPlayer({
   // Swipe to page slides (or step decks for embeds), swipe down to close.
   // Ignores the media and control buttons so their own gestures aren't hijacked.
   const swipeRef = useSwipe({
-    onLeft: () => (canNavigate ? goNext() : goNextDeck()),
-    onRight: () => (canNavigate ? goPrev() : goPrevDeck()),
+    onLeft: () => canNavigate && goNext(),
+    onRight: () => canNavigate && goPrev(),
     onDown: () => requestClose(),
     ignore: 'iframe, video, button, a, input',
   })
@@ -408,46 +388,11 @@ export default function DeckPlayer({
                 : 'Slide controls are inside the embed'}
             </span>
           )}
-          {hasDeckNav && (
-            <>
-              <span>·</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-white/10">N</kbd>
-              <kbd className="px-1.5 py-0.5 rounded bg-white/10">P</kbd>
-              <span>deck</span>
-            </>
-          )}
           <span>·</span>
           <kbd className="px-1.5 py-0.5 rounded bg-white/10">Esc</kbd>
           <span>close</span>
         </div>
-        {/* Deck stepper — the only navigation that works for cross-origin
-            embeds, so it's always visible when there are siblings. */}
         <div className="ml-auto flex items-center gap-3">
-          {hasDeckNav && (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={goPrevDeck}
-                disabled={!hasPrevDeck}
-                title="Previous deck (P)"
-                aria-label="Previous deck"
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/25 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span className="font-semibold tabular-nums whitespace-nowrap">
-                Deck {deckPos + 1} / {playlist.length}
-              </span>
-              <button
-                onClick={goNextDeck}
-                disabled={!hasNextDeck}
-                title="Next deck (N)"
-                aria-label="Next deck"
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/25 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          )}
           {canNavigate && (
             <span className="font-semibold tabular-nums">
               {index + 1} / {totalSlides}
