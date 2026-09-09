@@ -167,7 +167,7 @@ curl -s 'localhost:8080/decks?category=engineering&sort=views&limit=5'
 
 | Query        | Notes                                                        |
 |--------------|--------------------------------------------------------------|
-| `search`     | Case-insensitive substring over title/subtitle/author/description |
+| `search`     | Case-insensitive substring over title/subtitle/author/description **and tags** |
 | `category`   | Category id, e.g. `engineering`                              |
 | `industry`   | Industry id, e.g. `tech`                                     |
 | `sourceType` | `pdf` · `url` · `video` · `gslides` · `embed`                |
@@ -196,7 +196,8 @@ curl -s localhost:8080/decks/stats
 
 ```json
 { "total": 69, "featured": 6, "totalViews": 13397,
-  "byCategory": { "engineering": 12 }, "byIndustry": { "tech": 16 } }
+  "byCategory": { "engineering": 12 }, "byIndustry": { "tech": 16 },
+  "byTag": { "AI": 9, "Design Systems": 4 } }
 ```
 
 Exists so a browse screen can show "16 decks in Technology" without downloading

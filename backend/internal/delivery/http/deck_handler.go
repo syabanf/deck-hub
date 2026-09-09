@@ -164,6 +164,7 @@ func (h *DeckHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		"totalViews": stats.TotalViews,
 		"byCategory": stats.ByCategory,
 		"byIndustry": stats.ByIndustry,
+		"byTag":      stats.ByTag,
 	})
 }
 

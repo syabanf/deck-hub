@@ -319,7 +319,7 @@ paths:
         Filters combine with AND. `search` matches title, subtitle, author and
         description, case-insensitively.
       parameters:
-        - { name: search,     in: query, schema: { type: string }, description: "Substring match across title/subtitle/author/description" }
+        - { name: search,     in: query, schema: { type: string }, description: "Substring match across title/subtitle/author/description and the deck's tags" }
         - { name: category,   in: query, schema: { type: string }, example: engineering }
         - { name: industry,   in: query, schema: { type: string }, example: tech }
         - { name: sourceType, in: query, schema: { type: string, enum: [pdf, url, video, gslides, embed] } }
@@ -404,6 +404,16 @@ paths:
                     type: object
                     additionalProperties: { type: integer }
                     example: { tech: 16, finance: 8 }
+                  byTag:
+                    type: object
+                    additionalProperties: { type: integer }
+                    description: |
+                      How many decks carry each distinct tag. Tags are free text
+                      rather than a master list, so this is the only place the
+                      real ones can be read from — the search screen offers the
+                      most-used of them instead of examples hardcoded in the
+                      frontend.
+                    example: { AI: 9, "Design Systems": 4 }
 
   /decks/{id}:
     parameters:

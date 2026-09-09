@@ -116,6 +116,9 @@ type DeckStats struct {
 	TotalViews int64
 	ByCategory map[string]int
 	ByIndustry map[string]int
+	// ByTag counts every distinct tag in the catalog. Tags are free text,
+	// so this is the only place the real ones can be listed from.
+	ByTag map[string]int
 }
 
 // DeckRepository abstracts persistence for decks. Implementations live in the

@@ -564,7 +564,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
                 {showAdvanced && (
                   <div className="space-y-3 animate-tab-slide">
                     <div className="space-y-2">
-                      <FieldLabel>Subtitle <span className="text-white/40">optional</span></FieldLabel>
+                      <FieldLabel>Sub-Title</FieldLabel>
                       <input
                         value={subtitle}
                         onChange={(e) => setSubtitle(e.target.value)}

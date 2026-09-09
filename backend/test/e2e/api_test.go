@@ -2014,3 +2014,67 @@ func TestMeProfile(t *testing.T) {
 		login(t, email, second) // fatals if the new one does not work
 	})
 }
+
+// TestSearchMatchesTags covers the half of "search" that was missing.
+//
+// Tags are part of what a deck is called, and the server was not looking at
+// them. The client's offline fallback filter was — so the same query returned
+// different decks depending on whether the API answered, which is the kind of
+// disagreement nobody reports as a bug because it looks like the search is
+// just bad.
+func TestSearchMatchesTags(t *testing.T) {
+	admin := adminToken(t)
+
+	body := newDeckBody("E2E Tagged Deck")
+	// Deliberately a word that appears nowhere else on the deck.
+	body["tags"] = []string{"quokka"}
+
+	status, raw := do(t, http.MethodPost, "/decks", admin, body)
+	requireStatus(t, http.StatusCreated, status, raw)
+	var created deckPayload
+	decode(t, raw, &created)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+created.ID, admin, nil) })
+
+	t.Run("a tag is matched", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks?search=quokka", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var found []deckPayload
+		decode(t, raw, &found)
+		if len(found) != 1 || found[0].ID != created.ID {
+			t.Fatalf("search by tag returned %d decks, want the one tagged quokka", len(found))
+		}
+	})
+
+	t.Run("the count agrees with the page", func(t *testing.T) {
+		// List and Count build the same clause from one constant. They used to
+		// build it twice, side by side, which is how they would drift.
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/decks?search=quokka&limit=1", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer res.Body.Close()
+		io.Copy(io.Discard, res.Body)
+
+		if got := res.Header.Get("X-Total-Count"); got != "1" {
+			t.Fatalf("X-Total-Count = %q, want 1 — the total does not match the page", got)
+		}
+	})
+
+	t.Run("stats lists the real tags", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks/stats", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var stats struct {
+			ByTag map[string]int `json:"byTag"`
+		}
+		decode(t, raw, &stats)
+		if stats.ByTag["quokka"] != 1 {
+			t.Fatalf("byTag = %v, want quokka counted once", stats.ByTag)
+		}
+	})
+}

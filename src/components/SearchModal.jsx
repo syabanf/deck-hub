@@ -4,7 +4,25 @@ import { useClosable } from '../lib/useClosable.js'
 import { api, normalizeDecks } from '../lib/api.js'
 import { SearchIcon, CloseIcon } from '../lib/icons.jsx'
 
-const SUGGESTIONS = ['Airbnb', 'Tesla', 'Transformer', 'Atomic Design', 'OpenAI', 'Lean Startup']
+// How many tags to offer before a single keystroke.
+const SUGGESTION_COUNT = 6
+
+// The tags actually on decks, most-used first, ties broken alphabetically so
+// the row does not reshuffle itself between renders.
+//
+// This used to be six names written into the file — Airbnb, Tesla, Transformer
+// and so on. They looked like the catalog and were not it: a suggestion that
+// finds nothing is worse than no suggestion, and every one of them had to be
+// edited by hand whenever the catalog moved on. The counts come from
+// /decks/stats, which sees the whole catalog rather than the page the client
+// happens to be holding.
+const topTags = (counts) => {
+  if (!counts) return []
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, SUGGESTION_COUNT)
+    .map(([tag]) => tag)
+}
 
 const matchesQuery = (deck, q) => {
   if (!q) return true
@@ -28,9 +46,11 @@ export default function SearchModal({
   allDecks,
   onPickDeck,
   totalDecks,
+  tagCounts,
 }) {
   const inputRef = useRef(null)
   const [highlight, setHighlight] = useState(0)
+  const suggestions = useMemo(() => topTags(tagCounts), [tagCounts])
   const { closing, requestClose } = useClosable(onClose)
 
   useEffect(() => {
@@ -139,12 +159,16 @@ export default function SearchModal({
         {/* Search box */}
         <div className="relative rounded-full bg-deck-card border-2 border-deck-accent shadow-2xl shadow-deck-accent/30 flex items-center gap-3 px-5 py-3.5">
           <SearchIcon size={20} className="text-white/80 flex-shrink-0" />
+          {/* data-tour is a stable hook for the guided tour: it points at this
+              field by attribute, so changing the placeholder copy cannot quietly
+              break that step the way matching on the text did. */}
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Try ‘pitch deck’, ‘Tesla’, ‘design systems’…"
+            data-tour="search-input"
+            placeholder="Search titles, authors and tags…"
             className="flex-1 bg-transparent outline-none text-base placeholder:text-white/40"
           />
           {query ? (
@@ -166,11 +190,12 @@ export default function SearchModal({
           )}
         </div>
 
-        {/* Suggestions when empty */}
-        {!hasQuery && (
+        {/* Suggestions when empty. Nothing is rendered when the catalog has no
+            tags yet — an empty "Try:" with nothing after it just looks broken. */}
+        {!hasQuery && suggestions.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-xs">
             <span className="text-deck-muted mr-1">Try:</span>
-            {SUGGESTIONS.map((s) => (
+            {suggestions.map((s) => (
               <button
                 key={s}
                 onClick={() => onQueryChange(s)}

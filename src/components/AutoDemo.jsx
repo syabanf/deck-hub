@@ -60,7 +60,7 @@ const STEPS = [
     id: 'searchPanel',
     title: 'Search as you type',
     body: 'Results narrow instantly, and you can jump straight to a deck with ↵.',
-    find: () => q('input[placeholder*="pitch deck"]'),
+    find: () => q('[data-tour="search-input"]') || q('.modal-panel input'),
     hold: 2800,
     cleanup: pressEscape,
   },
@@ -132,7 +132,7 @@ const STEPS = [
   {
     id: 'account',
     title: 'Your account',
-    body: 'Switch demo roles, open Settings, or replay this tour whenever you like.',
+    body: 'Settings, your profile and this tour all live behind the avatar.',
     find: () => q('[aria-label="Account menu"]'),
     action: 'click',
     hold: 2800,

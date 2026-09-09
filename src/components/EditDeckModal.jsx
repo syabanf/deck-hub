@@ -174,7 +174,7 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
             )}
           </Field>
 
-          <Field label="Subtitle">
+          <Field label="Sub-Title">
             <input
               value={subtitle}
               onChange={(e) => setSubtitle(e.target.value)}

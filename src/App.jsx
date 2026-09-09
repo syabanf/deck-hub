@@ -967,6 +967,7 @@ export default function App() {
           onIndustryClick={setActiveIndustry}
           allDecks={decks}
           totalDecks={stats?.total ?? decks.length}
+          tagCounts={stats?.byTag}
           onPickDeck={(deck) => {
             setSearchModalOpen(false)
             setDetailsDeck(deck)

@@ -86,6 +86,20 @@ func escapeLike(s string) string {
 	return s
 }
 
+// searchClause is what `?search=` matches, shared by List and Count so a page
+// and the X-Total-Count above it can never disagree about which decks matched.
+//
+// Tags are in it because they are part of what a deck is called: someone
+// searching "AI" means the decks tagged AI, and without this the server
+// answered with only the ones that happened to say it in their title — while
+// the client's own offline fallback filter *did* match tags, so the two
+// disagreed about the same query depending on whether the API answered.
+//
+// array_to_string rather than unnest, to keep this a single expression that
+// ORs with the other conditions. A tag list is a handful of short words.
+const searchClause = "(title ILIKE $%d OR subtitle ILIKE $%d OR author ILIKE $%d" +
+	" OR description ILIKE $%d OR array_to_string(tags, ' ') ILIKE $%d)"
+
 func (r *DeckRepository) List(ctx context.Context, f domain.DeckFilter) ([]*domain.Deck, error) {
 	var (
 		conds []string
@@ -94,9 +108,7 @@ func (r *DeckRepository) List(ctx context.Context, f domain.DeckFilter) ([]*doma
 	)
 
 	if f.Search != "" {
-		conds = append(conds, fmt.Sprintf(
-			"(title ILIKE $%d OR subtitle ILIKE $%d OR author ILIKE $%d OR description ILIKE $%d)",
-			i, i, i, i))
+		conds = append(conds, fmt.Sprintf(searchClause, i, i, i, i, i))
 		args = append(args, "%"+escapeLike(f.Search)+"%")
 		i++
 	}
@@ -241,9 +253,7 @@ func (r *DeckRepository) Count(ctx context.Context, f domain.DeckFilter) (int, e
 	)
 
 	if f.Search != "" {
-		conds = append(conds, fmt.Sprintf(
-			"(title ILIKE $%d OR subtitle ILIKE $%d OR author ILIKE $%d OR description ILIKE $%d)",
-			i, i, i, i))
+		conds = append(conds, fmt.Sprintf(searchClause, i, i, i, i, i))
 		args = append(args, "%"+escapeLike(f.Search)+"%")
 		i++
 	}
@@ -300,7 +310,12 @@ func (r *DeckRepository) Stats(ctx context.Context) (*domain.DeckStats, error) {
 		UNION ALL
 		SELECT 'featured', '', count(*) FROM decks WHERE featured
 		UNION ALL
-		SELECT 'views', '', coalesce(sum(view_count), 0) FROM decks`
+		SELECT 'views', '', coalesce(sum(view_count), 0) FROM decks
+		UNION ALL
+		-- One row per distinct tag. The search screen offers the real ones
+		-- rather than a list of examples written into the frontend, and the
+		-- client holds only a page of decks so it cannot work them out.
+		SELECT 'tag', t, count(*) FROM decks, unnest(tags) AS t GROUP BY t`
 
 	rows, err := r.pool.Query(ctx, q)
 	if err != nil {
@@ -311,6 +326,7 @@ func (r *DeckRepository) Stats(ctx context.Context) (*domain.DeckStats, error) {
 	out := &domain.DeckStats{
 		ByCategory: map[string]int{},
 		ByIndustry: map[string]int{},
+		ByTag:      map[string]int{},
 	}
 	for rows.Next() {
 		var kind, key string
@@ -333,6 +349,10 @@ func (r *DeckRepository) Stats(ctx context.Context) (*domain.DeckStats, error) {
 		case "industry":
 			if key != "" {
 				out.ByIndustry[key] = n
+			}
+		case "tag":
+			if key != "" {
+				out.ByTag[key] = n
 			}
 		}
 	}

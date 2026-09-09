@@ -35,22 +35,22 @@ const STEPS = [
     title: 'Hover, then open.',
     body: 'Scroll the rows and hover any card for a quick preview and actions. Open a deck to play it full-screen — slide decks, PDFs, Google Slides, and videos all play inline.',
     bullets: [
-      '← / → step through slides',
-      'N / P jump between decks',
+      '← / → step through a PDF',
       'F fullscreen · Esc to close',
+      'Embeds keep their own controls',
     ],
   },
   {
     icon: (s) => <BookmarkIcon size={s} />,
     kicker: 'My Library',
     title: 'Bookmark what matters.',
-    body: 'Tap the bookmark on any card to save it. Your favorites collect under “My Library” and, when you’re signed in, sync to your account across devices.',
+    body: 'Tap the bookmark on any card to save it. Your favorites collect under “My Library” and follow your account, not the browser you happen to be on.',
   },
   {
     icon: (s) => <SearchIcon size={s} />,
     kicker: 'Find fast',
     title: 'Search and filter.',
-    body: 'Press ⌘K (or /) to search the whole catalog instantly. On any category or results page, filter by industry, year, and source type, or re-sort — all without a reload.',
+    body: 'Press ⌘K (or /) to search the whole catalog instantly — titles, authors and tags. On any category or results page, filter by industry, year and source type, or re-sort, all without a reload.',
   },
   {
     icon: (s) => <PlusIcon size={s} />,
@@ -60,9 +60,9 @@ const STEPS = [
   },
   {
     icon: (s) => <UserIcon size={s} />,
-    kicker: 'Try it',
-    title: 'Sign in as any role.',
-    body: 'This is a live demo against a real Go + PostgreSQL backend. Sign out and pick a demo account to feel how permissions change what you can do.',
+    kicker: 'Roles',
+    title: 'What you can do depends on your role.',
+    body: 'Accounts are created by an admin, in Settings → Users, and the role on yours decides what the app offers you. There is no sign-up and no guest access — a deck shared by link opens on its own page, without the rest of the catalog.',
     accounts: true,
   },
 ]
