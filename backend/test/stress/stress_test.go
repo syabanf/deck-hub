@@ -101,18 +101,10 @@ func TestMain(m *testing.M) {
 
 	// Clean schema, then load it up with a realistic amount of data. Drop
 	// favorites first so a leftover FK from an e2e run can't block the reset.
-	for _, f := range append([]string{
-		// Anything with a foreign key into users or decks has to go before
-		// 000001 can drop those tables.
-		// audit_log references users, so it has to go before 000001 drops them.
-		"000016_demos.down.sql",
-		"000015_audit_log.down.sql",
-		"000010_taxonomy_terms.down.sql",
-		"000008_viewing_progress.down.sql",
-		"000007_email_verification.down.sql",
-		"000004_favorites.down.sql",
-		"000001_init.down.sql",
-	}, schemaUps()...) {
+	// Down newest-first, then up, both read from the migrations directory.
+	// The hand-kept down list this replaced had to be remembered every time a
+	// table gained a foreign key into users or decks, and was not.
+	for _, f := range append(schemaDowns(), schemaUps()...) {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s: %v\n", f, err)
 			os.Exit(1)
@@ -183,6 +175,23 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+// schemaDowns lists every down-migration, newest first — the order the
+// dependencies require, and the one golang-migrate itself uses.
+func schemaDowns() []string {
+	matches, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.down.sql"))
+	if err != nil || len(matches) == 0 {
+		fmt.Printf("list down migrations: %v\n", err)
+		os.Exit(1)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+
+	downs := make([]string, 0, len(matches))
+	for _, m := range matches {
+		downs = append(downs, filepath.Base(m))
+	}
+	return downs
 }
 
 // schemaUps lists the up-migrations, in order, that build the schema this

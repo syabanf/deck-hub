@@ -77,4 +77,8 @@ type UserRepository interface {
 	Update(ctx context.Context, u *User) error
 	MarkEmailVerified(ctx context.Context, id uuid.UUID, at time.Time) error
 	Delete(ctx context.Context, id uuid.UUID) error
+	// CountByRole returns how many accounts hold each role. One query
+	// rather than a listing the caller counts, so nothing has to load
+	// every account — and no name or address is read to produce a number.
+	CountByRole(ctx context.Context) (map[Role]int, error)
 }

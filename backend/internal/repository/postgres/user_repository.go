@@ -199,3 +199,28 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+
+// CountByRole returns how many accounts hold each role.
+//
+// Deliberately an aggregate: the caller is the external roles endpoint, and it
+// has no business reading rows that carry names and addresses just to arrive
+// at a count.
+func (r *UserRepository) CountByRole(ctx context.Context) (map[domain.Role]int, error) {
+	const q = `SELECT role, count(*) FROM users GROUP BY role`
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("count users by role: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[domain.Role]int{}
+	for rows.Next() {
+		var role domain.Role
+		var n int
+		if err := rows.Scan(&role, &n); err != nil {
+			return nil, fmt.Errorf("scan role count: %w", err)
+		}
+		out[role] = n
+	}
+	return out, rows.Err()
+}

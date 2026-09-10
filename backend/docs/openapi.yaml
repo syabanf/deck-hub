@@ -100,6 +100,7 @@ tags:
   - name: Favorites
   - name: Progress
   - name: Uploads
+  - name: External
 
 paths:
   /healthz:
@@ -1008,6 +1009,145 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /roles:
+    get:
+      tags: [External]
+      summary: The roles, and how many accounts hold each
+      security:
+        - apiKeyAuth: []
+      description: |
+        The one endpoint something outside this company can call.
+
+        Authenticated by an API key in `X-API-Key` (an `Authorization: Bearer`
+        header is accepted too, because half the HTTP clients in the world
+        reach for that first). Not by a token: the caller is another team's
+        machine, with no account here and no way to get one.
+
+        **It returns no personal data.** Three roles, what each may do, and a
+        count of the accounts holding them — no name, no address, no id. That
+        is deliberate: an API key is the whole of its holder's identity, and a
+        key that leaks must not leak a staff roster with it. Anyone who needs
+        to know *who* holds a role is asking for `/users`, which is admin-only
+        and behind a real account.
+
+        Keys are issued and revoked by an admin, in Settings → Master Data.
+        They are stored hashed, so a revoked key can be told apart from an
+        unknown one internally while both answer the caller identically.
+      responses:
+        "200":
+          description: The role catalog with live counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role:        { type: string, enum: [admin, editor, viewer] }
+                        label:       { type: string, example: Administrator }
+                        description: { type: string, example: Runs the catalog and the team. }
+                        can:
+                          type: array
+                          items: { type: string }
+                          description: What this role may do, in plain words.
+                        userCount:
+                          type: integer
+                          description: How many accounts currently hold it.
+                          example: 1
+        "401":
+          description: |
+            The key is missing, unknown, or revoked. All three answer alike —
+            telling them apart tells somebody working through guesses which of
+            them landed. Code `invalid_api_key`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api-keys:
+    get:
+      tags: [External]
+      summary: List the API keys
+      description: |
+        Admin only. Returns every key ever issued, revoked ones included — a
+        revoked key with a date on it is the answer to most questions anyone
+        brings to this screen.
+
+        The key itself is never returned. Only `prefix`, its readable head, is
+        kept in clear, which is how two keys are told apart after the full
+        value has been shown once.
+      responses:
+        "200":
+          description: Keys, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/APIKey" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [External]
+      summary: Issue an API key
+      description: |
+        Admin only.
+
+        The response carries the plaintext key, and it is the only time it ever
+        will: the row stores a SHA-256 hash and no later read can produce the
+        original. Losing it means issuing a new one — which is the right trade,
+        because a key a database backup hands over is not a credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 200
+                  description: Who the key is for. Free text, read by whoever later decides whether it is still needed.
+                  example: Partner analytics team
+      responses:
+        "201":
+          description: Created. Copy the key now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key: { $ref: "#/components/schemas/APIKey" }
+                  plaintextShownOnce:
+                    type: string
+                    description: The key. Named so nobody has to guess whether it can be fetched again.
+                    example: wit_S3g8QpQ0m5wYq2Uu0kZ8h1cH2s0YbC4gR7pKq9Xw1aE
+        "400": { $ref: "#/components/responses/InvalidInput" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api-keys/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [External]
+      summary: Revoke an API key
+      description: |
+        Admin only. Stops the key working from the next request onwards.
+
+        The row stays. Deleting it would erase who issued the key and when, at
+        exactly the moment somebody is asking — which is why this is a revoke
+        and not a delete. A key already revoked answers 404: there is nothing
+        left to do to it.
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /demos/pin:
     put:
       tags: [Demos]
@@ -1276,6 +1416,15 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        A key issued to something outside this company. It is not an account:
+        it carries no role, cannot sign in, and opens only the routes the
+        router puts behind it. A header rather than a query parameter, so it
+        does not end up written into access logs and browser history.
 
   parameters:
     DemoPin:
@@ -1401,6 +1550,31 @@ components:
           enum: [pdf, url, video, gslides, embed]
           description: A closed set — anything else is a `400`.
         value: { type: string }
+
+    APIKey:
+      type: object
+      description: |
+        An issued key, as the admin screen sees it. The key itself is absent
+        and unrecoverable — only `prefix` survives in readable form.
+      properties:
+        id:     { type: string, format: uuid }
+        name:   { type: string, example: Partner analytics team }
+        prefix:
+          type: string
+          description: The readable head of the key, for telling two apart.
+          example: wit_S3g8QpQ
+        revokedAt:
+          type: string
+          format: date-time
+          description: Present once the key has been revoked. The row is kept either way.
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: |
+            When a request last presented this key. Answers "is anyone still
+            using it?" before revoking, and "since when?" afterwards.
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
 
     Demo:
       type: object

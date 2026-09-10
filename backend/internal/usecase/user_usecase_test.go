@@ -17,9 +17,9 @@ import (
 // fakeUserRepo is an in-memory domain.UserRepository used to prove the usecase
 // layer is testable with no database.
 type fakeUserRepo struct {
-	mu       sync.Mutex
-	byID     map[uuid.UUID]*domain.User
-	byEmail  map[string]*domain.User
+	mu        sync.Mutex
+	byID      map[uuid.UUID]*domain.User
+	byEmail   map[string]*domain.User
 	createErr error
 }
 
@@ -292,4 +292,14 @@ func TestUserUsecase_Authenticate_Suspended(t *testing.T) {
 	if _, err := uc.Authenticate(context.Background(), "sam@example.com", "validpassword"); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized for suspended account, got %v", err)
 	}
+}
+
+func (f *fakeUserRepo) CountByRole(_ context.Context) (map[domain.Role]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[domain.Role]int{}
+	for _, u := range f.byID {
+		out[u.Role]++
+	}
+	return out, nil
 }

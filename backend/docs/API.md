@@ -87,6 +87,8 @@ Enforced at the router, so an unauthorized call never reaches a handler.
 | `/users`              | `admin`                  | `admin`              |
 | `/audit`              | `admin`                  | —                    |
 | `/demos`              | any signed-in user **+ PIN** | `admin`, `editor` **+ PIN** |
+| `/roles`              | **API key**              | —                    |
+| `/api-keys`           | `admin`                  | `admin`              |
 | `/demos/pin`          | —                        | `admin` (no PIN)     |
 | `/me`                 | the account itself       | the account itself   |
 | `/favorites`          | any signed-in user (scoped to them) | |
@@ -97,6 +99,18 @@ which is the target list an attacker wants before guessing a single password.
 
 `POST /decks/{id}/views` is public and unauthenticated — view counts are a
 global signal, not per-user history.
+
+`/roles` is the one endpoint something outside this company can call. It is
+authenticated by an API key in `X-API-Key` — not by a token, because the caller
+is another team's machine with no account here — and it returns no personal
+data at all: the three roles, what each may do, and how many accounts hold
+them. A key that leaks must not leak a staff roster with it. Keys are issued
+and revoked by an admin in Settings → Master Data, stored as a SHA-256 hash,
+and shown in full exactly once.
+
+```bash
+curl -s https://paparan.reddie.id/api/roles -H "X-API-Key: wit_…"
+```
 
 The Demo Center needs both an account and the shared PIN, in `X-Demo-Pin`, on
 every call. Wrong PINs are counted: five a minute per account, then `429`.
@@ -115,6 +129,7 @@ One envelope everywhere, so clients branch on `code` and never parse prose:
 |-----------------|--------|---------------------------------------------|
 | `invalid_input` | 400    | Malformed body, bad UUID, failed validation |
 | `unauthorized`  | 401    | Missing, malformed, or expired token        |
+| `invalid_api_key` | 401  | Missing, unknown or revoked API key         |
 | `forbidden`     | 403    | Authenticated, but the role isn't allowed   |
 | `not_found`     | 404    | No such resource                            |
 | `conflict`      | 409    | Email already registered                    |

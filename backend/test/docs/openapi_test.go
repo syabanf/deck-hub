@@ -17,6 +17,7 @@
 package docs
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	httpdelivery "github.com/wit/wit-backend/internal/delivery/http"
+	"github.com/wit/wit-backend/internal/domain"
 )
 
 const specPath = "../../docs/openapi.yaml"
@@ -70,20 +72,24 @@ func mountedRoutes(t *testing.T) map[string]bool {
 	// prevent. That has now been missed three times, so requireAllHandlersSet
 	// below checks it by reflection instead of by remembering.
 	deps := httpdelivery.RouterDeps{
-		Auth:      httpdelivery.NewAuthHandler(nil, nil),
-		Register:  httpdelivery.NewRegistrationHandler(nil, nil),
-		Users:     httpdelivery.NewUserHandler(nil),
-		Decks:     httpdelivery.NewDeckHandler(nil),
-		Taxonomy:  httpdelivery.NewTaxonomyHandler(nil),
-		Settings:  httpdelivery.NewSettingsHandler(nil),
-		Me:        httpdelivery.NewMeHandler(nil, nil),
-		AuditLog:  httpdelivery.NewAuditHandler(nil),
-		Demos:     httpdelivery.NewDemoHandler(nil),
-		Uploads:   httpdelivery.NewUploadHandler(nil, 0),
-		Favorites: httpdelivery.NewFavoriteHandler(nil),
-		Progress:  httpdelivery.NewProgressHandler(nil),
-		Docs:      httpdelivery.NewDocsHandler(),
-		Tokens:    httpdelivery.NewTokenManager("test-secret", 0),
+		Auth:     httpdelivery.NewAuthHandler(nil, nil),
+		Register: httpdelivery.NewRegistrationHandler(nil, nil),
+		Users:    httpdelivery.NewUserHandler(nil),
+		Decks:    httpdelivery.NewDeckHandler(nil),
+		Taxonomy: httpdelivery.NewTaxonomyHandler(nil),
+		Settings: httpdelivery.NewSettingsHandler(nil),
+		Me:       httpdelivery.NewMeHandler(nil, nil),
+		AuditLog: httpdelivery.NewAuditHandler(nil),
+		Demos:    httpdelivery.NewDemoHandler(nil),
+		APIKeys:  httpdelivery.NewAPIKeyHandler(nil, nil),
+		// The /roles route is mounted only when a verifier is supplied as
+		// well as the handler. Never called: chi only needs it non-nil.
+		APIKeyVerify: stubVerifier{},
+		Uploads:      httpdelivery.NewUploadHandler(nil, 0),
+		Favorites:    httpdelivery.NewFavoriteHandler(nil),
+		Progress:     httpdelivery.NewProgressHandler(nil),
+		Docs:         httpdelivery.NewDocsHandler(),
+		Tokens:       httpdelivery.NewTokenManager("test-secret", 0),
 		// Non-empty so the static /uploads/* route is mounted; never read from.
 		UploadDir: t.TempDir(),
 	}
@@ -281,4 +287,12 @@ func TestOpenAPIRefsResolve(t *testing.T) {
 	if !t.Failed() {
 		t.Logf("%d $ref uses across %d distinct targets, all resolve", total, len(seen))
 	}
+}
+
+// stubVerifier stands in for the API key check so the route it guards is
+// mounted and therefore compared against the spec. No request reaches it.
+type stubVerifier struct{}
+
+func (stubVerifier) Verify(context.Context, string) (*domain.APIKey, error) {
+	return nil, domain.ErrInvalidAPIKey
 }

@@ -4,6 +4,7 @@ import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { settingNumber, useSettings } from '../lib/settings.jsx'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
+import { copyToClipboard } from '../lib/share.js'
 import { PlusIcon, TrashIcon, CloseIcon } from '../lib/icons.jsx'
 
 // The master lists the catalog is browsed by. Until migration 000010 these
@@ -168,6 +169,7 @@ export default function TaxonomyManager({ canManage = false }) {
     <div>
       {canManage && <NavLimit onError={setError} />}
       {canManage && <DemoPin onError={setError} />}
+      {canManage && <ApiKeys onError={setError} />}
 
       <div className="flex items-center gap-1 mb-5 flex-wrap">
         {KINDS.map((k) => (
@@ -580,6 +582,193 @@ function DemoPin({ onError }) {
         </button>
       </div>
     </form>
+  )
+}
+
+// Keys that let a system outside this company call the API.
+//
+// Admin only, and one endpoint wide: a key opens GET /roles and nothing else.
+// That endpoint returns the three roles, what each may do and how many
+// accounts hold them — no names, no addresses — which is what makes handing a
+// key to another team a small decision rather than a large one.
+//
+// The key is shown once, on creation, and never again: the row keeps a
+// SHA-256 hash. Revoked keys stay in the list on purpose, because "who issued
+// this and when" is the question people ask exactly when one has gone wrong.
+function ApiKeys({ onError }) {
+  const [keys, setKeys] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  // The plaintext of the key just created. Held in state, never re-fetchable.
+  const [fresh, setFresh] = useState(null)
+  const [copied, setCopied] = useState(false)
+  const [confirmingId, setConfirmingId] = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      setKeys(await api.listApiKeys())
+    } catch (err) {
+      onError?.(err)
+    } finally {
+      setLoading(false)
+    }
+  }, [onError])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const create = async (e) => {
+    e.preventDefault()
+    if (!name.trim() || busy) return
+    setBusy(true)
+    onError?.(null)
+    try {
+      const res = await api.createApiKey(name.trim())
+      setFresh(res.plaintextShownOnce)
+      setCopied(false)
+      setName('')
+      await load()
+    } catch (err) {
+      onError?.(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const revoke = async (id) => {
+    setConfirmingId(null)
+    onError?.(null)
+    try {
+      await api.revokeApiKey(id)
+      await load()
+    } catch (err) {
+      onError?.(err)
+    }
+  }
+
+  const copyFresh = async () => {
+    if (await copyToClipboard(fresh)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    }
+  }
+
+  const when = (v) => (v ? String(v).slice(0, 10) : '—')
+
+  return (
+    <div className="mb-5 rounded-xl bg-deck-card border border-deck-border px-4 py-3">
+      <div className="text-[11px] uppercase tracking-widest text-deck-muted font-bold">
+        API keys
+      </div>
+      <p className="text-xs text-deck-muted mt-1 leading-snug max-w-2xl">
+        For systems outside WIT. A key opens one endpoint — <code className="text-white/70">GET /api/roles</code>,
+        the roles and how many people hold each — and carries no account, no role and no
+        access to anything else. No names or addresses go through it.
+      </p>
+
+      <form onSubmit={create} className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Who is this key for?"
+          maxLength={200}
+          className="flex-1 min-w-[14rem] h-9 px-3 rounded-lg bg-black/40 border border-white/10 focus:border-white/30 outline-none text-sm"
+        />
+        <button
+          type="submit"
+          disabled={busy || !name.trim()}
+          className="px-3 h-9 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold disabled:opacity-40"
+        >
+          {busy ? 'Issuing…' : 'Issue key'}
+        </button>
+      </form>
+
+      {/* Shown once. Nothing can produce this value again. */}
+      {fresh && (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+          <div className="text-xs font-bold text-amber-300">
+            Copy this now — it cannot be shown again.
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <code className="flex-1 min-w-0 truncate text-xs font-mono text-amber-100">{fresh}</code>
+            <button
+              type="button"
+              onClick={copyFresh}
+              className="px-2.5 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold shrink-0"
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setFresh(null)}
+              className="px-2.5 h-8 rounded-lg bg-transparent border border-white/15 hover:border-white/35 text-xs font-semibold shrink-0"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="mt-3 text-xs text-deck-muted">Loading keys…</div>
+      ) : keys.length === 0 ? (
+        <div className="mt-3 text-xs text-deck-muted">No keys issued yet.</div>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm min-w-[520px]">
+            <thead className="text-[10px] uppercase tracking-widest text-deck-muted">
+              <tr>
+                <th className="text-left px-2 py-1.5 font-bold">Name</th>
+                <th className="text-left px-2 py-1.5 font-bold">Key</th>
+                <th className="text-left px-2 py-1.5 font-bold">Created</th>
+                <th className="text-left px-2 py-1.5 font-bold">Last used</th>
+                <th className="text-right px-2 py-1.5 font-bold" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-deck-border">
+              {keys.map((k) => (
+                <tr key={k.id} className={k.revokedAt ? 'text-deck-muted' : ''}>
+                  <td className="px-2 py-2 font-semibold">{k.name}</td>
+                  <td className="px-2 py-2 font-mono text-xs">{k.prefix}…</td>
+                  <td className="px-2 py-2 text-xs tabular-nums">{when(k.createdAt)}</td>
+                  <td className="px-2 py-2 text-xs tabular-nums">{when(k.lastUsedAt)}</td>
+                  <td className="px-2 py-2 text-right whitespace-nowrap">
+                    {k.revokedAt ? (
+                      <span className="text-xs">Revoked {when(k.revokedAt)}</span>
+                    ) : confirmingId === k.id ? (
+                      <>
+                        <button
+                          onClick={() => revoke(k.id)}
+                          className="text-xs font-bold text-rose-400 hover:text-rose-300"
+                        >
+                          Revoke
+                        </button>
+                        <button
+                          onClick={() => setConfirmingId(null)}
+                          className="ml-3 text-xs text-deck-muted hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmingId(k.id)}
+                        className="text-xs text-deck-muted hover:text-rose-300"
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   )
 }
 

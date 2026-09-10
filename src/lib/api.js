@@ -269,6 +269,15 @@ export const api = {
   // replaced and never read back.
   setDemoPin: (pin) => request('/demos/pin', { method: 'PUT', body: { pin }, auth: true }),
 
+  // API keys for external systems. Admin only.
+  //
+  // createApiKey is the only call that ever returns the key itself, in
+  // `plaintextShownOnce`. Nothing stores it and no later read can produce it,
+  // so a caller that drops that value has to issue a new key.
+  listApiKeys: () => request('/api-keys', { auth: true }),
+  createApiKey: (name) => request('/api-keys', { method: 'POST', body: { name }, auth: true }),
+  revokeApiKey: (id) => request(`/api-keys/${id}`, { method: 'DELETE', auth: true }),
+
   // The activity log. Admin only, and paged like the catalog — it is the one
   // table that only grows.
   listAudit: (params = {}) => {

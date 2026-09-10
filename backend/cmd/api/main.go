@@ -121,6 +121,9 @@ func run() error {
 	log.Printf("uploads stored in %s (max %dMB)", fileStore.Dir(), cfg.MaxUploadMB)
 
 	// --- Transport: token manager + handlers ---
+	apiKeyUC := usecase.NewAPIKeyUsecase(postgres.NewAPIKeyRepository(pool))
+	roleUC := usecase.NewRoleUsecase(userRepo)
+
 	tokens := httpdelivery.NewTokenManager(cfg.JWTSecret, cfg.JWTTTL)
 
 	// Every authenticated request re-reads the account the token names, so
@@ -142,16 +145,20 @@ func run() error {
 	})
 
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
-		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
-		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
-		Users:     httpdelivery.NewUserHandler(userUC),
-		Decks:     httpdelivery.NewDeckHandler(deckUC),
-		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
-		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
-		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
-		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
-		Demos:     httpdelivery.NewDemoHandler(demoUC),
-		AuditRepo: auditRepo,
+		Auth:     httpdelivery.NewAuthHandler(userUC, tokens),
+		Register: httpdelivery.NewRegistrationHandler(registrationUC, tokens),
+		Users:    httpdelivery.NewUserHandler(userUC),
+		Decks:    httpdelivery.NewDeckHandler(deckUC),
+		Taxonomy: httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings: httpdelivery.NewSettingsHandler(settingsUC),
+		Me:       httpdelivery.NewMeHandler(userUC, deckUC),
+		AuditLog: httpdelivery.NewAuditHandler(auditUC),
+		Demos:    httpdelivery.NewDemoHandler(demoUC),
+		APIKeys:  httpdelivery.NewAPIKeyHandler(apiKeyUC, roleUC),
+		// The middleware in front of /roles checks keys with the same
+		// usecase the admin screen issues them from.
+		APIKeyVerify: apiKeyUC,
+		AuditRepo:    auditRepo,
 		// The email is copied into each entry at the time, so a deleted account
 		// does not erase its own history.
 		ActorEmail: func(ctx context.Context, id uuid.UUID) string {

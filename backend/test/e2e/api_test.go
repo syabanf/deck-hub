@@ -61,21 +61,13 @@ func TestMain(m *testing.M) {
 	// Reset the schema so every run starts from the same known state
 	// (000001 also seeds the admin user the tests authenticate with).
 	//
-	// Order matters: everything holding a foreign key into users or decks has to
-	// be dropped before 000001 can drop those tables, then re-created after. The
-	// catalog and demo seeds (000002/000003/000006) are deliberately left out —
-	// tests assert on counts and would break if the catalog grew.
-	for _, f := range append([]string{
-		// audit_log references users, so it has to go before 000001 drops them.
-		// demos references users too.
-		"000016_demos.down.sql",
-		"000015_audit_log.down.sql",
-		"000010_taxonomy_terms.down.sql",     // reads decks; drop before they go
-		"000008_viewing_progress.down.sql",   // FK → users, decks
-		"000007_email_verification.down.sql", // FK → users
-		"000004_favorites.down.sql",          // FK → users, decks
-		"000001_init.down.sql",
-	}, schemaUps()...) {
+	// Down every migration newest-first, then up again. Both halves are read
+	// from the directory: the ups were, the downs were a hand-kept list of the
+	// tables holding a foreign key into users or decks, and adding api_keys —
+	// which references users — broke the reset on the *second* run, because the
+	// first had nothing to drop yet. Reverse order is what golang-migrate does
+	// and what the dependencies actually require.
+	for _, f := range append(schemaDowns(), schemaUps()...) {
 		if err := execSQLFile(ctx, dsn, filepath.Join("..", "..", "migrations", f)); err != nil {
 			fmt.Printf("migration %s failed: %v\n", f, err)
 			os.Exit(1)
@@ -110,6 +102,7 @@ func TestMain(m *testing.M) {
 	auditRepo := postgres.NewAuditRepository(pool)
 	auditUC := usecase.NewAuditUsecase(auditRepo)
 	demoUC := usecase.NewDemoUsecase(postgres.NewDemoRepository(pool), postgres.NewSettingsRepository(pool))
+	apiKeyUC := usecase.NewAPIKeyUsecase(postgres.NewAPIKeyRepository(pool))
 	deckUC := usecase.NewDeckUsecase(postgres.NewDeckRepository(pool), taxonomyRepo)
 	favoriteUC := usecase.NewFavoriteUsecase(postgres.NewFavoriteRepository(pool))
 	progressUC := usecase.NewProgressUsecase(postgres.NewProgressRepository(pool))
@@ -143,21 +136,23 @@ func TestMain(m *testing.M) {
 	)
 
 	router := httpdelivery.NewRouter(httpdelivery.RouterDeps{
-		Auth:      httpdelivery.NewAuthHandler(userUC, tokens),
-		Register:  httpdelivery.NewRegistrationHandler(registrationUC, tokens),
-		Users:     httpdelivery.NewUserHandler(userUC),
-		Decks:     httpdelivery.NewDeckHandler(deckUC),
-		Taxonomy:  httpdelivery.NewTaxonomyHandler(taxonomyUC),
-		Settings:  httpdelivery.NewSettingsHandler(settingsUC),
-		Me:        httpdelivery.NewMeHandler(userUC, deckUC),
-		AuditLog:  httpdelivery.NewAuditHandler(auditUC),
-		Demos:     httpdelivery.NewDemoHandler(demoUC),
-		AuditRepo: auditRepo,
-		Uploads:   httpdelivery.NewUploadHandler(store, 25<<20),
-		Favorites: httpdelivery.NewFavoriteHandler(favoriteUC),
-		Progress:  httpdelivery.NewProgressHandler(progressUC),
-		Tokens:    tokens,
-		UploadDir: store.Dir(),
+		Auth:         httpdelivery.NewAuthHandler(userUC, tokens),
+		Register:     httpdelivery.NewRegistrationHandler(registrationUC, tokens),
+		Users:        httpdelivery.NewUserHandler(userUC),
+		Decks:        httpdelivery.NewDeckHandler(deckUC),
+		Taxonomy:     httpdelivery.NewTaxonomyHandler(taxonomyUC),
+		Settings:     httpdelivery.NewSettingsHandler(settingsUC),
+		Me:           httpdelivery.NewMeHandler(userUC, deckUC),
+		AuditLog:     httpdelivery.NewAuditHandler(auditUC),
+		Demos:        httpdelivery.NewDemoHandler(demoUC),
+		APIKeys:      httpdelivery.NewAPIKeyHandler(apiKeyUC, usecase.NewRoleUsecase(postgres.NewUserRepository(pool))),
+		APIKeyVerify: apiKeyUC,
+		AuditRepo:    auditRepo,
+		Uploads:      httpdelivery.NewUploadHandler(store, 25<<20),
+		Favorites:    httpdelivery.NewFavoriteHandler(favoriteUC),
+		Progress:     httpdelivery.NewProgressHandler(progressUC),
+		Tokens:       tokens,
+		UploadDir:    store.Dir(),
 		// Every request here comes from 127.0.0.1, so the production per-IP
 		// allowance would throttle the suite itself. Raised rather than disabled,
 		// so the middleware still runs on every call it wraps — a limiter that is
@@ -170,6 +165,31 @@ func TestMain(m *testing.M) {
 	defer srv.Close()
 
 	os.Exit(m.Run())
+}
+
+// schemaDowns lists every down-migration, newest first.
+//
+// Reverse order is the order the dependencies require: a table is dropped
+// before the one it points at. Read from the directory for the same reason the
+// ups are — the hand-kept version had to be remembered every time a table
+// gained a foreign key, and was not.
+//
+// The seeds' downs are harmless here (they delete rows 000001's down is about
+// to drop the tables of) and are left in, so this stays a plain reversal with
+// no exceptions to keep straight.
+func schemaDowns() []string {
+	matches, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.down.sql"))
+	if err != nil || len(matches) == 0 {
+		fmt.Printf("list down migrations: %v\n", err)
+		os.Exit(1)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+
+	downs := make([]string, 0, len(matches))
+	for _, m := range matches {
+		downs = append(downs, filepath.Base(m))
+	}
+	return downs
 }
 
 // schemaUps lists the up-migrations that build the schema these tests run
@@ -2076,5 +2096,191 @@ func TestSearchMatchesTags(t *testing.T) {
 		if stats.ByTag["quokka"] != 1 {
 			t.Fatalf("byTag = %v, want quokka counted once", stats.ByTag)
 		}
+	})
+}
+
+// TestAPIKeysAndRoles covers the one endpoint something outside this company
+// can call, and the gate in front of it.
+//
+// The gate matters more than the payload here: a key is the whole of its
+// holder's identity, there is no account behind it and no second factor, so
+// the questions worth asking are what happens without one, with a wrong one,
+// and with one that has been revoked.
+func TestAPIKeysAndRoles(t *testing.T) {
+	admin := adminToken(t)
+
+	t.Run("the roles endpoint refuses an anonymous caller", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/roles", "", nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+
+		var out struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		decode(t, raw, &out)
+		if out.Error.Code != "invalid_api_key" {
+			t.Fatalf("error code = %q, want invalid_api_key", out.Error.Code)
+		}
+	})
+
+	t.Run("a signed-in admin's token is not a key either", func(t *testing.T) {
+		// The two credentials are not interchangeable. A JWT in the
+		// Authorization header must not open a route meant for a key.
+		status, raw := do(t, http.MethodGet, "/roles", admin, nil)
+		requireStatus(t, http.StatusUnauthorized, status, raw)
+	})
+
+	t.Run("issuing a key requires an admin", func(t *testing.T) {
+		const email, pass = "e2e-key-viewer@wit.id", "viewer12345"
+		status, raw := do(t, http.MethodPost, "/users", admin, map[string]string{
+			"name": "Key Viewer", "email": email, "password": pass,
+			"role": "viewer", "status": "active",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		var viewer struct {
+			ID string `json:"id"`
+		}
+		decode(t, raw, &viewer)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/users/"+viewer.ID, admin, nil) })
+
+		viewerToken := login(t, email, pass)
+		status, raw = do(t, http.MethodPost, "/api-keys", viewerToken, map[string]string{"name": "nope"})
+		requireStatus(t, http.StatusForbidden, status, raw)
+	})
+
+	t.Run("a key must be named", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/api-keys", admin, map[string]string{"name": "  "})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("lifecycle", func(t *testing.T) {
+		status, raw := do(t, http.MethodPost, "/api-keys", admin, map[string]string{
+			"name": "E2E External Team",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var created struct {
+			Key struct {
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Prefix string `json:"prefix"`
+			} `json:"key"`
+			Plaintext string `json:"plaintextShownOnce"`
+		}
+		decode(t, raw, &created)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/api-keys/"+created.Key.ID, admin, nil) })
+
+		if !strings.HasPrefix(created.Plaintext, "wit_") {
+			t.Fatalf("key %q does not carry the wit_ prefix that makes a leaked one recognisable", created.Plaintext)
+		}
+		if len(created.Plaintext) < 32 {
+			t.Fatalf("key is only %d characters — that is not 32 random bytes", len(created.Plaintext))
+		}
+		if !strings.HasPrefix(created.Plaintext, created.Key.Prefix) {
+			t.Fatalf("prefix %q does not match the key it is meant to identify", created.Key.Prefix)
+		}
+
+		t.Run("the key opens /roles", func(t *testing.T) {
+			status, raw := doWithHeaders(t, http.MethodGet, "/roles", "", nil,
+				map[string]string{httpdelivery.APIKeyHeader: created.Plaintext})
+			requireStatus(t, http.StatusOK, status, raw)
+
+			var out struct {
+				Roles []struct {
+					Role      string   `json:"role"`
+					Label     string   `json:"label"`
+					Can       []string `json:"can"`
+					UserCount int      `json:"userCount"`
+				} `json:"roles"`
+			}
+			decode(t, raw, &out)
+
+			// Every role the domain enforces has to be described here, or the
+			// external team is reading a list that is quietly out of date.
+			got := map[string]bool{}
+			for _, r := range out.Roles {
+				got[r.Role] = true
+				if r.Label == "" || len(r.Can) == 0 {
+					t.Fatalf("role %q has no label or no permissions listed", r.Role)
+				}
+			}
+			for _, want := range usecase.KnownRoles() {
+				if !got[want] {
+					t.Fatalf("role %q is missing from the response", want)
+				}
+			}
+			if len(got) != 3 {
+				t.Fatalf("got %d roles, want the three the app enforces", len(got))
+			}
+
+			// The admin the suite signs in as is one of them.
+			for _, r := range out.Roles {
+				if r.Role == "admin" && r.UserCount < 1 {
+					t.Fatal("admin count is zero, but this suite is signed in as one")
+				}
+			}
+		})
+
+		t.Run("no personal data leaves through it", func(t *testing.T) {
+			status, raw := doWithHeaders(t, http.MethodGet, "/roles", "", nil,
+				map[string]string{httpdelivery.APIKeyHeader: created.Plaintext})
+			requireStatus(t, http.StatusOK, status, raw)
+
+			// The whole reason this endpoint returns counts rather than a
+			// roster. If someone later "helpfully" adds the users to it, this
+			// fails before an external team ever sees them.
+			body := string(raw)
+			for _, forbidden := range []string{"@", adminEmail, "email", "name\":\"" + "E2E"} {
+				if strings.Contains(body, forbidden) {
+					t.Fatalf("response contains %q — personal data must not leave through an API key:\n%s", forbidden, body)
+				}
+			}
+		})
+
+		t.Run("Authorization: Bearer works too", func(t *testing.T) {
+			status, raw := doWithHeaders(t, http.MethodGet, "/roles", "", nil,
+				map[string]string{"Authorization": "Bearer " + created.Plaintext})
+			requireStatus(t, http.StatusOK, status, raw)
+		})
+
+		t.Run("a wrong key is refused", func(t *testing.T) {
+			status, raw := doWithHeaders(t, http.MethodGet, "/roles", "", nil,
+				map[string]string{httpdelivery.APIKeyHeader: "wit_definitely-not-a-real-key"})
+			requireStatus(t, http.StatusUnauthorized, status, raw)
+		})
+
+		t.Run("the listing never returns the key itself", func(t *testing.T) {
+			status, raw := do(t, http.MethodGet, "/api-keys", admin, nil)
+			requireStatus(t, http.StatusOK, status, raw)
+
+			if strings.Contains(string(raw), created.Plaintext) {
+				t.Fatal("the plaintext key came back from the listing — it is shown once and never again")
+			}
+			if !strings.Contains(string(raw), created.Key.Prefix) {
+				t.Fatal("the prefix is missing, so two keys cannot be told apart on the admin screen")
+			}
+		})
+
+		t.Run("revoking stops it working, and keeps the record", func(t *testing.T) {
+			status, raw := do(t, http.MethodDelete, "/api-keys/"+created.Key.ID, admin, nil)
+			requireStatus(t, http.StatusNoContent, status, raw)
+
+			status, raw = doWithHeaders(t, http.MethodGet, "/roles", "", nil,
+				map[string]string{httpdelivery.APIKeyHeader: created.Plaintext})
+			requireStatus(t, http.StatusUnauthorized, status, raw)
+
+			// The row survives: who issued it and when is the question people
+			// ask precisely when a key has gone wrong.
+			status, raw = do(t, http.MethodGet, "/api-keys", admin, nil)
+			requireStatus(t, http.StatusOK, status, raw)
+			if !strings.Contains(string(raw), created.Key.ID) {
+				t.Fatal("the revoked key vanished from the listing — revoke must not delete")
+			}
+
+			// And revoking twice has nothing left to do.
+			status, raw = do(t, http.MethodDelete, "/api-keys/"+created.Key.ID, admin, nil)
+			requireStatus(t, http.StatusNotFound, status, raw)
+		})
 	})
 }

@@ -26,6 +26,11 @@ type RouterDeps struct {
 	Me       *MeHandler
 	AuditLog *AuditHandler
 	Demos    *DemoHandler
+	APIKeys  *APIKeyHandler
+
+	// APIKeys needs a verifier for the middleware in front of /roles. Nil
+	// leaves both the external endpoint and the admin screen unmounted.
+	APIKeyVerify apiKeyVerifier
 
 	// AuditRepo records every write. Nil turns recording off; the log endpoint
 	// is mounted separately, so a deployment can read history it is no longer
@@ -84,6 +89,14 @@ func downloadName(raw string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// apiKeyAttemptsPerMinute caps wrong API keys from one address.
+//
+// Generous compared with the PIN, because the thing being guessed is 32 random
+// bytes rather than four digits — nobody is brute-forcing their way in. It is
+// here so a misconfigured client retrying in a loop, or somebody spraying old
+// keys, is answered cheaply instead of costing a database lookup each time.
+const apiKeyAttemptsPerMinute = 30
+
 // NewRouter builds the chi router with middleware and all mounted routes.
 func NewRouter(d RouterDeps) http.Handler {
 	r := chi.NewRouter()
@@ -114,7 +127,7 @@ func NewRouter(d RouterDeps) http.Handler {
 		// Demo Center cannot be opened at all. Only visible where the app and
 		// the API are on different origins — which is development, not
 		// production, so it would have shipped looking fine.
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id", PinHeader},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id", PinHeader, APIKeyHeader},
 		// Paging metadata is unreadable from JS unless it is exposed here.
 		ExposedHeaders:   []string{"X-Request-Id", "X-Total-Count", "X-Limit", "X-Offset"},
 		AllowCredentials: true,
@@ -214,6 +227,29 @@ func NewRouter(d RouterDeps) http.Handler {
 				r.Put("/{id}", d.Demos.Update)
 				r.Delete("/{id}", d.Demos.Delete)
 			})
+		})
+	}
+
+	// The one endpoint something outside this company can call, and the screen
+	// that issues the keys for it.
+	//
+	// /roles is not behind JWTAuth: the caller is a machine belonging to
+	// another team, with no account here and no way to get one. Its key is the
+	// whole of its identity, which is why what sits behind it returns no
+	// personal data — see RoleUsecase.
+	if d.APIKeys != nil && d.APIKeyVerify != nil {
+		// Wrong keys are counted per address. A caller with no valid key has
+		// no other identity to charge guesses to.
+		keyLimiter := NewRateLimiter(apiKeyAttemptsPerMinute, time.Minute)
+		r.With(RequireAPIKey(d.APIKeyVerify, keyLimiter)).Get("/roles", d.APIKeys.Roles)
+
+		// Issuing and revoking them is admin only, and behind a real account.
+		r.Route("/api-keys", func(r chi.Router) {
+			r.Use(d.Tokens.JWTAuth)
+			r.Use(RequireRole("admin"))
+			r.Get("/", d.APIKeys.List)
+			r.Post("/", d.APIKeys.Create)
+			r.Delete("/{id}", d.APIKeys.Revoke)
 		})
 	}
 
