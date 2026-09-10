@@ -104,11 +104,12 @@ func (h *TaxonomyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	term, err := h.uc.Create(r.Context(), kind, req.Slug, usecase.TermInput{
-		Title:     req.Title,
-		SortOrder: req.SortOrder,
-		Active:    req.Active,
-		Accent:    req.Accent,
-		Secondary: req.Secondary,
+		Title:       req.Title,
+		Description: req.Description,
+		SortOrder:   req.SortOrder,
+		Active:      req.Active,
+		Accent:      req.Accent,
+		Secondary:   req.Secondary,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -131,11 +132,12 @@ func (h *TaxonomyHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	term, err := h.uc.Update(r.Context(), kind, chi.URLParam(r, "slug"), usecase.TermInput{
-		Title:     req.Title,
-		SortOrder: req.SortOrder,
-		Active:    req.Active,
-		Accent:    req.Accent,
-		Secondary: req.Secondary,
+		Title:       req.Title,
+		Description: req.Description,
+		SortOrder:   req.SortOrder,
+		Active:      req.Active,
+		Accent:      req.Accent,
+		Secondary:   req.Secondary,
 	})
 	if err != nil {
 		writeError(w, err)

@@ -39,11 +39,15 @@ const maxTermTitle = 120
 // Treating those as "not supplied" would make the two edits that need them
 // impossible, and silently — the request would succeed and change nothing.
 type TermInput struct {
-	Title     string
-	SortOrder *int
-	Active    *bool
-	Accent    *string
-	Secondary *string
+	Title string
+	// Description is a pointer for the same reason the rest are: clearing
+	// one back to empty is a real edit, and a plain string could not tell
+	// that apart from "not supplied".
+	Description *string
+	SortOrder   *int
+	Active      *bool
+	Accent      *string
+	Secondary   *string
 }
 
 func (uc *TaxonomyUsecase) List(ctx context.Context, kind domain.TaxonomyKind, activeOnly bool) ([]*domain.TaxonomyTerm, error) {
@@ -92,14 +96,20 @@ func (uc *TaxonomyUsecase) Create(ctx context.Context, kind domain.TaxonomyKind,
 		}
 	}
 
+	desc, err := validDescription(deref(in.Description))
+	if err != nil {
+		return nil, err
+	}
+
 	term := &domain.TaxonomyTerm{
-		Kind:      kind,
-		Slug:      slug,
-		Title:     title,
-		SortOrder: order,
-		Active:    in.Active == nil || *in.Active,
-		Accent:    accent,
-		Secondary: secondary,
+		Kind:        kind,
+		Slug:        slug,
+		Title:       title,
+		Description: desc,
+		SortOrder:   order,
+		Active:      in.Active == nil || *in.Active,
+		Accent:      accent,
+		Secondary:   secondary,
 	}
 	if err := uc.repo.Create(ctx, term); err != nil {
 		return nil, err
@@ -117,6 +127,13 @@ func (uc *TaxonomyUsecase) Update(ctx context.Context, kind domain.TaxonomyKind,
 		if current.Title, err = validTitle(in.Title); err != nil {
 			return nil, err
 		}
+	}
+	if in.Description != nil {
+		desc, err := validDescription(*in.Description)
+		if err != nil {
+			return nil, err
+		}
+		current.Description = desc
 	}
 	if in.SortOrder != nil {
 		current.SortOrder = *in.SortOrder
@@ -170,6 +187,18 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// maxTermDescription is a subtitle, not an essay: it renders on one or two
+// lines under a heading, and anything longer is a paragraph in the wrong place.
+const maxTermDescription = 300
+
+func validDescription(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if len(s) > maxTermDescription {
+		return "", fmt.Errorf("%w: description must be at most %d characters", domain.ErrInvalidInput, maxTermDescription)
+	}
+	return s, nil
 }
 
 func validTitle(s string) (string, error) {

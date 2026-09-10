@@ -50,6 +50,12 @@ type TaxonomyTerm struct {
 	Title     string `json:"title"`
 	SortOrder int    `json:"sortOrder"`
 
+	// Description is the line of copy the category page and the home row
+	// show under the title. Empty renders as nothing, which is the point:
+	// these used to be constants in the bundle naming decks this catalog
+	// does not hold, and an absent subtitle beats an invented one.
+	Description string `json:"description"`
+
 	// Active false retires a term: decks already using it keep working, and it
 	// stops being offered for new ones. This is the reversible half of delete.
 	Active bool `json:"active"`

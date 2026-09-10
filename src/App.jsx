@@ -1111,9 +1111,12 @@ function HomeRows({
 
   return (
     <>
+      {/* Title and subtitle from Master Data, like every other shelf. The
+          subtitle used to be a constant here naming four decks this catalog
+          does not hold. */}
       <Row
-        title="Company Profiles"
-        subtitle="Apple, Tesla, Stripe, Notion — full corporate decks."
+        title={categories.find((c) => c.id === 'company-profile')?.title || 'Company Profiles'}
+        subtitle={categories.find((c) => c.id === 'company-profile')?.description || undefined}
         decks={byCategory['company-profile']}
         onPlay={onPlay}
         onDetails={onDetails}

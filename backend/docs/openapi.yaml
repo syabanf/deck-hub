@@ -722,6 +722,10 @@ paths:
                     because every deck referring to the old value would be
                     orphaned with nothing to notice.
                 title:     { type: string, maxLength: 120 }
+                description:
+                  type: string
+                  maxLength: 300
+                  description: One line under the title. Optional; empty renders as nothing.
                 sortOrder: { type: integer }
                 active:    { type: boolean, default: true }
                 accent:    { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
@@ -800,6 +804,12 @@ paths:
               type: object
               properties:
                 title:     { type: string, maxLength: 120 }
+                description:
+                  type: string
+                  maxLength: 300
+                  description: |
+                    Omitted leaves it alone; an empty string clears the line,
+                    which is a real edit somebody may want to make.
                 sortOrder:
                   type: integer
                   description: |
@@ -1458,6 +1468,16 @@ components:
           type: string
           description: The value decks store. Immutable after creation.
         title:     { type: string }
+        description:
+          type: string
+          maxLength: 300
+          description: |
+            One line, shown under the title on the shelf and on the category
+            page. Empty renders as nothing.
+
+            It lives here rather than in the frontend because it used to be a
+            constant in the bundle — and the constants named decks the catalog
+            did not hold, with no way to correct them short of a deploy.
         sortOrder: { type: integer, description: Browse order; ties break on slug }
         active:
           type: boolean

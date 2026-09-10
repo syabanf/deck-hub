@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Cover from './Cover.jsx'
+import ConfirmDialog from './ConfirmDialog.jsx'
 import { CloseIcon, UploadIcon, LinkIcon } from '../lib/icons.jsx'
 import { loadPdfDocument, fileToArrayBuffer, renderPdfPageToCanvas } from '../lib/pdf.js'
 import { uploadFile } from '../lib/api.js'
@@ -212,15 +213,48 @@ export default function AddDeckModal({ onClose, onAdd }) {
   // Success
   const [successDeck, setSuccessDeck] = useState(null)
 
+  // Set when a close was asked for and there is work that would be lost.
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+
+  // Has anything been put into this form?
+  //
+  // Everything a person can type or attach, because the cost of getting this
+  // wrong is asymmetric: a needless confirmation on an empty form is a click,
+  // and a silent discard after a 25 MB upload and ten filled fields is the
+  // whole job again.
+  const dirty =
+    !!title.trim() ||
+    !!subtitle.trim() ||
+    !!author.trim() ||
+    !!description.trim() ||
+    !!tagsInput.trim() ||
+    !!industry ||
+    featured ||
+    !!cover ||
+    !!pdfFile ||
+    !!url.trim() ||
+    !!videoUrl.trim() ||
+    !!videoFile
+
+  // Asking to close. Nothing typed yet, or already saved — go. Otherwise the
+  // question gets asked, and the answer is not "yes" by default.
+  const askClose = useCallback(() => {
+    if (successDeck || !dirty) {
+      requestClose()
+      return
+    }
+    setConfirmDiscard(true)
+  }, [successDeck, dirty, requestClose])
+
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && requestClose()
+    const onKey = (e) => e.key === 'Escape' && askClose()
     document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [requestClose])
+  }, [askClose])
 
   // The list arrives from the API a moment after mount, so the default is set
   // when it does rather than at initialisation.
@@ -427,11 +461,15 @@ export default function AddDeckModal({ onClose, onAdd }) {
   }
 
   return (
+    // The backdrop asks before throwing anything away. It used to close
+    // outright, which meant a stray click beside the panel — after filling the
+    // form in and waiting for a 25 MB PDF to upload — started the whole thing
+    // again, with nothing to undo it.
     <div
       className={`fixed inset-0 z-50 flex items-start justify-center bg-black/80 backdrop-blur-sm animate-fade-in py-8 px-4 overflow-y-auto ${
         closing ? 'is-closing' : ''
       }`}
-      onClick={requestClose}
+      onClick={askClose}
     >
       <div
         className="modal-panel relative w-full max-w-3xl bg-deck-surface rounded-2xl overflow-hidden ring-1 ring-deck-border shadow-2xl animate-scale-in my-auto"
@@ -442,7 +480,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
         ) : (
           <>
             <button
-              onClick={requestClose}
+              onClick={askClose}
               className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center z-20 transition-colors"
               aria-label="Close"
             >
@@ -704,6 +742,24 @@ export default function AddDeckModal({ onClose, onAdd }) {
           </>
         )}
       </div>
+
+      {/* Asked, not assumed. "Keep editing" is the default action — the button
+          that discards is the one that has to be chosen deliberately. */}
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="Discard this deck?"
+        message={
+          pdfFile || videoFile || cover
+            ? 'The file you attached and everything you have filled in will be lost.'
+            : 'Everything you have filled in will be lost.'
+        }
+        confirmLabel="Discard"
+        onConfirm={() => {
+          setConfirmDiscard(false)
+          requestClose()
+        }}
+        onClose={() => setConfirmDiscard(false)}
+      />
     </div>
   )
 }

@@ -165,30 +165,32 @@ type updateDeckRequest struct {
 // termResponse is one entry in a master list. deckCount rides along because
 // every screen that shows these also needs to know what is safe to remove.
 type termResponse struct {
-	Kind      string `json:"kind"`
-	Slug      string `json:"slug"`
-	Title     string `json:"title"`
-	SortOrder int    `json:"sortOrder"`
-	Active    bool   `json:"active"`
-	Accent    string `json:"accent"`
-	Secondary string `json:"secondary"`
-	DeckCount int    `json:"deckCount"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	Kind        string `json:"kind"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	SortOrder   int    `json:"sortOrder"`
+	Active      bool   `json:"active"`
+	Accent      string `json:"accent"`
+	Secondary   string `json:"secondary"`
+	DeckCount   int    `json:"deckCount"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
 }
 
 func toTermResponse(t *domain.TaxonomyTerm) termResponse {
 	return termResponse{
-		Kind:      string(t.Kind),
-		Slug:      t.Slug,
-		Title:     t.Title,
-		SortOrder: t.SortOrder,
-		Active:    t.Active,
-		Accent:    t.Accent,
-		Secondary: t.Secondary,
-		DeckCount: t.DeckCount,
-		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt: t.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Kind:        string(t.Kind),
+		Slug:        t.Slug,
+		Title:       t.Title,
+		Description: t.Description,
+		SortOrder:   t.SortOrder,
+		Active:      t.Active,
+		Accent:      t.Accent,
+		Secondary:   t.Secondary,
+		DeckCount:   t.DeckCount,
+		CreatedAt:   t.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:   t.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
@@ -202,12 +204,13 @@ func toTermResponses(terms []*domain.TaxonomyTerm) []termResponse {
 
 // createTermRequest carries the slug because it is chosen once, on create.
 type createTermRequest struct {
-	Slug      string  `json:"slug"`
-	Title     string  `json:"title"`
-	SortOrder *int    `json:"sortOrder"`
-	Active    *bool   `json:"active"`
-	Accent    *string `json:"accent"`
-	Secondary *string `json:"secondary"`
+	Slug        string  `json:"slug"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+	SortOrder   *int    `json:"sortOrder"`
+	Active      *bool   `json:"active"`
+	Accent      *string `json:"accent"`
+	Secondary   *string `json:"secondary"`
 }
 
 // updateTermRequest has no slug: renaming it would orphan every deck storing
@@ -215,11 +218,12 @@ type createTermRequest struct {
 // alone and a zero one is applied — sortOrder 0 and an empty colour are both
 // edits somebody meant to make.
 type updateTermRequest struct {
-	Title     string  `json:"title"`
-	SortOrder *int    `json:"sortOrder"`
-	Active    *bool   `json:"active"`
-	Accent    *string `json:"accent"`
-	Secondary *string `json:"secondary"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+	SortOrder   *int    `json:"sortOrder"`
+	Active      *bool   `json:"active"`
+	Accent      *string `json:"accent"`
+	Secondary   *string `json:"secondary"`
 }
 
 // ----- me -----

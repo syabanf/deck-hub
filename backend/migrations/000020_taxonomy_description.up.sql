@@ -1,0 +1,13 @@
+-- 000020_taxonomy_description.up.sql
+-- A line of copy for each term, editable in Master Data.
+--
+-- The category pages and the home rows carried these as constants in the
+-- frontend bundle: "Apple, Tesla, Stripe, Notion — full corporate decks."
+-- against a catalog that holds none of them. It read as a description of
+-- somebody else's library, and there was no way to correct it without a
+-- deploy.
+--
+-- Seeded empty on purpose. Nothing here can guess what WIT would want these
+-- to say, and an empty subtitle renders as no subtitle — which is honest,
+-- where an invented one is not.
+ALTER TABLE taxonomy_terms ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';

@@ -2284,3 +2284,83 @@ func TestAPIKeysAndRoles(t *testing.T) {
 		})
 	})
 }
+
+// TestTaxonomyDescription covers the line of copy under a shelf's title.
+//
+// It used to be a constant in the frontend bundle, and the constants named
+// decks this catalog does not hold — "Apple, Tesla, Stripe, Notion" against a
+// company profile shelf that has none of them. Moving it here is what lets an
+// admin correct that without a deploy, so the round trip is worth pinning.
+func TestTaxonomyDescription(t *testing.T) {
+	admin := adminToken(t)
+	const slug = "e2e-described"
+
+	status, raw := do(t, http.MethodPost, "/taxonomy/categories", admin, map[string]any{
+		"slug": slug, "title": "E2E Described", "description": "  What belongs on this shelf.  ",
+	})
+	requireStatus(t, http.StatusCreated, status, raw)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/taxonomy/categories/"+slug, admin, nil) })
+
+	var created struct {
+		Description string `json:"description"`
+	}
+	decode(t, raw, &created)
+	if created.Description != "What belongs on this shelf." {
+		t.Fatalf("description = %q, want it trimmed and kept", created.Description)
+	}
+
+	t.Run("a term created without one has an empty description, not a missing field", func(t *testing.T) {
+		const bare = "e2e-bare"
+		status, raw := do(t, http.MethodPost, "/taxonomy/categories", admin, map[string]any{
+			"slug": bare, "title": "E2E Bare",
+		})
+		requireStatus(t, http.StatusCreated, status, raw)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/taxonomy/categories/"+bare, admin, nil) })
+
+		var out map[string]any
+		decode(t, raw, &out)
+		if got, ok := out["description"]; !ok || got != "" {
+			t.Fatalf("description = %v, want an empty string the client can render as nothing", got)
+		}
+	})
+
+	t.Run("it can be edited", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/taxonomy/categories/"+slug, admin,
+			map[string]any{"description": "Corrected copy."})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var out struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		}
+		decode(t, raw, &out)
+		if out.Description != "Corrected copy." {
+			t.Fatalf("description = %q after edit", out.Description)
+		}
+		if out.Title != "E2E Described" {
+			t.Fatalf("title = %q — editing the description must not disturb it", out.Title)
+		}
+	})
+
+	t.Run("it can be cleared, which is a real edit and not a no-op", func(t *testing.T) {
+		// The pointer in the DTO exists for exactly this: an empty string has
+		// to mean "remove the line", not "field not supplied".
+		status, raw := do(t, http.MethodPut, "/taxonomy/categories/"+slug, admin,
+			map[string]any{"description": ""})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var out struct {
+			Description string `json:"description"`
+		}
+		decode(t, raw, &out)
+		if out.Description != "" {
+			t.Fatalf("description = %q, want it cleared", out.Description)
+		}
+	})
+
+	t.Run("an essay is refused", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/taxonomy/categories/"+slug, admin,
+			map[string]any{"description": strings.Repeat("x", 301)})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+}

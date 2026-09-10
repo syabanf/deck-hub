@@ -5,42 +5,25 @@ import { useFavorites } from '../lib/favoritesContext.jsx'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { PlayIcon, ChevronDown, TrashIcon, BookmarkIcon, BookmarkFilledIcon } from '../lib/icons.jsx'
 
-const HEADERS = {
-  'company-profile': {
-    title: 'Company Profiles',
-    description: 'Full corporate decks from Apple, Tesla, Stripe, OpenAI, and more.',
-    accent: '#7f00ff',
-  },
-  iconic: {
-    title: 'Iconic Pitch Decks',
-    description: 'The legendary decks that raised famous rounds and shaped Silicon Valley.',
-    accent: '#ff5f6d',
-  },
-  design: {
-    title: 'Design & Brand',
-    description: 'Methodology, systems, and visual thinking from the field\'s best.',
-    accent: '#7f00ff',
-  },
-  engineering: {
-    title: 'Engineering & AI',
-    description: 'Foundational papers and architectural classics — including the Transformer.',
-    accent: '#00c6fb',
-  },
-  strategy: {
-    title: 'Startup Strategy',
-    description: 'How to build, scale, and defend a company.',
-    accent: '#f7971e',
-  },
-  keynotes: {
-    title: 'Talks & Keynotes',
-    description: 'Inspiration and frameworks from the masters.',
-    accent: '#cb2d3e',
-  },
-  mine: {
-    title: 'My Library',
-    description: 'Decks you\'ve saved. Tap the bookmark on any deck to add it here.',
-    accent: '#11998e',
-  },
+// Accent colours for the shelves that shipped with the app. Styling, not
+// content: the titles and the copy under them come from Master Data, so a
+// category added there reads correctly instead of landing on a page titled
+// "Decks" with somebody else's description under it.
+const ACCENTS = {
+  'company-profile': '#7f00ff',
+  iconic: '#ff5f6d',
+  design: '#7f00ff',
+  engineering: '#00c6fb',
+  strategy: '#f7971e',
+  keynotes: '#cb2d3e',
+  mine: '#11998e',
+}
+
+// My Library is not a taxonomy term — it is a view of what one person saved —
+// so its heading lives here rather than in the master lists.
+const LIBRARY = {
+  title: 'My Library',
+  description: 'Decks you have saved. Tap the bookmark on any deck to add it here.',
 }
 
 function GridCard({ deck, onPlay, onDetails, onRemove, onCategoryClick }) {
@@ -144,15 +127,19 @@ export default function CategoryView({
   canEdit = false,
 }) {
   const { categories } = useTaxonomy()
-  // Curated copy where it exists; Master Data otherwise. A category added
-  // there used to land here as a page titled "Decks", because HEADERS only
-  // knew the six that shipped with the app.
+  // Title and copy come from Master Data. They used to be constants in this
+  // file, which meant a category added by an admin arrived as a page titled
+  // "Decks", and the six that shipped carried descriptions naming decks this
+  // catalog does not hold.
   const term = categories.find((c) => c.id === categoryId)
-  const meta = HEADERS[categoryId] || {
-    title: term?.title || 'Decks',
-    description: '',
-    accent: term?.accent,
-  }
+  const meta =
+    categoryId === 'mine'
+      ? { ...LIBRARY, accent: ACCENTS.mine }
+      : {
+          title: term?.title || 'Decks',
+          description: term?.description || '',
+          accent: term?.accent || ACCENTS[categoryId],
+        }
   const isEmpty = decks.length === 0
   const { filtered, controls } = useDeckFilters(decks)
 
@@ -167,7 +154,11 @@ export default function CategoryView({
           Category
         </div>
         <h1 className="text-4xl md:text-5xl font-black tracking-tight">{meta.title}</h1>
-        <p className="text-deck-muted mt-2 max-w-2xl">{meta.description}</p>
+        {/* Nothing rendered when there is no description. An empty line of
+            copy is better than an invented one. */}
+        {meta.description && (
+          <p className="text-deck-muted mt-2 max-w-2xl">{meta.description}</p>
+        )}
       </div>
 
       {isEmpty ? (

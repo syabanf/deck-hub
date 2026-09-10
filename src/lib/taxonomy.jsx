@@ -29,6 +29,7 @@ const TaxonomyContext = createContext({
 const toTerm = (t) => ({
   id: t.slug,
   title: t.title,
+  description: t.description || '',
   accent: t.accent || undefined,
   secondary: t.secondary || undefined,
 })
@@ -41,7 +42,9 @@ const toTerm = (t) => ({
 // on — the settings tab jumped back to Users mid-save. Comparing content keeps
 // the same reference when the content is the same.
 const signature = (list) =>
-  list.map((t) => `${t.id}\u0001${t.title}\u0001${t.accent || ''}\u0001${t.secondary || ''}`).join('\u0000')
+  list
+    .map((t) => `${t.id}\u0001${t.title}\u0001${t.description}\u0001${t.accent || ''}\u0001${t.secondary || ''}`)
+    .join('\u0000')
 
 const applyIfChanged = (setter) => (next) =>
   setter((prev) => (signature(prev) === signature(next) ? prev : next))

@@ -25,7 +25,7 @@ const KINDS = [
   { id: 'industries', label: 'Industries', noun: 'industry', colored: true },
 ]
 
-const blankDraft = { slug: '', title: '', accent: '', secondary: '' }
+const blankDraft = { slug: '', title: '', description: '', accent: '', secondary: '' }
 
 // The API's own message is preferred here, unlike everywhere else in the app.
 // This is an admin screen, and the server's copy carries the detail that makes
@@ -99,6 +99,7 @@ export default function TaxonomyManager({ canManage = false }) {
       await api.createTerm(kind.id, {
         slug: draft.slug.trim().toLowerCase(),
         title: draft.title.trim(),
+        description: draft.description.trim(),
         accent: draft.accent.trim(),
         secondary: draft.secondary.trim(),
       })
@@ -128,6 +129,9 @@ export default function TaxonomyManager({ canManage = false }) {
     if (!t) return
     const body = {}
     if (editing.title.trim() && editing.title.trim() !== t.title) body.title = editing.title.trim()
+    // Sent whenever it differs, empty included: clearing the line back to
+    // nothing is an edit somebody may well want to make.
+    if (editing.description.trim() !== (t.description || '')) body.description = editing.description.trim()
     const order = Number(editing.sortOrder)
     if (Number.isFinite(order) && order !== t.sortOrder) body.sortOrder = order
     if (kind.colored && (editing.accent !== (t.accent || '') || editing.secondary !== (t.secondary || ''))) {
@@ -253,6 +257,15 @@ export default function TaxonomyManager({ canManage = false }) {
                 onChange={(v) => setDraft({ ...draft, title: v })}
                 placeholder="Finance & Fintech"
               />
+              <div className="md:col-span-2">
+                <Field
+                  label="Description"
+                  hint="One line, shown under the title on the shelf and the page. Optional — blank shows nothing."
+                  value={draft.description}
+                  onChange={(v) => setDraft({ ...draft, description: v })}
+                  placeholder="What belongs on this shelf."
+                />
+              </div>
               {kind.colored && (
                 <>
                   <ColorField
@@ -333,6 +346,7 @@ export default function TaxonomyManager({ canManage = false }) {
                 <tr key={t.slug} className={`border-t border-deck-border/60 ${isEditing ? 'bg-white/[0.03]' : ''}`}>
                   <td className="px-3 py-2">
                     {isEditing ? (
+                      <div className="space-y-1.5">
                       <div className="flex items-center gap-2">
                         {kind.colored && (
                           <span
@@ -372,6 +386,18 @@ export default function TaxonomyManager({ canManage = false }) {
                             />
                           </>
                         )}
+                      </div>
+                      <input
+                        value={editing.description}
+                        onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEdit()
+                          if (e.key === 'Escape') setEditing(null)
+                        }}
+                        placeholder="Description — one line, shown under the title. Blank shows nothing."
+                        maxLength={300}
+                        className="w-full h-8 px-2 rounded bg-black/40 border border-white/15 focus:border-white/40 outline-none text-xs text-deck-muted"
+                      />
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
@@ -473,6 +499,7 @@ export default function TaxonomyManager({ canManage = false }) {
                                 setEditing({
                                   slug: t.slug,
                                   title: t.title,
+                                  description: t.description || '',
                                   sortOrder: String(t.sortOrder),
                                   accent: t.accent || '',
                                   secondary: t.secondary || '',
@@ -514,7 +541,7 @@ export default function TaxonomyManager({ canManage = false }) {
       </div>
 
       <p className="text-xs text-deck-muted mt-3">
-        Edit changes the title, the browse order and — for industries — the gradient. The
+        Edit changes the title, the description, the browse order and — for industries — the gradient. The
         slug is what every deck stores, so it stays fixed: changing it would leave those
         decks pointing at a value that no longer exists. Retire a term to take it out of
         circulation without touching the decks that already use it.
