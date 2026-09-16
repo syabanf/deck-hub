@@ -9,8 +9,8 @@ export default {
           surface: '#16161d',
           card: '#1c1c25',
           border: '#2a2a36',
-          accent: '#e50914',
-          accentDim: '#b00710',
+          accent: '#ED1C24',
+          accentDim: '#B6151C',
           muted: '#8a8a99',
         },
       },
@@ -50,8 +50,8 @@ export default {
           '100%': { transform: 'scale(1)', opacity: 1 },
         },
         glowPulse: {
-          '0%, 100%': { boxShadow: '0 0 0 0 rgba(229, 9, 20, 0.5)' },
-          '50%': { boxShadow: '0 0 0 12px rgba(229, 9, 20, 0)' },
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(237, 28, 36, 0.5)' },
+          '50%': { boxShadow: '0 0 0 12px rgba(237, 28, 36, 0)' },
         },
         toastIn: {
           '0%': { opacity: 0, transform: 'translateY(-20px) scale(0.95)' },

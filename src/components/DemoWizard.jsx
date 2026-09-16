@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Wordmark from './Wordmark.jsx'
 import { useClosable } from '../lib/useClosable.js'
 import { useSwipe } from '../lib/useSwipe.js'
 import {
@@ -119,9 +120,7 @@ export default function DemoWizard({ onClose, onStartDemo }) {
               backgroundSize: '22px 22px',
             }}
           />
-          <span className="absolute left-6 top-6 text-white font-black text-2xl tracking-tighter">
-            WIT
-          </span>
+          <Wordmark className="absolute left-6 top-6 h-6" />
           <div className="absolute -right-4 -bottom-6 text-white/25">
             {s.icon(150)}
           </div>

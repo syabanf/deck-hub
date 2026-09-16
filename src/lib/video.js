@@ -75,7 +75,7 @@ export const detectVideo = (url) => {
       return {
         kind: 'native',
         platform: 'Video file',
-        color: '#e50914',
+        color: '#ED1C24',
         icon: 'V',
         embedUrl: url,
         thumbnail: null,

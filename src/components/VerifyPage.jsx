@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import Wordmark from './Wordmark.jsx'
 import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { CheckIcon, CloseIcon } from '../lib/icons.jsx'
@@ -61,7 +62,7 @@ export default function VerifyPage({ token, onVerified, onDone }) {
   return (
     <div className="min-h-screen flex items-center justify-center px-6 bg-deck-bg text-white">
       <div className="w-full max-w-md text-center">
-        <span className="text-deck-accent font-black text-3xl tracking-tighter">WIT</span>
+        <Wordmark className="h-8" />
 
         {state === 'working' && (
           <div className="mt-8 flex flex-col items-center gap-4 animate-fade-in">

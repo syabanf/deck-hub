@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import Wordmark from './Wordmark.jsx'
 import DeckPlayer from './DeckPlayer.jsx'
 import Cover from './Cover.jsx'
 import { api, normalizeDecks } from '../lib/api.js'
@@ -112,9 +113,7 @@ function Shell({ children, onSignIn }) {
   return (
     <div className="min-h-screen bg-deck-bg text-white flex flex-col">
       <header className="px-6 py-5 flex items-center justify-between">
-        <span className="text-2xl font-black tracking-tight text-deck-accent select-none">
-          WIT<span className="text-white">.</span>
-        </span>
+        <Wordmark className="h-7" />
         {onSignIn && (
           <button
             type="button"

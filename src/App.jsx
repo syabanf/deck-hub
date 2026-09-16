@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import Wordmark from './components/Wordmark.jsx'
 import { useTaxonomy } from './lib/taxonomy.jsx'
 import { clearDemoPin } from './lib/demoPin.js'
 import { sharedDeckId, syncDeckUrl } from './lib/share.js'
@@ -1027,9 +1028,7 @@ function LoadingScreen() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-white px-6 text-center">
-      <span className="text-deck-accent font-black text-4xl tracking-tighter animate-glow-pulse">
-        WIT
-      </span>
+      <Wordmark className="h-10 animate-glow-pulse" />
       <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
       <span className="text-deck-muted text-sm">Loading the catalog…</span>
       {slow && (
@@ -1057,7 +1056,7 @@ function ErrorScreen({ error, onRetry, onSignOut }) {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-6">
-      <span className="text-deck-accent font-black text-3xl tracking-tighter">WIT</span>
+      <Wordmark className="h-8" />
       <h1 className="text-2xl font-black tracking-tight">{title}</h1>
       <p className="text-deck-muted max-w-md text-sm leading-relaxed">{message}</p>
 
@@ -1310,7 +1309,7 @@ function Footer({ onAddClick }) {
   return (
     <div className="px-8 md:px-12 mt-10 text-sm text-deck-muted space-y-3">
       <div className="flex items-center gap-3">
-        <span className="text-deck-accent font-black text-lg tracking-tighter">WIT</span>
+        <Wordmark className="h-5" />
         <span>— Open decks, beautifully presented.</span>
       </div>
       <p className="max-w-2xl leading-relaxed">

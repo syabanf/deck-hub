@@ -245,8 +245,8 @@ body {
   animation: playPulse 600ms ease-out;
 }
 @keyframes playPulse {
-  0% { box-shadow: 0 0 0 0 rgba(229,9,20,0.7); }
-  100% { box-shadow: 0 0 0 18px rgba(229,9,20,0); }
+  0% { box-shadow: 0 0 0 0 rgba(237,28,36,0.7); }
+  100% { box-shadow: 0 0 0 18px rgba(237,28,36,0); }
 }
 
 /* Custom scrollbar in player */

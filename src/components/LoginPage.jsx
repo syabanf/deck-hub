@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Wordmark from './Wordmark.jsx'
 import { LOGIN_BACKDROP_SEEDS } from '../data/decks.js'
 import { api } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
@@ -110,7 +111,7 @@ export default function LoginPage({ onLogin, notice }) {
     return (
       <div className="fixed inset-0 flex items-center justify-center px-6 bg-deck-bg text-white">
         <div className="w-full max-w-md text-center animate-scale-in">
-          <span className="text-deck-accent font-black text-3xl tracking-tighter">WIT</span>
+          <Wordmark className="h-8" />
 
           <span className="mt-8 mx-auto flex items-center justify-center w-14 h-14 rounded-full bg-deck-accent/15 text-deck-accent">
             <MailIcon size={26} />
@@ -186,16 +187,14 @@ export default function LoginPage({ onLogin, notice }) {
           className="absolute inset-0"
           style={{
             background:
-              'radial-gradient(120% 80% at 50% 0%, rgba(229,9,20,0.18) 0%, transparent 55%)',
+              'radial-gradient(120% 80% at 50% 0%, rgba(237,28,36,0.18) 0%, transparent 55%)',
           }}
         />
       </div>
 
       {/* ─── Brand bar ─── */}
       <header className="relative z-10 flex items-center justify-between px-6 md:px-12 h-16">
-        <span className="text-deck-accent font-black text-2xl md:text-3xl tracking-tighter">
-          WIT
-        </span>
+        <Wordmark className="h-7 md:h-8" />
       </header>
 
       {/* ─── Card ─── */}

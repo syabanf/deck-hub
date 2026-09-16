@@ -8,6 +8,7 @@ import {
   InfoIcon,
   PlayIcon,
 } from '../lib/icons.jsx'
+import Wordmark from './Wordmark.jsx'
 import { settingNumber, useSettings } from '../lib/settings.jsx'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 
@@ -253,7 +254,7 @@ export default function Navbar({
           onClick={() => onCategoryChange('home')}
           className="flex items-center gap-2 select-none"
         >
-          <span className="text-deck-accent font-black text-2xl tracking-tighter">WIT</span>
+          <Wordmark className="h-6 md:h-7" />
         </button>
 
         {/* Center: nav items (only desktop) */}

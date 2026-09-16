@@ -43,7 +43,7 @@ const detectPlatform = (url) => {
     if (host.includes('figma.com'))
       return { name: 'Figma', icon: 'F', color: '#a259ff', embed: true }
     if (u.pathname.toLowerCase().endsWith('.pdf'))
-      return { name: 'PDF link', icon: 'P', color: '#e50914', embed: false }
+      return { name: 'PDF link', icon: 'P', color: '#ED1C24', embed: false }
     return { name: u.hostname, icon: '↗', color: '#8a8a99', embed: false }
   } catch {
     return null
