@@ -323,7 +323,7 @@ paths:
         - { name: search,     in: query, schema: { type: string }, description: "Substring match across title/subtitle/author/description and the deck's tags" }
         - { name: category,   in: query, schema: { type: string }, example: engineering }
         - { name: industry,   in: query, schema: { type: string }, example: tech }
-        - { name: sourceType, in: query, schema: { type: string, enum: [pdf, url, video, gslides, embed] } }
+        - { name: sourceType, in: query, schema: { type: string, enum: [pdf, url, video, gslides, embed, photos] } }
         - { name: featured,   in: query, schema: { type: boolean } }
         - name: ids
           in: query
@@ -1558,6 +1558,13 @@ components:
         playback (embed URLs, absolute URLs) must not write the rewritten form
         back.
 
+        `photos` is the exception to all of this: its content is a list, kept
+        in `images`, and `value` holds the first photo so that anything wanting
+        only something to show — a cover, a share preview, the catalog table —
+        keeps working without knowing the type exists. Send it empty on create;
+        the server fills it in and keeps it pointing at whichever photo is
+        first after a reorder.
+
         The one change made on write is the scheme. A `/uploads/...` path is
         left alone; anything else must be `http://` or `https://`, a missing
         scheme is filled in with `https://`, and any other scheme is a `400`.
@@ -1567,7 +1574,7 @@ components:
       properties:
         type:
           type: string
-          enum: [pdf, url, video, gslides, embed]
+          enum: [pdf, url, video, gslides, embed, photos]
           description: A closed set — anything else is a `400`.
         value: { type: string }
 
@@ -1682,6 +1689,24 @@ components:
             Optional server-relative upload path for the deck's cover. Empty
             means the frontend generates artwork from the deck id, which is the
             default — a deck with no image still renders as designed.
+        images:
+          type: array
+          description: |
+            The photos of a `photos` deck, in order. Absent for every other
+            type rather than empty, so a client can tell "no gallery here" from
+            "a gallery somebody emptied".
+          items:
+            type: object
+            properties:
+              id:   { type: string, format: uuid }
+              url:  { type: string, example: /uploads/9f3c.jpg }
+              name:
+                type: string
+                description: |
+                  What the file was called when it was uploaded. The stored name
+                  is a UUID, so this is the only readable one there is — and it
+                  is what a download is offered under.
+                example: site-01.jpg
         featured:    { type: boolean, description: The newest featured deck is the one the home hero shows }
         viewCount:   { type: integer }
         createdAt:   { type: string, format: date-time }
@@ -1706,6 +1731,24 @@ components:
             Optional server-relative upload path for the deck's cover. Empty
             means the frontend generates artwork from the deck id, which is the
             default — a deck with no image still renders as designed.
+        images:
+          type: array
+          maxItems: 200
+          description: |
+            The photos of a `photos` deck, in the order they should be shown.
+            Upload each file through `POST /uploads` first and send the paths
+            it returns; nothing here carries bytes.
+
+            Required for a `photos` deck and refused on any other type — a
+            gallery attached to a PDF is a client bug, not a feature. The cap
+            is a rendering limit, not a storage one: the player loads the list
+            up front.
+          items:
+            type: object
+            required: [url]
+            properties:
+              url:  { type: string, example: /uploads/9f3c.jpg }
+              name: { type: string, example: site-01.jpg }
         featured:    { type: boolean }
 
     DeckPatch:
@@ -1727,6 +1770,22 @@ components:
             Optional server-relative upload path for the deck's cover. Empty
             means the frontend generates artwork from the deck id, which is the
             default — a deck with no image still renders as designed.
+        images:
+          type: array
+          maxItems: 200
+          description: |
+            Replaces the whole gallery. Omitted leaves it alone; an empty array
+            is refused, because a `photos` deck with no photos has nothing to
+            render.
+
+            Reordering here moves `source.value` with it, so the cover keeps
+            pointing at whichever photo is now first.
+          items:
+            type: object
+            required: [url]
+            properties:
+              url:  { type: string }
+              name: { type: string }
         featured:    { type: boolean }
 
   responses:

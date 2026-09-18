@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Cover from './Cover.jsx'
 import ConfirmDialog from './ConfirmDialog.jsx'
-import { CloseIcon, UploadIcon, LinkIcon } from '../lib/icons.jsx'
+import { CloseIcon, UploadIcon, LinkIcon, ImageIcon, TrashIcon, ChevronLeft, ChevronRight } from '../lib/icons.jsx'
 import { loadPdfDocument, fileToArrayBuffer, renderPdfPageToCanvas } from '../lib/pdf.js'
 import { uploadFile } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
@@ -210,6 +210,13 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const [videoFile, setVideoFile] = useState(null) // { name, size, dataUrl }
   const [videoDrag, setVideoDrag] = useState(false)
 
+  // Photos tab. A deck whose content is a list rather than one file, so this
+  // holds the list: { file, name, preview } in the order they will be shown.
+  // Object URLs are revoked on removal and on unmount — a few dozen full-size
+  // photos held open is real memory.
+  const [photos, setPhotos] = useState([])
+  const [photoDrag, setPhotoDrag] = useState(false)
+
   // Success
   const [successDeck, setSuccessDeck] = useState(null)
 
@@ -234,7 +241,8 @@ export default function AddDeckModal({ onClose, onAdd }) {
     !!pdfFile ||
     !!url.trim() ||
     !!videoUrl.trim() ||
-    !!videoFile
+    !!videoFile ||
+    photos.length > 0
 
   // Asking to close. Nothing typed yet, or already saved — go. Otherwise the
   // question gets asked, and the answer is not "yes" by default.
@@ -379,7 +387,8 @@ export default function AddDeckModal({ onClose, onAdd }) {
   const canSubmit =
     (tab === 'upload' && pdfFile) ||
     (tab === 'url' && url.trim()) ||
-    (tab === 'video' && (videoUrl.trim() || videoFile))
+    (tab === 'video' && (videoUrl.trim() || videoFile)) ||
+    (tab === 'photos' && photos.length > 0)
 
   const handleSubmit = async () => {
     if (!canSubmit) {
@@ -388,6 +397,8 @@ export default function AddDeckModal({ onClose, onAdd }) {
           ? 'Drop a PDF first'
           : tab === 'video'
           ? 'Paste a video URL first'
+          : tab === 'photos'
+          ? 'Add at least one photo first'
           : 'Paste a URL first',
       )
       return
@@ -436,6 +447,24 @@ export default function AddDeckModal({ onClose, onAdd }) {
         deck = { ...base, slidesCount: pdfFile.pages, source: { type: 'pdf', value: up.path } }
       } else if (tab === 'url') {
         deck = { ...base, slidesCount: 1, source: { type: 'url', value: url.trim() } }
+      } else if (tab === 'photos') {
+        // One request per photo, in order, so `images` arrives in the order
+        // the person arranged. Sequential rather than Promise.all: a gallery
+        // is a handful of megabytes per file, and firing twenty uploads at
+        // once is how a phone on office wifi times them all out together.
+        const uploaded = []
+        for (const p of photos) {
+          const up = await uploadFile(p.file)
+          uploaded.push({ url: up.path, name: p.name })
+        }
+        deck = {
+          ...base,
+          slidesCount: uploaded.length,
+          // The value is filled in by the server from the first photo. Sent
+          // empty rather than guessed here, so there is one place that decides.
+          source: { type: 'photos', value: '' },
+          images: uploaded,
+        }
       } else if (videoFile) {
         // Video tab — an uploaded file beats a pasted URL.
         const up = await uploadFile(videoFile.file)
@@ -488,9 +517,9 @@ export default function AddDeckModal({ onClose, onAdd }) {
             </button>
 
             <div className="px-4 pt-6 pb-3 sm:px-7 sm:pt-7">
-              <h2 className="text-2xl font-black tracking-tight">Add a deck</h2>
+              <h2 className="text-2xl font-black tracking-tight">Add content</h2>
               <p className="text-sm text-deck-muted mt-1">
-                Upload a PDF, paste a hosted slides link, or embed a video demo.
+                Upload a PDF or a set of photos, paste a hosted slides link, or embed a video.
               </p>
             </div>
 
@@ -498,6 +527,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
               <Tab active={tab === 'upload'} onClick={() => setTab('upload')} icon={<UploadIcon size={16} />} label="Upload PDF" />
               <Tab active={tab === 'url'} onClick={() => setTab('url')} icon={<LinkIcon size={16} />} label="Paste URL" />
               <Tab active={tab === 'video'} onClick={() => setTab('video')} icon={<VideoIcon width={16} height={16} />} label="Video demo" />
+              <Tab active={tab === 'photos'} onClick={() => setTab('photos')} icon={<ImageIcon size={16} />} label="Photos" />
             </div>
 
             <div className="grid md:grid-cols-[1fr_240px] gap-5 sm:gap-6 p-4 sm:p-7 max-h-[76vh] sm:max-h-[70vh] overflow-y-auto thin-scroll">
@@ -507,6 +537,14 @@ export default function AddDeckModal({ onClose, onAdd }) {
                     <UploadPanel dragOver={dragOver} setDragOver={setDragOver} working={working} pdfFile={pdfFile} onFile={handlePdfFile} onClearFile={() => setPdfFile(null)} />
                   )}
                   {tab === 'url' && <UrlPanel url={url} setUrl={setUrl} platform={platform} />}
+                  {tab === 'photos' && (
+                    <PhotosPanel
+                      photos={photos}
+                      setPhotos={setPhotos}
+                      dragOver={photoDrag}
+                      setDragOver={setPhotoDrag}
+                    />
+                  )}
                   {tab === 'video' && (
                     <VideoPanel
                       videoUrl={videoUrl}
@@ -829,6 +867,162 @@ function UploadPanel({ dragOver, setDragOver, working, pdfFile, onFile, onClearF
         We render pages locally. Nothing leaves your browser.
       </div>
     </label>
+  )
+}
+
+// The Photos tab: a deck whose content is a set of images rather than one file.
+//
+// Order is the whole point — these are photos of one project, and the order
+// somebody arranges them in is the order they should be read in. So the list
+// is explicit and rearrangeable, and the first one is marked, because it
+// becomes the deck's cover.
+function PhotosPanel({ photos, setPhotos, dragOver, setDragOver }) {
+  const inputRef = useRef(null)
+
+  // Object URLs are a handle on the file, not a copy of it. Held open for a
+  // few dozen full-size photos they are real memory, so every one that goes
+  // away is revoked — including the whole list on unmount.
+  useEffect(
+    () => () => photos.forEach((p) => URL.revokeObjectURL(p.preview)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
+  const accept = (files) => {
+    const picked = [...files].filter((f) => f.type.startsWith('image/'))
+    if (!picked.length) return
+    setPhotos((prev) => [
+      ...prev,
+      ...picked.map((file) => ({
+        file,
+        name: file.name,
+        preview: URL.createObjectURL(file),
+      })),
+    ])
+  }
+
+  const removeAt = (i) =>
+    setPhotos((prev) => {
+      URL.revokeObjectURL(prev[i].preview)
+      return prev.filter((_, n) => n !== i)
+    })
+
+  const move = (i, by) =>
+    setPhotos((prev) => {
+      const to = i + by
+      if (to < 0 || to >= prev.length) return prev
+      const next = [...prev]
+      ;[next[i], next[to]] = [next[to], next[i]]
+      return next
+    })
+
+  return (
+    <div className="space-y-3">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          accept(e.dataTransfer.files)
+        }}
+        onClick={() => inputRef.current?.click()}
+        className={`rounded-xl border-2 border-dashed px-6 py-8 text-center cursor-pointer transition-colors ${
+          dragOver ? 'border-white/60 bg-white/5' : 'border-deck-border hover:border-white/30'
+        }`}
+      >
+        <span className="mx-auto flex items-center justify-center w-12 h-12 rounded-full bg-white/10">
+          <ImageIcon size={22} />
+        </span>
+        <div className="font-bold mt-3">
+          {photos.length ? 'Add more photos' : 'Drop photos, or click to browse'}
+        </div>
+        <p className="text-xs text-deck-muted mt-1">
+          JPG, PNG, GIF or WebP. Up to 25MB each — they are uploaded to the WIT server.
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            accept(e.target.files)
+            // Cleared so picking the same file twice in a row still fires.
+            e.target.value = ''
+          }}
+        />
+      </div>
+
+      {photos.length > 0 && (
+        <>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-deck-muted">
+              {photos.length} photo{photos.length === 1 ? '' : 's'} · the first one becomes the cover
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                photos.forEach((p) => URL.revokeObjectURL(p.preview))
+                setPhotos([])
+              }}
+              className="text-deck-muted hover:text-white"
+            >
+              Remove all
+            </button>
+          </div>
+
+          <ul className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {photos.map((p, i) => (
+              <li
+                key={p.preview}
+                className="relative group aspect-square rounded-lg overflow-hidden ring-1 ring-deck-border bg-black/40"
+              >
+                <img src={p.preview} alt={p.name} className="w-full h-full object-cover" />
+
+                {i === 0 && (
+                  <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-bold uppercase tracking-wider">
+                    Cover
+                  </span>
+                )}
+
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between px-1 py-1 bg-gradient-to-t from-black/85 to-transparent opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={() => move(i, -1)}
+                    disabled={i === 0}
+                    aria-label="Move earlier"
+                    className="w-6 h-6 rounded bg-white/15 hover:bg-white/30 disabled:opacity-25 flex items-center justify-center"
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAt(i)}
+                    aria-label={`Remove ${p.name}`}
+                    className="w-6 h-6 rounded bg-red-500/80 hover:bg-red-500 flex items-center justify-center"
+                  >
+                    <TrashIcon size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(i, 1)}
+                    disabled={i === photos.length - 1}
+                    aria-label="Move later"
+                    className="w-6 h-6 rounded bg-white/15 hover:bg-white/30 disabled:opacity-25 flex items-center justify-center"
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   )
 }
 

@@ -358,12 +358,12 @@ export default function Navbar({
             <button
               onClick={onAddClick}
               className="group flex items-center gap-1.5 h-9 w-9 sm:w-auto justify-center sm:px-3 rounded-full bg-deck-accent hover:bg-deck-accentDim text-sm font-bold transition-[transform,background-color,box-shadow] duration-200 ease-out whitespace-nowrap shadow-lg shadow-deck-accent/30 hover:shadow-deck-accent/60 hover:-translate-y-px"
-              aria-label="Add deck"
+              aria-label="Add content"
             >
               <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/15 group-hover:rotate-90 transition-transform duration-300">
                 <PlusIcon size={14} />
               </span>
-              <span className="hidden sm:inline">Add deck</span>
+              <span className="hidden sm:inline">Add content</span>
             </button>
           )}
 

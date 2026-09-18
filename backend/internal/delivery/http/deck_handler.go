@@ -54,6 +54,7 @@ func (h *DeckHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Source:      domain.DeckSource{Type: req.Source.Type, Value: req.Source.Value},
 		Description: req.Description,
 		CoverImage:  req.CoverImage,
+		Images:      toImageInputs(req.Images),
 		CreatedBy:   creatorFromContext(r.Context()),
 		Featured:    req.Featured,
 	})
@@ -207,6 +208,10 @@ func (h *DeckHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 		CoverImage:  req.CoverImage,
 		Featured:    req.Featured,
+	}
+	if req.Images != nil {
+		imgs := toImageInputs(*req.Images)
+		in.Images = &imgs
 	}
 	if req.Source != nil {
 		in.Source = &domain.DeckSource{Type: req.Source.Type, Value: req.Source.Value}

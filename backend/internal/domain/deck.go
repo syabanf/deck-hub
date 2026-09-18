@@ -34,6 +34,11 @@ type Deck struct {
 	// looks deliberate rather than missing.
 	CoverImage string `json:"coverImage"`
 
+	// Images are the photos of a 'photos' deck, in order. Empty for every
+	// other type. Loaded alongside the deck rather than fetched separately:
+	// a gallery with no photos is not a thing anyone wants to render.
+	Images []DeckImage `json:"images,omitempty"`
+
 	// CreatedBy is the account that added the deck, separate from Author,
 	// which is free text naming whoever made the presentation. Nil for every
 	// deck added before this was recorded — "unknown" rather than a guess.
@@ -42,6 +47,17 @@ type Deck struct {
 	ViewCount int        `json:"viewCount"`
 	CreatedAt time.Time  `json:"createdAt"`
 	UpdatedAt time.Time  `json:"updatedAt"`
+}
+
+// DeckImage is one photo in a 'photos' deck.
+type DeckImage struct {
+	ID  uuid.UUID `json:"id"`
+	URL string    `json:"url"`
+	// Name is what the file was called when it was uploaded. The stored name is
+	// a UUID, so this is the only readable one there is — and it is what a
+	// download is offered under.
+	Name      string `json:"name"`
+	SortOrder int    `json:"sortOrder"`
 }
 
 // SourceTypes are the kinds of content the player can actually render.
@@ -54,9 +70,14 @@ type Deck struct {
 // knows how to play, and the failure would surface at playback to a viewer
 // instead of at creation to whoever caused it.
 //
+// 'photos' is the odd one: its content is not one locator but a list, kept in
+// deck_images. Source.Value still holds the first photo, so everything that
+// only wants something to show — a cover, a share preview — keeps working
+// without knowing this type exists.
+//
 // Changing this list means changing src/lib/embed.js and DeckPlayer with it,
 // which is why it sits in code rather than in a table.
-var SourceTypes = []string{"pdf", "gslides", "url", "video", "embed"}
+var SourceTypes = []string{"pdf", "gslides", "url", "video", "embed", "photos"}
 
 // ValidSourceType reports whether the player has a branch for this type.
 func ValidSourceType(s string) bool {
@@ -127,6 +148,14 @@ type DeckRepository interface {
 	Create(ctx context.Context, d *Deck) error
 	GetByID(ctx context.Context, id uuid.UUID) (*Deck, error)
 	List(ctx context.Context, f DeckFilter) ([]*Deck, error)
+	// SetImages replaces a deck's photo list wholesale. A replace rather
+	// than add/remove/reorder: the client edits the list as a list, and
+	// three endpoints to express one edit is three chances to disagree
+	// about the order.
+	SetImages(ctx context.Context, deckID uuid.UUID, images []DeckImage) error
+	// ImagesByDeck loads photos for the given decks, keyed by deck id, so a
+	// listing costs one query rather than one per deck.
+	ImagesByDeck(ctx context.Context, deckIDs []uuid.UUID) (map[uuid.UUID][]DeckImage, error)
 	Count(ctx context.Context, f DeckFilter) (int, error)
 	Stats(ctx context.Context) (*DeckStats, error)
 	Update(ctx context.Context, d *Deck) error

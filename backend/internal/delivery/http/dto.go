@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/wit/wit-backend/internal/domain"
+	"github.com/wit/wit-backend/internal/usecase"
 )
 
 // ----- User DTOs -----
@@ -93,10 +94,47 @@ type deckResponse struct {
 	Source      deckSourceDTO `json:"source"`
 	Description string        `json:"description"`
 	CoverImage  string        `json:"coverImage"`
-	Featured    bool          `json:"featured"`
-	ViewCount   int           `json:"viewCount"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	UpdatedAt   time.Time     `json:"updatedAt"`
+	// Photos of a 'photos' deck, in order. Absent for every other type
+	// rather than an empty array, so a client can tell "no gallery here"
+	// from "a gallery somebody emptied".
+	Images    []deckImageDTO `json:"images,omitempty"`
+	Featured  bool           `json:"featured"`
+	ViewCount int            `json:"viewCount"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+}
+
+// deckImageDTO is one photo as the API returns it.
+type deckImageDTO struct {
+	ID   string `json:"id"`
+	URL  string `json:"url"`
+	Name string `json:"name"`
+}
+
+// deckImageInputDTO is one photo as a client sends it: where the upload landed,
+// and what the file was called before it was given a UUID for a name.
+type deckImageInputDTO struct {
+	URL  string `json:"url"`
+	Name string `json:"name"`
+}
+
+func toDeckImages(in []domain.DeckImage) []deckImageDTO {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]deckImageDTO, 0, len(in))
+	for _, img := range in {
+		out = append(out, deckImageDTO{ID: img.ID.String(), URL: img.URL, Name: img.Name})
+	}
+	return out
+}
+
+func toImageInputs(in []deckImageInputDTO) []usecase.DeckImageInput {
+	out := make([]usecase.DeckImageInput, 0, len(in))
+	for _, img := range in {
+		out = append(out, usecase.DeckImageInput{URL: img.URL, Name: img.Name})
+	}
+	return out
 }
 
 func toDeckResponse(d *domain.Deck) deckResponse {
@@ -116,6 +154,7 @@ func toDeckResponse(d *domain.Deck) deckResponse {
 		Source:      deckSourceDTO{Type: d.Source.Type, Value: d.Source.Value},
 		Description: d.Description,
 		CoverImage:  d.CoverImage,
+		Images:      toDeckImages(d.Images),
 		Featured:    d.Featured,
 		ViewCount:   d.ViewCount,
 		CreatedAt:   d.CreatedAt,
@@ -132,32 +171,34 @@ func toDeckResponses(decks []*domain.Deck) []deckResponse {
 }
 
 type createDeckRequest struct {
-	Title       string        `json:"title"`
-	Subtitle    string        `json:"subtitle"`
-	Author      string        `json:"author"`
-	Year        int           `json:"year"`
-	Category    string        `json:"category"`
-	Industry    string        `json:"industry"`
-	Tags        []string      `json:"tags"`
-	Source      deckSourceDTO `json:"source"`
-	Description string        `json:"description"`
-	CoverImage  string        `json:"coverImage"`
-	Featured    bool          `json:"featured"`
+	Title       string              `json:"title"`
+	Subtitle    string              `json:"subtitle"`
+	Author      string              `json:"author"`
+	Year        int                 `json:"year"`
+	Category    string              `json:"category"`
+	Industry    string              `json:"industry"`
+	Tags        []string            `json:"tags"`
+	Source      deckSourceDTO       `json:"source"`
+	Description string              `json:"description"`
+	CoverImage  string              `json:"coverImage"`
+	Images      []deckImageInputDTO `json:"images"`
+	Featured    bool                `json:"featured"`
 }
 
 // updateDeckRequest uses pointers for partial updates.
 type updateDeckRequest struct {
-	Title       *string        `json:"title"`
-	Subtitle    *string        `json:"subtitle"`
-	Author      *string        `json:"author"`
-	Year        *int           `json:"year"`
-	Category    *string        `json:"category"`
-	Industry    *string        `json:"industry"`
-	Tags        *[]string      `json:"tags"`
-	Source      *deckSourceDTO `json:"source"`
-	Description *string        `json:"description"`
-	CoverImage  *string        `json:"coverImage"`
-	Featured    *bool          `json:"featured"`
+	Title       *string              `json:"title"`
+	Subtitle    *string              `json:"subtitle"`
+	Author      *string              `json:"author"`
+	Year        *int                 `json:"year"`
+	Category    *string              `json:"category"`
+	Industry    *string              `json:"industry"`
+	Tags        *[]string            `json:"tags"`
+	Source      *deckSourceDTO       `json:"source"`
+	Description *string              `json:"description"`
+	CoverImage  *string              `json:"coverImage"`
+	Images      *[]deckImageInputDTO `json:"images"`
+	Featured    *bool                `json:"featured"`
 }
 
 // ----- taxonomy -----

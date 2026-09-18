@@ -107,6 +107,15 @@ export const UploadIcon = (p) => (
     <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />
   </Icon>
 )
+// A photo, for the Photos content type: a frame with a horizon and a sun.
+export const ImageIcon = (p) => (
+  <Icon {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <path d="M21 15l-5-5L5 21" />
+  </Icon>
+)
+
 export const LinkIcon = (p) => (
   <Icon {...p}>
     <path d="M10 14a5 5 0 007 0l3-3a5 5 0 00-7-7l-1 1" />

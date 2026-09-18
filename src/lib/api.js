@@ -380,6 +380,15 @@ const normalizeSource = (src) => {
     if (/^(https?:|\/)/i.test(raw)) return { type: 'pdf', value: absoluteUrl(raw), raw, rawType: type, remote: true }
     return { type: 'pdf', value: raw, raw, rawType: type }
   }
+  if (type === 'photos') {
+    // A gallery's content is the image list, not this value — see the deck's
+    // `images`. The value is the first photo, kept so anything that only wants
+    // something to show has it without knowing the type exists.
+    //
+    // It has to be recognised here or it falls through to the iframe branch
+    // below, and the player renders a photo deck as a web page.
+    return { type: 'photos', value: absoluteUrl(raw), raw, rawType: type }
+  }
   // gslides / embed / url (and anything else) → iframe; UrlStage's toEmbedUrl
   // handles the Google-Slides conversion.
   return { type: 'url', value: absoluteUrl(raw), raw, rawType: type || 'url' }
@@ -398,6 +407,12 @@ export const normalizeDeck = (d) => {
     // against the API base because the stored path is server-relative.
     image: d.coverImage ? absoluteUrl(d.coverImage) : d.image,
     source: normalizeSource(d.source),
+    // Photos of a gallery deck, absolutised the same way the cover is: the
+    // stored paths are server-relative and the app may be on another origin
+    // in development.
+    images: Array.isArray(d.images)
+      ? d.images.map((img) => ({ ...img, url: absoluteUrl(img.url) }))
+      : [],
   }
 }
 
@@ -420,6 +435,9 @@ export const toCreateRequest = (deck) => ({
   source: { type: deck.source?.type || 'url', value: deck.source?.value || '' },
   description: deck.description || '',
   coverImage: deck.coverImage || '',
+  // Only for a photos deck; the API refuses them on any other type, which is
+  // what keeps a stray list from being half-accepted.
+  images: Array.isArray(deck.images) ? deck.images : undefined,
   featured: !!deck.featured,
 })
 
@@ -443,6 +461,9 @@ export const toUpdateRequest = (patch) => {
   // back to the generated artwork.
   if (patch.coverImage !== undefined) body.coverImage = patch.coverImage
   if (patch.featured !== undefined) body.featured = !!patch.featured
+  // Replaces the whole gallery. Omitted leaves it alone, which is why this
+  // is a presence check and not a truthiness one.
+  if (patch.images !== undefined) body.images = patch.images
   if (patch.source !== undefined) {
     body.source = { type: patch.source.type || 'url', value: patch.source.value || '' }
   }

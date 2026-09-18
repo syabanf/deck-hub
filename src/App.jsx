@@ -1316,7 +1316,7 @@ function Footer({ onAddClick }) {
         Browse a curated catalog of legendary public presentation decks, or contribute your own
         by uploading PDFs and linking to hosted presentations.{' '}
         <button onClick={onAddClick} className="text-white underline hover:text-deck-accent">
-          Add a deck →
+          Add content →
         </button>
       </p>
     </div>

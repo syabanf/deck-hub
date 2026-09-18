@@ -91,6 +91,48 @@ const PdfSlideStage = ({ deck, index }) => {
   )
 }
 
+// One photo of a gallery deck.
+//
+// `object-contain` rather than cover: these are photographs of somebody's
+// project, and cropping them to fill a 16:9 frame is deciding for the viewer
+// which half of the picture mattered.
+//
+// The neighbouring photos are prefetched — a gallery is paged through quickly,
+// and a full-size photo that starts loading on the click is a blank frame for
+// as long as the network takes.
+const PhotoStage = ({ photos, index, title }) => {
+  const photo = photos[index]
+
+  useEffect(() => {
+    for (const n of [index + 1, index - 1]) {
+      const next = photos[n]
+      if (next) {
+        const img = new Image()
+        img.src = next.url
+      }
+    }
+  }, [photos, index])
+
+  if (!photo) {
+    return (
+      <div className="flex items-center justify-center w-full h-full text-white/50 text-sm">
+        This gallery has no photos.
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative w-full h-full flex items-center justify-center">
+      <img
+        src={photo.url}
+        alt={photo.name || `${title} — ${index + 1} of ${photos.length}`}
+        className="max-w-full max-h-full object-contain select-none"
+        draggable={false}
+      />
+    </div>
+  )
+}
+
 const UrlStage = ({ deck }) => {
   // Both the frame and the escape hatch below follow this value, so it goes
   // through the same check as any other stored link — see safeHref.
@@ -184,10 +226,19 @@ export default function DeckPlayer({
     }
   }, [deck.id, sourceType])
 
-  const totalSlides = sourceType === 'pdf' ? (pdfPageCount || deck.slidesCount || 1) : 1
+  // A gallery's photos, in order. Only a 'photos' deck has any.
+  const photos = sourceType === 'photos' ? deck.images || [] : []
 
-  // Only PDFs page in-app. Cross-origin embeds own their own navigation.
-  const canNavigate = sourceType === 'pdf'
+  const totalSlides =
+    sourceType === 'pdf'
+      ? pdfPageCount || deck.slidesCount || 1
+      : sourceType === 'photos'
+        ? Math.max(1, photos.length)
+        : 1
+
+  // PDFs and galleries page in-app: both are a list of pages this app renders
+  // itself. Cross-origin embeds own their own navigation.
+  const canNavigate = sourceType === 'pdf' || sourceType === 'photos' 
   const goPrev = () => canNavigate && setIndex((i) => Math.max(0, i - 1))
   const goNext = () => canNavigate && setIndex((i) => Math.min(totalSlides - 1, i + 1))
 
@@ -312,6 +363,7 @@ export default function DeckPlayer({
       {/* Stage */}
       <div className="flex-1 flex items-center justify-center px-4 sm:px-12 py-16 relative">
         {sourceType === 'pdf' && <PdfSlideStage deck={deck} index={index} />}
+        {sourceType === 'photos' && <PhotoStage photos={photos} index={index} title={deck.title} />}
         {sourceType === 'url' && <UrlStage deck={deck} />}
         {sourceType === 'video' && <VideoStage deck={deck} mediaRef={mediaRef} />}
 

@@ -371,3 +371,62 @@ func (r *DeckRepository) CountByCreator(ctx context.Context, userID uuid.UUID) (
 	}
 	return n, nil
 }
+
+// SetImages replaces a deck's photo list.
+//
+// Delete-then-insert inside one transaction, which for a list somebody has
+// just reordered in a form is both the simplest thing to write and the only
+// one that cannot leave a half-applied order behind. The lists are small — a
+// gallery is photos of one project, not an archive.
+func (r *DeckRepository) SetImages(ctx context.Context, deckID uuid.UUID, images []domain.DeckImage) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin set images: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	if _, err := tx.Exec(ctx, `DELETE FROM deck_images WHERE deck_id = $1`, deckID); err != nil {
+		return fmt.Errorf("clear deck images: %w", err)
+	}
+
+	const ins = `INSERT INTO deck_images (deck_id, url, name, sort_order) VALUES ($1, $2, $3, $4)`
+	for i, img := range images {
+		// Position comes from the order they arrived in, not from whatever the
+		// client put in sortOrder. The list is the order.
+		if _, err := tx.Exec(ctx, ins, deckID, img.URL, img.Name, i*10); err != nil {
+			return fmt.Errorf("insert deck image: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit set images: %w", err)
+	}
+	return nil
+}
+
+// ImagesByDeck loads the photos for several decks at once.
+func (r *DeckRepository) ImagesByDeck(ctx context.Context, deckIDs []uuid.UUID) (map[uuid.UUID][]domain.DeckImage, error) {
+	out := map[uuid.UUID][]domain.DeckImage{}
+	if len(deckIDs) == 0 {
+		return out, nil
+	}
+
+	const q = `SELECT id, deck_id, url, name, sort_order
+	             FROM deck_images
+	            WHERE deck_id = ANY($1)
+	            ORDER BY deck_id, sort_order, id`
+	rows, err := r.pool.Query(ctx, q, deckIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list deck images: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var deckID uuid.UUID
+		var img domain.DeckImage
+		if err := rows.Scan(&img.ID, &deckID, &img.URL, &img.Name, &img.SortOrder); err != nil {
+			return nil, fmt.Errorf("scan deck image: %w", err)
+		}
+		out[deckID] = append(out[deckID], img)
+	}
+	return out, rows.Err()
+}

@@ -82,10 +82,56 @@ type CreateDeckInput struct {
 	CoverImage  string
 	Featured    bool
 
+	// Images are the photos of a 'photos' deck, in the order they should
+	// be shown. Ignored for every other type.
+	Images []DeckImageInput
+
 	// CreatedBy is set from the token by the handler, never from the request
 	// body. A client naming its own author would make the record worthless.
 	CreatedBy *uuid.UUID
 }
+
+// DeckImageInput is one photo as the client sends it: where the file landed
+// after upload, and what it was called before it got a UUID for a name.
+type DeckImageInput struct {
+	URL  string
+	Name string
+}
+
+// maxDeckImages caps one gallery.
+//
+// Not a storage limit — the files are already on disk by the time this runs —
+// but a rendering one: the player loads the list up front, and a "deck" of a
+// thousand photos is an archive that wants a different screen than this.
+const maxDeckImages = 200
+
+// prepareImages validates and normalises a photo list.
+//
+// Every URL goes through the same check a deck source does: these end up in an
+// <img src>, and a `javascript:` there is script on this application's origin.
+func prepareImages(in []DeckImageInput) ([]domain.DeckImage, error) {
+	if len(in) > maxDeckImages {
+		return nil, fmt.Errorf("%w: a photo deck holds at most %d photos", domain.ErrInvalidInput, maxDeckImages)
+	}
+	out := make([]domain.DeckImage, 0, len(in))
+	for i, img := range in {
+		url, err := normalizeLink(fmt.Sprintf("photo %d", i+1), img.URL)
+		if err != nil {
+			return nil, err
+		}
+		if url == "" {
+			return nil, fmt.Errorf("%w: photo %d has no file", domain.ErrInvalidInput, i+1)
+		}
+		out = append(out, domain.DeckImage{URL: url, Name: strings.TrimSpace(img.Name)})
+	}
+	return out, nil
+}
+
+// SourceTypePhotos is the type whose content is the image list rather than
+// Source.Value. Named rather than repeated, because the rule "this one type
+// behaves differently" is easy to apply in three places and forget in a
+// fourth.
+const SourceTypePhotos = "photos"
 
 func validateDeckCore(title, category string, source domain.DeckSource) error {
 	if strings.TrimSpace(title) == "" {
@@ -102,6 +148,27 @@ func validateDeckCore(title, category string, source domain.DeckSource) error {
 
 // Create validates input and persists a new deck.
 func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.Deck, error) {
+	images, err := prepareImages(in.Images)
+	if err != nil {
+		return nil, err
+	}
+	// A photo deck's content is the list, so its Source.Value is derived rather
+	// than sent: the first photo. That keeps every caller that only wants
+	// "something to show" — a cover, a share preview, the catalog table —
+	// working without knowing this type exists.
+	//
+	// Done before validateDeckCore, which insists on a source value and would
+	// otherwise reject a perfectly complete gallery for not repeating itself.
+	if in.Source.Type == SourceTypePhotos {
+		if len(images) == 0 {
+			return nil, fmt.Errorf("%w: a photo deck needs at least one photo", domain.ErrInvalidInput)
+		}
+		in.Source.Value = images[0].URL
+	} else if len(images) > 0 {
+		return nil, fmt.Errorf("%w: photos belong to a %q deck, not a %q one",
+			domain.ErrInvalidInput, SourceTypePhotos, in.Source.Type)
+	}
+
 	if err := validateDeckCore(in.Title, in.Category, in.Source); err != nil {
 		return nil, err
 	}
@@ -148,7 +215,47 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 	if err := uc.repo.Create(ctx, d); err != nil {
 		return nil, fmt.Errorf("create deck: %w", err)
 	}
+
+	if len(images) > 0 {
+		if err := uc.repo.SetImages(ctx, d.ID, images); err != nil {
+			return nil, fmt.Errorf("attach deck photos: %w", err)
+		}
+		// Read back, so the response carries the ids and the order the database
+		// settled on rather than what was asked for.
+		if err := uc.attachImages(ctx, d); err != nil {
+			return nil, err
+		}
+	}
 	return d, nil
+}
+
+// attachImages fills in Images for the given decks in one query.
+//
+// One query for any number of decks: a listing that loaded photos per deck
+// would be the classic N+1, and the catalog table asks for fifty at a time.
+func (uc *DeckUsecase) attachImages(ctx context.Context, decks ...*domain.Deck) error {
+	ids := make([]uuid.UUID, 0, len(decks))
+	for _, d := range decks {
+		// Only the type that has any. Asking about the rest would turn a page
+		// of PDFs into a pointless query.
+		if d != nil && d.Source.Type == SourceTypePhotos {
+			ids = append(ids, d.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	byDeck, err := uc.repo.ImagesByDeck(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("load deck photos: %w", err)
+	}
+	for _, d := range decks {
+		if d != nil {
+			d.Images = byDeck[d.ID]
+		}
+	}
+	return nil
 }
 
 // GetByID returns a single deck or domain.ErrNotFound.
@@ -156,6 +263,9 @@ func (uc *DeckUsecase) GetByID(ctx context.Context, id uuid.UUID) (*domain.Deck,
 	d, err := uc.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get deck: %w", err)
+	}
+	if err := uc.attachImages(ctx, d); err != nil {
+		return nil, err
 	}
 	return d, nil
 }
@@ -191,6 +301,9 @@ func (uc *DeckUsecase) List(ctx context.Context, f domain.DeckFilter) ([]*domain
 	if err != nil {
 		return nil, fmt.Errorf("list decks: %w", err)
 	}
+	if err := uc.attachImages(ctx, decks...); err != nil {
+		return nil, err
+	}
 	return decks, nil
 }
 
@@ -202,6 +315,9 @@ func (uc *DeckUsecase) ListPage(ctx context.Context, f domain.DeckFilter) ([]*do
 	decks, err := uc.repo.List(ctx, f)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list decks: %w", err)
+	}
+	if err := uc.attachImages(ctx, decks...); err != nil {
+		return nil, 0, err
 	}
 
 	// Skip the count query when the first page already holds everything —
@@ -239,6 +355,11 @@ type UpdateDeckInput struct {
 	Description *string
 	CoverImage  *string
 	Featured    *bool
+
+	// Images replaces the whole photo list when supplied. A pointer, so an
+	// omitted field leaves the gallery alone while an empty list is a real
+	// edit — somebody clearing it out.
+	Images *[]DeckImageInput
 }
 
 // Update applies partial changes to an existing deck after validation.
@@ -326,6 +447,34 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 	d.UpdatedAt = time.Now().UTC()
 	if err := uc.repo.Update(ctx, d); err != nil {
 		return nil, fmt.Errorf("update deck: %w", err)
+	}
+
+	if in.Images != nil {
+		images, err := prepareImages(*in.Images)
+		if err != nil {
+			return nil, err
+		}
+		if d.Source.Type != SourceTypePhotos {
+			return nil, fmt.Errorf("%w: photos belong to a %q deck, not a %q one",
+				domain.ErrInvalidInput, SourceTypePhotos, d.Source.Type)
+		}
+		if len(images) == 0 {
+			return nil, fmt.Errorf("%w: a photo deck needs at least one photo", domain.ErrInvalidInput)
+		}
+		if err := uc.repo.SetImages(ctx, d.ID, images); err != nil {
+			return nil, fmt.Errorf("replace deck photos: %w", err)
+		}
+		// The first photo is the source value, so reordering the gallery has to
+		// move it too — otherwise the cover keeps pointing at a photo that is
+		// no longer the first one.
+		d.Source.Value = images[0].URL
+		if err := uc.repo.Update(ctx, d); err != nil {
+			return nil, fmt.Errorf("update deck source after photo edit: %w", err)
+		}
+	}
+
+	if err := uc.attachImages(ctx, d); err != nil {
+		return nil, err
 	}
 	return d, nil
 }

@@ -2364,3 +2364,142 @@ func TestTaxonomyDescription(t *testing.T) {
 		requireStatus(t, http.StatusBadRequest, status, raw)
 	})
 }
+
+// TestPhotoDeck covers the content type whose content is a list.
+//
+// Every other source type is one locator in one column. A photo deck is many
+// rows in another table, with an order somebody rearranges — so the things
+// worth pinning are that the list survives the round trip in order, that the
+// deck's own source value follows the first photo, and that the two cannot
+// drift apart.
+func TestPhotoDeck(t *testing.T) {
+	admin := adminToken(t)
+
+	body := newDeckBody("E2E Photo Deck")
+	body["source"] = map[string]string{"type": "photos", "value": ""}
+	body["images"] = []map[string]string{
+		{"url": "/uploads/aaa.jpg", "name": "site-01.jpg"},
+		{"url": "/uploads/bbb.jpg", "name": "site-02.jpg"},
+		{"url": "/uploads/ccc.jpg", "name": "site-03.jpg"},
+	}
+
+	status, raw := do(t, http.MethodPost, "/decks", admin, body)
+	requireStatus(t, http.StatusCreated, status, raw)
+
+	var created struct {
+		ID     string `json:"id"`
+		Source struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+		} `json:"source"`
+		Images []struct {
+			ID   string `json:"id"`
+			URL  string `json:"url"`
+			Name string `json:"name"`
+		} `json:"images"`
+	}
+	decode(t, raw, &created)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+created.ID, admin, nil) })
+
+	if len(created.Images) != 3 {
+		t.Fatalf("got %d photos back, want 3", len(created.Images))
+	}
+	if created.Images[0].Name != "site-01.jpg" || created.Images[2].Name != "site-03.jpg" {
+		t.Fatalf("photos came back out of order: %+v", created.Images)
+	}
+	// The gallery is the content, so the deck's own source value is derived
+	// from it rather than sent. Everything that only wants "something to show"
+	// — a cover, a share preview — reads that field.
+	if created.Source.Value != "/uploads/aaa.jpg" {
+		t.Fatalf("source value = %q, want the first photo", created.Source.Value)
+	}
+
+	t.Run("the list survives a re-read", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks/"+created.ID, "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var got struct {
+			Images []struct{ Name string } `json:"images"`
+		}
+		decode(t, raw, &got)
+		if len(got.Images) != 3 || got.Images[1].Name != "site-02.jpg" {
+			t.Fatalf("re-read gave %+v", got.Images)
+		}
+	})
+
+	t.Run("a listing carries the photos too, without asking per deck", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks?search=E2E%20Photo%20Deck", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var list []struct {
+			ID     string                 `json:"id"`
+			Images []struct{ URL string } `json:"images"`
+		}
+		decode(t, raw, &list)
+		for _, d := range list {
+			if d.ID == created.ID && len(d.Images) != 3 {
+				t.Fatalf("listing returned %d photos for the gallery", len(d.Images))
+			}
+		}
+	})
+
+	t.Run("reordering moves the source value with it", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/decks/"+created.ID, admin, map[string]any{
+			"images": []map[string]string{
+				{"url": "/uploads/ccc.jpg", "name": "site-03.jpg"},
+				{"url": "/uploads/aaa.jpg", "name": "site-01.jpg"},
+			},
+		})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var after struct {
+			Source struct{ Value string }  `json:"source"`
+			Images []struct{ Name string } `json:"images"`
+		}
+		decode(t, raw, &after)
+		if len(after.Images) != 2 || after.Images[0].Name != "site-03.jpg" {
+			t.Fatalf("after reorder: %+v", after.Images)
+		}
+		if after.Source.Value != "/uploads/ccc.jpg" {
+			t.Fatalf("source value = %q — it has to follow the first photo, or the cover points at one that moved", after.Source.Value)
+		}
+	})
+
+	t.Run("a photo deck cannot be empty", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/decks/"+created.ID, admin,
+			map[string]any{"images": []map[string]string{}})
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("a photo that would run as script is refused", func(t *testing.T) {
+		b := newDeckBody("E2E Photo XSS")
+		b["source"] = map[string]string{"type": "photos", "value": ""}
+		b["images"] = []map[string]string{{"url": "javascript:alert(1)", "name": "x"}}
+		status, raw := do(t, http.MethodPost, "/decks", admin, b)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("photos on a deck that is not a gallery are refused", func(t *testing.T) {
+		b := newDeckBody("E2E Photos On A PDF")
+		b["images"] = []map[string]string{{"url": "/uploads/aaa.jpg", "name": "x"}}
+		status, raw := do(t, http.MethodPost, "/decks", admin, b)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+
+	t.Run("deleting the deck takes its photos with it", func(t *testing.T) {
+		b := newDeckBody("E2E Photo Cascade")
+		b["source"] = map[string]string{"type": "photos", "value": ""}
+		b["images"] = []map[string]string{{"url": "/uploads/zzz.jpg", "name": "one.jpg"}}
+		status, raw := do(t, http.MethodPost, "/decks", admin, b)
+		requireStatus(t, http.StatusCreated, status, raw)
+		var tmp struct{ ID string }
+		decode(t, raw, &tmp)
+
+		status, raw = do(t, http.MethodDelete, "/decks/"+tmp.ID, admin, nil)
+		requireStatus(t, http.StatusNoContent, status, raw)
+
+		// The foreign key says it once so no delete path has to remember.
+		status, raw = do(t, http.MethodGet, "/decks/"+tmp.ID, "", nil)
+		requireStatus(t, http.StatusNotFound, status, raw)
+	})
+}

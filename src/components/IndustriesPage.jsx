@@ -127,7 +127,7 @@ export default function IndustriesPage({ onPickIndustry, counts: rawCounts }) {
       <div className="mt-10 text-center text-xs text-deck-muted">
         Don&apos;t see your industry?{' '}
         <span className="text-white/70">
-          Add a deck — pick an industry in the form, or it joins your library by default.
+          Add content — pick an industry in the form, or it joins your library by default.
         </span>
       </div>
     </div>
