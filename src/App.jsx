@@ -937,7 +937,7 @@ export default function App() {
 
       <ConfirmDialog
         open={!!pendingRemoval}
-        title="Remove this deck?"
+        title="Remove This Deck?"
         message={
           pendingRemoval
             ? `"${pendingRemoval.title}" will be taken out of the catalog. This cannot be undone.`
@@ -1316,7 +1316,7 @@ function Footer({ onAddClick }) {
         Browse a curated catalog of legendary public presentation decks, or contribute your own
         by uploading PDFs and linking to hosted presentations.{' '}
         <button onClick={onAddClick} className="text-white underline hover:text-deck-accent">
-          Add content →
+          Add Content →
         </button>
       </p>
     </div>

@@ -77,7 +77,7 @@ export default function ManagePage({
         <div className={`flex flex-wrap items-end gap-4 ${embedded ? 'justify-end' : 'justify-between'}`}>
           {!embedded && (
             <div>
-              <h1 className="text-4xl md:text-5xl font-black tracking-tight">Manage catalog</h1>
+              <h1 className="text-4xl md:text-5xl font-black tracking-tight">Manage Catalog</h1>
               <p className="text-deck-muted mt-1">
                 The live deck catalog served by the WIT API.
               </p>

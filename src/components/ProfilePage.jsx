@@ -80,7 +80,7 @@ export default function ProfilePage({ user }) {
       </div>
 
       <form onSubmit={submit} className="rounded-xl bg-deck-card border border-deck-border p-5">
-        <h3 className="font-bold">Change your password</h3>
+        <h3 className="font-bold">Change Your Password</h3>
         <p className="text-xs text-deck-muted mt-1 mb-4">
           You are asked for the current one because a signed-in session on its own
           should not be enough to take over the account.

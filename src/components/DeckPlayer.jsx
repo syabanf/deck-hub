@@ -133,6 +133,64 @@ const PhotoStage = ({ photos, index, title }) => {
   )
 }
 
+// Every photo in the gallery, under the one being shown.
+//
+// A counter tells you there are eight; it does not tell you what is in them.
+// For photographs of one project — the reason this content type exists — being
+// able to see the set and jump straight to the one you meant is most of the
+// value of having them in one deck at all.
+//
+// Hidden for a single photo: a filmstrip of one is a row of chrome saying
+// nothing.
+const PhotoStrip = ({ photos, index, onPick }) => {
+  const stripRef = useRef(null)
+
+  // Keep the current thumbnail in view when paging with the keyboard, or the
+  // strip silently falls out of step with the picture above it.
+  useEffect(() => {
+    const el = stripRef.current?.children[index]
+    el?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
+  }, [index])
+
+  if (photos.length < 2) return null
+
+  return (
+    <div className="relative z-20 px-4 sm:px-12 pb-2">
+      <div
+        ref={stripRef}
+        className="flex gap-2 overflow-x-auto no-scrollbar py-1"
+        role="tablist"
+        aria-label="Photos in this deck"
+      >
+        {photos.map((p, i) => (
+          <button
+            key={p.id || p.url}
+            role="tab"
+            aria-selected={i === index}
+            aria-label={p.name || `Photo ${i + 1}`}
+            onClick={() => onPick(i)}
+            className={`shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-md overflow-hidden ring-2 transition-all ${
+              i === index
+                ? 'ring-deck-accent opacity-100'
+                : 'ring-white/15 opacity-55 hover:opacity-100 hover:ring-white/40'
+            }`}
+          >
+            {/* object-cover here, unlike the stage: a thumbnail is for
+                recognising a photo, and a letterboxed one is mostly black. */}
+            <img
+              src={p.url}
+              alt=""
+              loading="lazy"
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const UrlStage = ({ deck }) => {
   // Both the frame and the escape hatch below follow this value, so it goes
   // through the same check as any other stored link — see safeHref.
@@ -360,8 +418,14 @@ export default function DeckPlayer({
         </div>
       </div>
 
-      {/* Stage */}
-      <div className="flex-1 flex items-center justify-center px-4 sm:px-12 py-16 relative">
+      {/* Stage.
+          min-h-0 is load-bearing: a flex child defaults to `min-height: auto`,
+          which refuses to shrink below its content. Without it `flex-1` grew to
+          whatever the picture's natural height was, the column overflowed the
+          viewport, and a tall photo or PDF page was simply cut off at the
+          bottom with no way to scroll to the rest. The same trap as
+          `min-width: auto` on a grid item. */}
+      <div className="flex-1 min-h-0 flex items-center justify-center px-4 sm:px-12 py-10 sm:py-14 relative">
         {sourceType === 'pdf' && <PdfSlideStage deck={deck} index={index} />}
         {sourceType === 'photos' && <PhotoStage photos={photos} index={index} title={deck.title} />}
         {sourceType === 'url' && <UrlStage deck={deck} />}
@@ -391,6 +455,10 @@ export default function DeckPlayer({
           </>
         )}
       </div>
+
+      {sourceType === 'photos' && (
+        <PhotoStrip photos={photos} index={index} onPick={setIndex} />
+      )}
 
       {/* Bottom bar */}
       <div className="absolute bottom-0 inset-x-0 z-20 px-6 py-4 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between text-xs text-white/70">

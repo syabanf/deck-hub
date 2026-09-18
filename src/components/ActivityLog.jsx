@@ -55,7 +55,7 @@ export default function ActivityLog() {
           <option value="">Everything</option>
           <option value="deck">Decks</option>
           <option value="user">Users</option>
-          <option value="taxonomy">Master data</option>
+          <option value="taxonomy">Master Data</option>
           <option value="settings">Settings</option>
           <option value="upload">Uploads</option>
           <option value="profile">Profiles</option>

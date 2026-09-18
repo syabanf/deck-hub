@@ -268,7 +268,7 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
             )}
           </Field>
 
-          <Field label="Cover image" hint="Optional — empty uses the generated artwork">
+          <Field label="Cover Image" hint="Optional — empty uses the generated artwork">
             <div className="flex items-center gap-3">
               <div className="w-24 h-16 rounded-lg border border-deck-border bg-deck-card overflow-hidden shrink-0 grid place-items-center">
                 {coverFile?.preview || coverImage ? (
@@ -285,7 +285,7 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
               </div>
               <div className="flex-1 min-w-0">
                 <label className="inline-block px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold cursor-pointer">
-                  {coverFile || coverImage ? 'Replace' : 'Choose image'}
+                  {coverFile || coverImage ? 'Replace' : 'Choose Image'}
                   <input
                     type="file"
                     accept="image/png,image/jpeg,image/webp,image/gif"

@@ -116,7 +116,7 @@ function CoverPicker({ cover, busy, onPick }) {
   return (
     <div className="space-y-2">
       <FieldLabel>
-        Cover image <span className="text-white/40">optional</span>
+        Cover Image <span className="text-white/40">optional</span>
       </FieldLabel>
       <div className="flex items-center gap-3">
         <div
@@ -134,7 +134,7 @@ function CoverPicker({ cover, busy, onPick }) {
         </div>
         <div className="flex-1">
           <label className="inline-block px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-sm font-semibold cursor-pointer">
-            {cover ? 'Replace' : 'Choose image'}
+            {cover ? 'Replace' : 'Choose Image'}
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
@@ -517,7 +517,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
             </button>
 
             <div className="px-4 pt-6 pb-3 sm:px-7 sm:pt-7">
-              <h2 className="text-2xl font-black tracking-tight">Add content</h2>
+              <h2 className="text-2xl font-black tracking-tight">Add Content</h2>
               <p className="text-sm text-deck-muted mt-1">
                 Upload a PDF or a set of photos, paste a hosted slides link, or embed a video.
               </p>
@@ -768,7 +768,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
                       : 'bg-white/10 text-white/40 cursor-not-allowed'
                   }`}
                 >
-                  {uploading ? 'Uploading…' : working ? 'Reading PDF…' : 'Add to library'}
+                  {uploading ? 'Uploading…' : working ? 'Reading PDF…' : 'Add to Library'}
                 </button>
                 <div className="text-[11px] text-deck-muted leading-snug">
                   {tab === 'upload' && 'PDFs are uploaded to the WIT server. Up to 25MB.'}
@@ -785,7 +785,7 @@ export default function AddDeckModal({ onClose, onAdd }) {
           that discards is the one that has to be chosen deliberately. */}
       <ConfirmDialog
         open={confirmDiscard}
-        title="Discard this deck?"
+        title="Discard This Deck?"
         message={
           pdfFile || videoFile || cover
             ? 'The file you attached and everything you have filled in will be lost.'
