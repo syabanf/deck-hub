@@ -53,9 +53,16 @@ export default function Cover({
   const slideCount = deck.slides?.length || deck.slidesCount
 
   const bottomBlock = !minimal ? (
-    <div className="cover-caption absolute inset-x-0 bottom-0 p-3 z-10 max-h-[58%] flex flex-col justify-end">
+    <div className="cover-caption absolute inset-x-0 bottom-0 p-3 z-10 max-h-[70%] flex flex-col justify-end overflow-hidden">
+      {/* shrink-0 is what keeps a long title readable.
+          Flex children shrink by default, so a two-line title inside a capped
+          column was squeezed to less than two lines tall — and because the
+          clamp below also sets overflow:hidden, the second line was sliced
+          through the middle and the subtitle sat on top of the remains. The
+          clamp is what bounds the title; the flexbox should not get a second
+          opinion about it. */}
       <div
-        className="font-black leading-[1.1] tracking-tight text-white drop-shadow-lg overflow-hidden"
+        className="font-black leading-[1.1] tracking-tight text-white drop-shadow-lg overflow-hidden shrink-0"
         style={{
           fontSize: '1.2em',
           display: '-webkit-box',
@@ -66,11 +73,11 @@ export default function Cover({
         {deck.title}
       </div>
       {deck.subtitle && (
-        <div className="text-white/80 mt-0.5 truncate" style={{ fontSize: '0.78em' }}>
+        <div className="text-white/80 mt-0.5 truncate shrink-0" style={{ fontSize: '0.78em' }}>
           {deck.subtitle}
         </div>
       )}
-      <div className="flex items-center gap-1.5 mt-1.5 text-white/70" style={{ fontSize: '0.68em' }}>
+      <div className="flex items-center gap-1.5 mt-1.5 text-white/70 shrink-0" style={{ fontSize: '0.68em' }}>
         <span className="truncate flex-1">{deck.author}</span>
         {slideCount ? (
           <>

@@ -60,22 +60,34 @@ export default function DetailsModal({
           <CloseIcon size={20} />
         </button>
 
-        {/* Hero preview */}
-        <div className="relative aspect-[16/8] bg-deck-card overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none">
-            {/* The modal draws its own title, category and year below, so the
-                cover renders as artwork only — otherwise both stack up. */}
-            <Cover deck={deck} minimal hideBadges />
+        {/* Hero preview.
+            The artwork and the header are separate boxes, and only the artwork
+            is clipped. Both used to live in one `aspect-[16/8] overflow-hidden`
+            box with the header absolutely positioned at its bottom — which
+            meant a long title grew *upward*, out of the top of the panel. On a
+            phone "Warehouse Management System WMS 1.0" ran off the top edge and
+            collided with the close button, and the Open control was pushed off
+            the right. Neither could be reached.
+
+            So below `sm` the header is an ordinary block under the picture and
+            the modal simply gets taller, the way a phone has room to be. At
+            `sm` and up it goes back to sitting over the gradient, anchored to
+            the bottom of this container — which is exactly the height of the
+            artwork, because an absolutely positioned child adds nothing to it. */}
+        <div className="relative bg-deck-card">
+          <div className="relative aspect-[16/9] sm:aspect-[16/8] overflow-hidden">
+            <div className="absolute inset-0 pointer-events-none">
+              {/* The modal draws its own title, category and year below, so the
+                  cover renders as artwork only — otherwise both stack up. */}
+              <Cover deck={deck} minimal hideBadges />
+            </div>
+            <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-deck-surface via-deck-surface/60 to-transparent pointer-events-none" />
           </div>
-          <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-deck-surface via-deck-surface/60 to-transparent pointer-events-none" />
-          {/* Stacks below a phone's width.
-              Side by side, the three controls are a fixed ~200px that does not
-              shrink, so on a 375px screen the Open button was pushed off the
-              right edge of the modal and could not be reached at all. min-w-0
-              on the title is what lets it give way once they do share a row: a
-              flex child defaults to min-width:auto and refuses to shrink below
-              its own content. */}
-          <div className="absolute z-20 bottom-4 sm:bottom-6 left-4 sm:left-6 right-4 sm:right-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
+
+          <div className="px-4 pt-4 sm:px-0 sm:pt-0 sm:absolute sm:z-20 sm:bottom-6 sm:left-6 sm:right-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
+            {/* min-w-0 is load-bearing once these share a row: a flex child
+                defaults to min-width:auto and refuses to shrink below its own
+                content, which is what pushed the buttons off the edge. */}
             <div className="min-w-0">
               <h2 className="text-2xl sm:text-4xl font-black tracking-tight drop-shadow-lg break-words">
                 {deck.title}
@@ -111,7 +123,9 @@ export default function DetailsModal({
           </div>
         </div>
 
-        <div className="px-6 py-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Matches the header's gutter on a phone, which is narrower than the
+            desktop one — 24px on each side of a 375px screen is a sixth of it. */}
+        <div className="px-4 sm:px-6 py-5 sm:py-6 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-2 space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-sm text-deck-muted">
               <span className="text-emerald-400 font-semibold">{deck.year}</span>

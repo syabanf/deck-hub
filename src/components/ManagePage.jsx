@@ -89,7 +89,10 @@ export default function ManagePage({
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-deck-accent hover:bg-deck-accentDim text-sm font-bold shadow-lg shadow-deck-accent/30"
             >
               <PlusIcon size={14} />
-              New deck
+              {/* The same button as the one in the header, so the same words.
+                  It opens the same form, which takes photos and videos as
+                  readily as decks. */}
+              Add Content
             </button>
           )}
         </div>
