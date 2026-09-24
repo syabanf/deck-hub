@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Cover from './Cover.jsx'
 import ConfirmDialog from './ConfirmDialog.jsx'
-import SlugField from './SlugField.jsx'
 import { CloseIcon, UploadIcon, LinkIcon, ImageIcon, TrashIcon, ChevronLeft, ChevronRight } from '../lib/icons.jsx'
 import { loadPdfDocument, fileToArrayBuffer, renderPdfPageToCanvas } from '../lib/pdf.js'
-import { api, uploadFile } from '../lib/api.js'
+import { uploadFile } from '../lib/api.js'
 import { humanizeError } from '../lib/errors.js'
 import { detectVideo, isVideoFile, formatBytes as formatVideoBytes } from '../lib/video.js'
 import { useClosable } from '../lib/useClosable.js'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
-import { slugProblem } from '../lib/slug.js'
 
 const PALETTES = [
   { name: 'Ember', from: '#ff5f6d', to: '#ffc371', text: '#1a0d00' },
@@ -186,12 +184,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
 
   // Required + common fields
   const [title, setTitle] = useState('')
-  // The readable name in the share link. Empty is a real answer: the deck is
-  // then addressed by its id, which is how every deck worked before this.
-  const [slug, setSlug] = useState('')
-  // Set when the name turns out to belong to another deck. Cleared the moment
-  // it is edited, so the warning never outlives the value it was about.
-  const [slugTaken, setSlugTaken] = useState(false)
   const [subtitle, setSubtitle] = useState('')
   const [author, setAuthor] = useState('')
   const [year, setYear] = useState(new Date().getFullYear())
@@ -239,7 +231,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
   // whole job again.
   const dirty =
     !!title.trim() ||
-    !!slug.trim() ||
     !!subtitle.trim() ||
     !!author.trim() ||
     !!description.trim() ||
@@ -420,7 +411,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
     const base = {
       id: `user-${Date.now()}`,
       title: title.trim() || (pdfFile ? pdfFile.name.replace(/\.pdf$/i, '') : 'Untitled deck'),
-      slug: slug.trim(),
       subtitle: subtitle.trim() || undefined,
       author: author.trim() || 'You',
       year: parseInt(year, 10) || new Date().getFullYear(),
@@ -441,31 +431,9 @@ export default function AddDeckModal({ onClose, onAdd }) {
       return
     }
 
-    if (slugProblem(slug)) {
-      setError(slugProblem(slug))
-      return
-    }
-
     setError(null)
     setUploading(true)
     try {
-      // Is the name free? Asked here, before a single byte is uploaded,
-      // because the create itself happens after this modal has closed — a
-      // rejection there would take the filled-in form with it, which is the
-      // data loss this modal was rebuilt to stop.
-      //
-      // Not a lock: two people could claim the same name between this check
-      // and the create. The server still refuses the second one, and that
-      // surfaces as an error toast. This only means the ordinary case — a name
-      // that was already taken an hour ago — is caught while the form is still
-      // open and the value still editable.
-      if (slug.trim() && (await slugIsTaken(slug.trim()))) {
-        setSlugTaken(true)
-        setError('That link already belongs to another deck.')
-        setUploading(false)
-        return
-      }
-
       // The cover goes up before the deck so the failure, if there is one,
       // happens while nothing has been created yet.
       if (cover?.file) {
@@ -602,16 +570,6 @@ export default function AddDeckModal({ onClose, onAdd }) {
                     className="w-full px-3 py-2.5 rounded-lg bg-deck-card border border-deck-border text-sm placeholder:text-white/40 focus:outline-none focus:border-white/40 transition-colors"
                   />
                 </div>
-
-                <SlugField
-                  value={slug}
-                  onChange={(v) => {
-                    setSlug(v)
-                    setSlugTaken(false)
-                  }}
-                  title={title}
-                  taken={slugTaken}
-                />
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
@@ -1244,20 +1202,4 @@ function SuccessOverlay({ deck }) {
       </div>
     </div>
   )
-}
-
-// Whether a deck already answers to this link.
-//
-// A 404 is the good answer — nothing is there, so the name is free. Anything
-// else that goes wrong (offline, a 500) is treated as "free" on purpose: the
-// server makes the real decision a moment later, and refusing to let somebody
-// save because a *check* failed would be the network deciding what they are
-// allowed to call their deck.
-async function slugIsTaken(slug) {
-  try {
-    await api.getDeckBySlug(slug)
-    return true
-  } catch {
-    return false
-  }
 }

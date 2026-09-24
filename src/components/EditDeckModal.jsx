@@ -4,8 +4,6 @@ import { humanizeError } from '../lib/errors.js'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { useClosable } from '../lib/useClosable.js'
 import { CloseIcon, CheckIcon, LinkIcon } from '../lib/icons.jsx'
-import SlugField from './SlugField.jsx'
-import { slugProblem } from '../lib/slug.js'
 
 // Edit an existing deck's catalog metadata.
 //
@@ -36,10 +34,6 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
   // The form is seeded from the deck's *stored* values. source.raw is the
   // untouched backend value — source.value has been rewritten for playback.
   const [title, setTitle] = useState(deck.title || '')
-  // The readable share link. Renaming does not retire the old name — the
-  // server keeps it pointing here — so this is safe to change on a deck whose
-  // link has already been sent to somebody.
-  const [slug, setSlug] = useState(deck.slug || '')
   const [subtitle, setSubtitle] = useState(deck.subtitle || '')
   const [author, setAuthor] = useState(deck.author || '')
   const [year, setYear] = useState(deck.year || new Date().getFullYear())
@@ -87,9 +81,6 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
     const p = {}
     const tags = parseTags(tagsRaw)
     if (title.trim() !== (deck.title || '')) p.title = title.trim()
-    // '' is a real value: it removes the readable link and returns the deck to
-    // its id, which is why this compares rather than checks for truthiness.
-    if (slug !== (deck.slug || '')) p.slug = slug
     if (subtitle !== (deck.subtitle || '')) p.subtitle = subtitle
     if (author !== (deck.author || '')) p.author = author
     if (Number(year) !== Number(deck.year)) p.year = Number(year)
@@ -106,15 +97,14 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
     }
     return p
   }, [
-    title, slug, subtitle, author, year, category, industry, tagsRaw, description,
+    title, subtitle, author, year, category, industry, tagsRaw, description,
     featured, sourceValue, coverImage, coverFile, deck, originalTags, originalSource,
     canEditSource, storedType,
   ])
 
   const changedCount = Object.keys(patch).length + (coverFile ? 1 : 0)
   const titleEmpty = !title.trim()
-  const slugError = slugProblem(slug)
-  const canSave = changedCount > 0 && !titleEmpty && !slugError && !saving && !uploadingCover
+  const canSave = changedCount > 0 && !titleEmpty && !saving && !uploadingCover
 
   const submit = async (e) => {
     e.preventDefault()
@@ -183,8 +173,6 @@ export default function EditDeckModal({ deck, onSave, onClose, saving = false, e
               <p className="text-xs text-rose-400 mt-1">A deck needs a title.</p>
             )}
           </Field>
-
-          <SlugField value={slug} onChange={setSlug} title={title} />
 
           <Field label="Sub-Title">
             <input

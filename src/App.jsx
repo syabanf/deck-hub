@@ -763,6 +763,22 @@ export default function App() {
     }
   }
 
+  // Rename a deck's share link, from the share menu.
+  //
+  // Deliberately not routed through the edit form's save path: this is one
+  // field, saved on its own, while a menu is open over the details panel. It
+  // throws rather than toasting, because the editor that called it shows the
+  // failure in place — next to the box the value is still sitting in.
+  const renameDeckLink = async (slug) => {
+    const updated = await api.updateDeck(detailsDeck.id, toUpdateRequest({ slug }))
+    const nd = normalizeDeck(updated)
+    setDecks((prev) => prev.map((d) => (d.id === nd.id ? nd : d)))
+    // The share menu builds every link from this object, so it has to be the
+    // new one — otherwise Copy would hand over the name that was just replaced.
+    setDetailsDeck((cur) => (cur && cur.id === nd.id ? nd : cur))
+    return nd
+  }
+
   const handleAddUser = async (draft) => {
     try {
       const created = await api.createUser(draft)
@@ -928,6 +944,7 @@ export default function App() {
           onClose={() => setDetailsDeck(null)}
           onPlay={handlePlay}
           onRemove={canEdit ? handleRemove : undefined}
+          onRename={canEdit ? renameDeckLink : undefined}
           onNotify={setToast}
           isFavorite={favSet.has(detailsDeck.id)}
           onToggleFavorite={() => toggleFavorite(detailsDeck)}

@@ -20,6 +20,9 @@ export default function DetailsModal({
   onRemove,
   onSearch,
   onCategoryNav,
+  // Renames the deck's share link. Absent for anyone who may not edit the
+  // catalog, which is what hides the editor inside the share menu.
+  onRename,
   isFavorite = false,
   onToggleFavorite,
 }) {
@@ -97,7 +100,7 @@ export default function DetailsModal({
               )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <ShareMenu deck={deck} onNotify={onNotify} />
+              <ShareMenu deck={deck} onNotify={onNotify} onRename={onRename} />
               {onToggleFavorite && (
                 <button
                   onClick={onToggleFavorite}

@@ -57,12 +57,15 @@ Click, at minimum:
 - [ ] **Upload** a PDF with a cover image, then delete the deck again.
 - [ ] **Share** a deck: copy the link, open it in a private window — it opens
       without a sign-in, which is the point.
-- [ ] **Name a link.** Give a deck a slug in the edit form, share it, and check
-      the copied link is `/d/<name>` rather than `?deck=<uuid>`. Then rename it
-      and open the *old* link again — it must still work. That is the whole
-      promise of the feature: a link already sent to a client cannot be broken
-      by an edit made afterwards.
-- [ ] A deck with **no** slug still shares as `?deck=<uuid>` and still opens.
+- [ ] **Name a link**, from the share menu itself — that is where it lives, not
+      in the add or edit form. Type a name, Save, then Copy: the link must be
+      `/d/<name>` rather than `?deck=<uuid>`. Then rename it and open the *old*
+      link again — it must still work. That is the whole promise of the
+      feature: a link already sent to a client cannot be broken by a rename
+      made afterwards.
+- [ ] A name another deck already holds is refused **in place**, with the value
+      still editable, rather than closing anything.
+- [ ] A deck with **no** name still shares as `?deck=<uuid>` and still opens.
 - [ ] **Download** from the share menu — the file saves under its original
       name, not a UUID.
 - [ ] **Demo Center**: PIN screen, correct PIN, copy a password.

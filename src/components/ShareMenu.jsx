@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
 
+import ShareLinkEditor from './ShareLinkEditor.jsx'
 import { safeHref } from '../lib/link.js'
 import { absoluteUrl } from '../lib/api.js'
 import {
@@ -45,7 +46,7 @@ function QrCode({ value, size = 168 }) {
 
 const MENU_WIDTH = 288 // w-72
 
-export default function ShareMenu({ deck, onNotify }) {
+export default function ShareMenu({ deck, onNotify, onRename }) {
   const [open, setOpen] = useState(false)
   const [showQr, setShowQr] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: MENU_WIDTH })
@@ -160,6 +161,10 @@ export default function ShareMenu({ deck, onNotify }) {
           style={{ top: pos.top, left: pos.left, width: pos.width }}
           className="fixed rounded-xl bg-deck-card border border-deck-border shadow-2xl py-1.5 z-[70]"
         >
+          {/* Only for someone who may edit the catalog — onRename is absent
+              otherwise, and a viewer simply gets the menu as it was. */}
+          {onRename && <ShareLinkEditor deck={deck} onRename={onRename} />}
+
           <button onClick={copy} className={item}>
             <span className="w-5 text-center">⧉</span>
             Copy link
