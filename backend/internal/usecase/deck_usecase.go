@@ -70,7 +70,12 @@ func (uc *DeckUsecase) checkDeckTerms(ctx context.Context, category, industry, s
 
 // CreateDeckInput carries the fields needed to create a deck.
 type CreateDeckInput struct {
-	Title       string
+	Title string
+
+	// Slug is the readable name in the share link. Optional — empty leaves the
+	// deck addressable by id, which is what every deck had before this field.
+	Slug string
+
 	Subtitle    string
 	Author      string
 	Year        int
@@ -172,6 +177,10 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 	if err := validateDeckCore(in.Title, in.Category, in.Source); err != nil {
 		return nil, err
 	}
+	slug, err := NormalizeSlug(in.Slug)
+	if err != nil {
+		return nil, err
+	}
 	if err := uc.checkDeckTerms(ctx, in.Category, in.Industry, in.Source.Type); err != nil {
 		return nil, err
 	}
@@ -216,6 +225,22 @@ func (uc *DeckUsecase) Create(ctx context.Context, in CreateDeckInput) (*domain.
 		return nil, fmt.Errorf("create deck: %w", err)
 	}
 
+	// After the insert, because deck_slugs references the deck — the name
+	// cannot be claimed before the row it points at exists.
+	//
+	// Which means a name someone else already holds fails here, with the deck
+	// already written. It is removed again rather than left in the catalog
+	// under no name at all: the caller was told the whole create failed, and a
+	// deck they will not see in the response but will see in the list is worse
+	// than either outcome they asked for.
+	if slug != "" {
+		if err := uc.repo.ClaimSlug(ctx, d.ID, slug); err != nil {
+			_ = uc.repo.Delete(ctx, d.ID)
+			return nil, err
+		}
+		d.Slug = slug
+	}
+
 	if len(images) > 0 {
 		if err := uc.repo.SetImages(ctx, d.ID, images); err != nil {
 			return nil, fmt.Errorf("attach deck photos: %w", err)
@@ -256,6 +281,26 @@ func (uc *DeckUsecase) attachImages(ctx context.Context, decks ...*domain.Deck) 
 		}
 	}
 	return nil
+}
+
+// GetBySlug returns the deck a readable share link names, current name or
+// one it has been renamed away from.
+func (uc *DeckUsecase) GetBySlug(ctx context.Context, slug string) (*domain.Deck, error) {
+	// Through the same cleaner the name was stored by, so a link that picked
+	// up a capital or a trailing slash on its way through an email client
+	// still resolves instead of 404ing on punctuation.
+	clean := Slugify(slug)
+	if clean == "" {
+		return nil, fmt.Errorf("%w: no deck at /d/%s", domain.ErrNotFound, slug)
+	}
+	d, err := uc.repo.GetBySlug(ctx, clean)
+	if err != nil {
+		return nil, fmt.Errorf("get deck by slug: %w", err)
+	}
+	if err := uc.attachImages(ctx, d); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 // GetByID returns a single deck or domain.ErrNotFound.
@@ -344,7 +389,14 @@ func (uc *DeckUsecase) Stats(ctx context.Context) (*domain.DeckStats, error) {
 
 // UpdateDeckInput carries optional updates. Nil pointers are left unchanged.
 type UpdateDeckInput struct {
-	Title       *string
+	Title *string
+
+	// Slug renames the share link. A pointer, so leaving it out keeps the
+	// current name while an explicit empty string removes it — the deck falls
+	// back to its id, and every name it has held stays claimed so the old
+	// links keep working.
+	Slug *string
+
 	Subtitle    *string
 	Author      *string
 	Year        *int
@@ -447,6 +499,22 @@ func (uc *DeckUsecase) Update(ctx context.Context, id uuid.UUID, in UpdateDeckIn
 	d.UpdatedAt = time.Now().UTC()
 	if err := uc.repo.Update(ctx, d); err != nil {
 		return nil, fmt.Errorf("update deck: %w", err)
+	}
+
+	// The rename is its own write because decks.slug is not in the UPDATE
+	// above: the alias table has to be written with it, and only ClaimSlug
+	// knows to do both together.
+	if in.Slug != nil {
+		slug, err := NormalizeSlug(*in.Slug)
+		if err != nil {
+			return nil, err
+		}
+		if slug != d.Slug {
+			if err := uc.repo.ClaimSlug(ctx, d.ID, slug); err != nil {
+				return nil, err
+			}
+			d.Slug = slug
+		}
 	}
 
 	if in.Images != nil {

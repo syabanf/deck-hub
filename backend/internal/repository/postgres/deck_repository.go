@@ -26,13 +26,13 @@ func NewDeckRepository(pool *pgxpool.Pool) *DeckRepository {
 // Ensure interface compliance at compile time.
 var _ domain.DeckRepository = (*DeckRepository)(nil)
 
-const deckColumns = `id, title, subtitle, author, year, category, industry, tags,
+const deckColumns = `id, title, coalesce(slug, ''), subtitle, author, year, category, industry, tags,
 	source_type, source_value, description, cover_image, created_by, featured, view_count, created_at, updated_at`
 
 func scanDeck(row pgx.Row) (*domain.Deck, error) {
 	var d domain.Deck
 	if err := row.Scan(
-		&d.ID, &d.Title, &d.Subtitle, &d.Author, &d.Year, &d.Category, &d.Industry, &d.Tags,
+		&d.ID, &d.Title, &d.Slug, &d.Subtitle, &d.Author, &d.Year, &d.Category, &d.Industry, &d.Tags,
 		&d.Source.Type, &d.Source.Value, &d.Description, &d.CoverImage, &d.CreatedBy,
 		&d.Featured, &d.ViewCount, &d.CreatedAt, &d.UpdatedAt,
 	); err != nil {
@@ -71,6 +71,78 @@ func (r *DeckRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Dec
 		return nil, fmt.Errorf("query deck by id: %w", err)
 	}
 	return d, nil
+}
+
+// GetBySlug resolves a readable share link.
+//
+// One query, both names: the deck whose current slug this is, or — through
+// deck_slugs — the deck that used to be called this. Written as a join rather
+// than "try decks, then try the alias table" so a rename can never be observed
+// half-applied by a request that arrives between the two lookups.
+func (r *DeckRepository) GetBySlug(ctx context.Context, slug string) (*domain.Deck, error) {
+	// A subquery rather than a join, so this can reuse deckColumns as-is: a
+	// join would need every column qualified with a table alias, and the list
+	// contains an expression, not only bare names.
+	q := `SELECT ` + deckColumns + `
+	        FROM decks
+	       WHERE id = (SELECT deck_id FROM deck_slugs WHERE slug = $1)`
+	d, err := scanDeck(r.pool.QueryRow(ctx, q, slug))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: no deck at /d/%s", domain.ErrNotFound, slug)
+		}
+		return nil, fmt.Errorf("query deck by slug: %w", err)
+	}
+	return d, nil
+}
+
+// ClaimSlug points the deck at a new name and remembers it has held it.
+//
+// Both writes or neither: a decks.slug that no deck_slugs row backs would be a
+// link the resolver above cannot follow — the deck would be renamed to an
+// address that 404s.
+func (r *DeckRepository) ClaimSlug(ctx context.Context, deckID uuid.UUID, slug string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("claim slug: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	if slug != "" {
+		// ON CONFLICT DO NOTHING covers the deck re-claiming a name it already
+		// holds, which is what an edit that did not touch the slug looks like
+		// from here. RowsAffected of 0 then means the row exists — and it
+		// belongs to somebody else, because a row of this deck's own would
+		// have been the harmless case.
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO deck_slugs (slug, deck_id) VALUES ($1, $2)
+			 ON CONFLICT (slug) DO NOTHING`, slug, deckID)
+		if err != nil {
+			return fmt.Errorf("claim slug: %w", mapWriteErr(err))
+		}
+		if tag.RowsAffected() == 0 {
+			var owner uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT deck_id FROM deck_slugs WHERE slug = $1`, slug).Scan(&owner); err != nil {
+				return fmt.Errorf("claim slug: %w", err)
+			}
+			if owner != deckID {
+				return fmt.Errorf("%w: /d/%s is already taken", domain.ErrConflict, slug)
+			}
+		}
+	}
+
+	var current any
+	if slug != "" {
+		current = slug
+	}
+	tag, err := tx.Exec(ctx, `UPDATE decks SET slug = $2 WHERE id = $1`, deckID, current)
+	if err != nil {
+		return fmt.Errorf("set deck slug: %w", mapWriteErr(err))
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: deck %s", domain.ErrNotFound, deckID)
+	}
+	return tx.Commit(ctx)
 }
 
 // escapeLike makes a user's search string literal.

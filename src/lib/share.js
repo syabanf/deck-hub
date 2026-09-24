@@ -7,18 +7,49 @@
 
 export const DECK_PARAM = 'deck'
 
+// The path a named deck lives at. Short on purpose: it is going into WhatsApp
+// next to a sentence, not into a sitemap.
+export const DECK_PATH = '/d/'
+
+// Where a deck's own link points.
+//
+// A deck with a name gets the readable form — /d/company-profile-2026 — and
+// one without falls back to ?deck=<uuid>. Both are real addresses that the app
+// resolves; neither is a redirect or a shortener, so what somebody sees in
+// their address bar after following it is the same link they were sent.
+//
+// Every share route goes through here — copy, WhatsApp, email, the QR code —
+// so a deck that gains a name gains it everywhere at once.
 export const deckUrl = (deck) => {
   const url = new URL(window.location.href)
   url.search = ''
   url.hash = ''
+  if (deck.slug) {
+    url.pathname = DECK_PATH + deck.slug
+    return url.toString()
+  }
+  url.pathname = '/'
   url.searchParams.set(DECK_PARAM, deck.id)
   return url.toString()
 }
 
-// The id in the address bar, if the page was opened from a shared link.
-export const sharedDeckId = () => {
+// What the address bar is asking for, if anything: a deck by name, a deck by
+// id, or neither.
+//
+// Returns { slug } or { id }, never both — the two are looked up by different
+// endpoints, and collapsing them into one string would mean guessing which at
+// the point of use.
+export const sharedDeckRef = () => {
   try {
-    return new URLSearchParams(window.location.search).get(DECK_PARAM)
+    const path = window.location.pathname
+    if (path.startsWith(DECK_PATH)) {
+      // Trailing slash tolerated: mail clients add one often enough that
+      // refusing it would turn a working link into a 404 for no reason.
+      const slug = decodeURIComponent(path.slice(DECK_PATH.length)).replace(/\/+$/, '')
+      if (slug) return { slug }
+    }
+    const id = new URLSearchParams(window.location.search).get(DECK_PARAM)
+    return id ? { id } : null
   } catch {
     return null
   }
@@ -31,6 +62,14 @@ export const sharedDeckId = () => {
 export const syncDeckUrl = (deck) => {
   try {
     const url = new URL(window.location.href)
+
+    // A signed-in person stays on the app's own path. Rewriting the bar to
+    // /d/<slug> would be the link they want to copy, but it is also the path
+    // that hands a *signed-out* visitor the single-deck page — so a reload
+    // would drop them out of the catalog they were browsing. The share menu
+    // builds the readable link; this only tracks what is open.
+    if (url.pathname.startsWith(DECK_PATH)) url.pathname = '/'
+
     if (deck) url.searchParams.set(DECK_PARAM, deck.id)
     else url.searchParams.delete(DECK_PARAM)
     window.history.replaceState({}, '', url.pathname + url.search)

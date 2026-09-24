@@ -275,6 +275,10 @@ func NewRouter(d RouterDeps) http.Handler {
 		r.Get("/", d.Decks.List)
 		// Must be registered before /{id} so "stats" isn't parsed as a deck id.
 		r.Get("/stats", d.Decks.Stats)
+		// Likewise "by-slug". Its own path rather than letting /{id} accept
+		// either: a slug that happens to parse as a UUID would otherwise be
+		// ambiguous, and the two lookups have different not-found meanings.
+		r.Get("/by-slug/{slug}", d.Decks.GetBySlug)
 		r.Get("/{id}", d.Decks.Get)
 		r.Post("/{id}/views", d.Decks.IncrementViews)
 

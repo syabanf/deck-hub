@@ -18,8 +18,17 @@ type DeckSource struct {
 // Deck is the core catalog entity. Field names align with the React frontend's
 // deck shape so the API can back it directly.
 type Deck struct {
-	ID          uuid.UUID  `json:"id"`
-	Title       string     `json:"title"`
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
+
+	// Slug is the deck's readable name in a share link — /d/<slug>. Optional:
+	// empty means the deck is only addressable by id, which is how every deck
+	// added before slugs existed stays reachable.
+	//
+	// The current one. Renaming does not retire the old name; see
+	// DeckRepository.ClaimSlug.
+	Slug string `json:"slug,omitempty"`
+
 	Subtitle    string     `json:"subtitle"`
 	Author      string     `json:"author"`
 	Year        int        `json:"year"`
@@ -147,6 +156,20 @@ type DeckStats struct {
 type DeckRepository interface {
 	Create(ctx context.Context, d *Deck) error
 	GetByID(ctx context.Context, id uuid.UUID) (*Deck, error)
+
+	// GetBySlug resolves a readable share link, current name or retired one.
+	// A slug a deck used to have still points at that deck — see ClaimSlug —
+	// so a link sent to a client months ago keeps opening after a rename.
+	GetBySlug(ctx context.Context, slug string) (*Deck, error)
+
+	// ClaimSlug makes slug the deck's current name and records that this deck
+	// has held it. Every name a deck has ever had stays claimed, so releasing
+	// one is not something a rename can do by accident; ErrConflict means the
+	// name belongs to a different deck, now or in the past.
+	//
+	// An empty slug clears the current name without releasing the history.
+	ClaimSlug(ctx context.Context, deckID uuid.UUID, slug string) error
+
 	List(ctx context.Context, f DeckFilter) ([]*Deck, error)
 	// SetImages replaces a deck's photo list wholesale. A replace rather
 	// than add/remove/reorder: the client edits the list as a list, and

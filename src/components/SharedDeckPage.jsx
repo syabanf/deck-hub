@@ -20,17 +20,32 @@ import { PlayIcon } from '../lib/icons.jsx'
 //
 // Signed-in people never reach this: App routes them to the normal app, where
 // the same link opens the same deck with everything else still available.
-export default function SharedDeckPage({ deckId, onSignIn }) {
+export default function SharedDeckPage({ deckRef, onSignIn }) {
   const [state, setState] = useState({ status: 'loading', deck: null })
   const [open, setOpen] = useState(true)
 
+  // Both forms of link land here: /d/<name> and ?deck=<id>. Split so the two
+  // stay separate as far down as the request — see sharedDeckRef.
+  const { slug, id } = deckRef || {}
+
   useEffect(() => {
     let cancelled = false
-    api
-      .listDecksByIds([deckId])
-      .then((res) => {
+    const fetchDeck = slug
+      ? // A named link resolves to exactly one deck or to nothing, so a 404
+        // here is "that deck is gone" rather than an error to retry.
+        api
+          .getDeckBySlug(slug)
+          .then((deck) => [deck])
+          .catch((err) => {
+            if (err?.status === 404) return []
+            throw err
+          })
+      : api.listDecksByIds([id]).then((res) => res.data || [])
+
+    fetchDeck
+      .then((list) => {
         if (cancelled) return
-        const [deck] = normalizeDecks(res.data || [])
+        const [deck] = normalizeDecks(list)
         setState(deck ? { status: 'ready', deck } : { status: 'missing', deck: null })
       })
       .catch(() => {
@@ -39,7 +54,7 @@ export default function SharedDeckPage({ deckId, onSignIn }) {
     return () => {
       cancelled = true
     }
-  }, [deckId])
+  }, [slug, id])
 
   if (state.status === 'loading') {
     return (

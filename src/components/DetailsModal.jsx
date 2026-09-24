@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import Cover from './Cover.jsx'
 import ShareMenu from './ShareMenu.jsx'
-import { safeHref } from '../lib/link.js'
+import { linkLabel, safeHref } from '../lib/link.js'
 import { useClosable } from '../lib/useClosable.js'
 import {
   PlayIcon,
@@ -68,11 +68,20 @@ export default function DetailsModal({
             <Cover deck={deck} minimal hideBadges />
           </div>
           <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-deck-surface via-deck-surface/60 to-transparent pointer-events-none" />
-          <div className="absolute z-20 bottom-6 left-6 right-6 flex items-end justify-between gap-4">
-            <div>
-              <h2 className="text-4xl font-black tracking-tight drop-shadow-lg">{deck.title}</h2>
+          {/* Stacks below a phone's width.
+              Side by side, the three controls are a fixed ~200px that does not
+              shrink, so on a 375px screen the Open button was pushed off the
+              right edge of the modal and could not be reached at all. min-w-0
+              on the title is what lets it give way once they do share a row: a
+              flex child defaults to min-width:auto and refuses to shrink below
+              its own content. */}
+          <div className="absolute z-20 bottom-4 sm:bottom-6 left-4 sm:left-6 right-4 sm:right-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4">
+            <div className="min-w-0">
+              <h2 className="text-2xl sm:text-4xl font-black tracking-tight drop-shadow-lg break-words">
+                {deck.title}
+              </h2>
               {deck.subtitle && (
-                <p className="text-base text-white/80 mt-1 drop-shadow">{deck.subtitle}</p>
+                <p className="text-sm sm:text-base text-white/80 mt-1 drop-shadow">{deck.subtitle}</p>
               )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -189,14 +198,29 @@ export default function DetailsModal({
             <div className="text-sm">
               {deck.source?.type === 'pdf' && 'Uploaded PDF'}
               {deck.source?.type === 'video' && (deck.source.platform || 'Video')}
+              {/* A gallery has no address worth printing — what it is, is how
+                  many photos are in it. A count of zero should not happen (a
+                  gallery is created from its photos), so it says "Photos"
+                  rather than "0 photos" if it ever does. */}
+              {deck.source?.type === 'photos' &&
+                (deck.images?.length
+                  ? `${deck.images.length} photo${deck.images.length === 1 ? '' : 's'}`
+                  : 'Photos')}
               {deck.source?.type === 'url' && (
+                /* The host, not the whole URL. A pasted Canva or Slides link
+                   drags its utm_* trail along and printed in full it filled
+                   this panel with tracking parameters nobody reads. The href
+                   is still the complete URL — this shortens the label, never
+                   the destination, so the link goes where it says it goes. */
                 <a
                   href={safeHref(deck.source.value)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-emerald-300 hover:underline break-all"
+                  title={deck.source.value}
                 >
-                  {deck.source.value}
+                  {linkLabel(deck.source.value) || deck.source.value}
+                  <span aria-hidden="true" className="text-deck-muted ml-1">↗</span>
                 </a>
               )}
             </div>

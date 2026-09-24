@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import Wordmark from './components/Wordmark.jsx'
 import { useTaxonomy } from './lib/taxonomy.jsx'
 import { clearDemoPin } from './lib/demoPin.js'
-import { sharedDeckId, syncDeckUrl } from './lib/share.js'
+import { sharedDeckRef, syncDeckUrl } from './lib/share.js'
 import {
   api,
   normalizeDecks,
@@ -99,7 +99,10 @@ export default function App() {
   // close the deck and a stranger was standing in the dashboard, free to browse
   // everything the company had ever published. A link to one deck now opens one
   // deck, in SharedDeckPage, which has no way into the rest of the app.
-  const [sharedId] = useState(() => sharedDeckId())
+  //
+  // Either form of link: /d/<name> or ?deck=<id>. Read once, at mount, so a
+  // later address-bar rewrite cannot re-trigger it.
+  const [sharedRef] = useState(() => sharedDeckRef())
   // Set when someone on the shared page asks to sign in, so the link stops
   // short-circuiting the login screen.
   const [leftShared, setLeftShared] = useState(false)
@@ -350,14 +353,18 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [activeCategory])
 
-  // Open the deck a shared link names. Fetched by id rather than looked up in
-  // the catalog: the link may point at a deck no home row happens to carry.
+  // Open the deck a shared link names. Fetched rather than looked up in the
+  // catalog: the link may point at a deck no home row happens to carry.
   const openedShared = useRef(false)
   useEffect(() => {
-    if (!sharedId || openedShared.current || status !== 'ready') return
+    if (!sharedRef || openedShared.current || status !== 'ready') return
     openedShared.current = true
-    api
-      .listDecksByIds([sharedId])
+    // A named link and an id link are different endpoints, so which one was
+    // followed decides the request. Both answer with one deck.
+    const fetchShared = sharedRef.slug
+      ? api.getDeckBySlug(sharedRef.slug).then((deck) => ({ data: [deck] }))
+      : api.listDecksByIds([sharedRef.id])
+    fetchShared
       .then((res) => {
         const [deck] = normalizeDecks(res.data || [])
         if (deck) setPlaying({ deck, startIndex: 0 })
@@ -366,7 +373,7 @@ export default function App() {
       .catch(() => {
         setToast({ type: 'error', title: "Couldn't open that deck", message: 'The link looks right, but the catalog did not answer.' })
       })
-  }, [sharedId, status])
+  }, [sharedRef, status])
 
   // Keep the address bar on whatever is open, so copying from the browser
   // gives the same link the share menu does.
@@ -606,8 +613,8 @@ export default function App() {
   }
 
   // Before the sign-in screen: a shared link is meant to open without one.
-  if (!user && sharedId && !leftShared) {
-    return <SharedDeckPage deckId={sharedId} onSignIn={() => setLeftShared(true)} />
+  if (!user && sharedRef && !leftShared) {
+    return <SharedDeckPage deckRef={sharedRef} onSignIn={() => setLeftShared(true)} />
   }
 
   if (!user) {

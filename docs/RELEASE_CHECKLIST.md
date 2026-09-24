@@ -57,6 +57,12 @@ Click, at minimum:
 - [ ] **Upload** a PDF with a cover image, then delete the deck again.
 - [ ] **Share** a deck: copy the link, open it in a private window — it opens
       without a sign-in, which is the point.
+- [ ] **Name a link.** Give a deck a slug in the edit form, share it, and check
+      the copied link is `/d/<name>` rather than `?deck=<uuid>`. Then rename it
+      and open the *old* link again — it must still work. That is the whole
+      promise of the feature: a link already sent to a client cannot be broken
+      by an edit made afterwards.
+- [ ] A deck with **no** slug still shares as `?deck=<uuid>` and still opens.
 - [ ] **Download** from the share menu — the file saves under its original
       name, not a UUID.
 - [ ] **Demo Center**: PIN screen, correct PIN, copy a password.
@@ -64,7 +70,9 @@ Click, at minimum:
 - [ ] **Settings → Activity**: everything above is listed against your account.
 - [ ] At **375 px wide**: the header chips scroll, the Settings tabs scroll,
       the Users and Catalog tables scroll sideways rather than clipping their
-      Actions column, and no page scrolls horizontally.
+      Actions column, the details modal shows Share, Bookmark *and* Open
+      without any of them leaving the panel, the Link field stacks its host
+      above its input, and no page scrolls horizontally.
 
 ---
 

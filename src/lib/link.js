@@ -37,3 +37,35 @@ export function safeHref(raw) {
     return ''
   }
 }
+
+// What to *show* for a link, as opposed to where it goes.
+//
+// A deck source is often a share URL somebody pasted, and those carry their
+// tracking with them:
+//
+//   https://www.canva.com/design/DAF6Xbw/KqT…/view?utm_content=DAF6Xbw
+//   &utm_campaign=designshare&utm_medium=link&utm_source=publishsharelink
+//
+// Printed in full that is four lines of noise in a panel that is trying to say
+// one thing: this deck lives on Canva. The host says it, so the host is what
+// is shown — the href underneath is still the whole URL, unchanged, because
+// the label is a summary of the destination and not a substitute for it.
+//
+// `www.` goes: it is never the part anyone is reading for.
+export function linkLabel(raw) {
+  const href = safeHref(raw)
+  if (!href) return ''
+
+  // Our own files have no host to name. The last path segment is the closest
+  // thing to a name they have.
+  if (href.startsWith('/')) {
+    const name = href.split('?')[0].split('/').filter(Boolean).pop()
+    return name ? decodeURIComponent(name) : href
+  }
+
+  try {
+    return new URL(href).host.replace(/^www\./i, '')
+  } catch {
+    return href
+  }
+}

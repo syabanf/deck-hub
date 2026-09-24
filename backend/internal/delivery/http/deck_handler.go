@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/wit/wit-backend/internal/domain"
@@ -17,6 +18,7 @@ import (
 type deckUsecase interface {
 	Create(ctx context.Context, in usecase.CreateDeckInput) (*domain.Deck, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Deck, error)
+	GetBySlug(ctx context.Context, slug string) (*domain.Deck, error)
 	List(ctx context.Context, f domain.DeckFilter) ([]*domain.Deck, error)
 	ListPage(ctx context.Context, f domain.DeckFilter) ([]*domain.Deck, int, error)
 	Stats(ctx context.Context) (*domain.DeckStats, error)
@@ -45,6 +47,7 @@ func (h *DeckHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	deck, err := h.uc.Create(r.Context(), usecase.CreateDeckInput{
 		Title:       req.Title,
+		Slug:        req.Slug,
 		Subtitle:    req.Subtitle,
 		Author:      req.Author,
 		Year:        req.Year,
@@ -184,6 +187,20 @@ func (h *DeckHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toDeckResponse(deck))
 }
 
+// GetBySlug handles GET /decks/by-slug/{slug}.
+//
+// Public, exactly like GET /decks/{id}: the readable link is the same access
+// the id link already was, just legible. Whoever holds either one was given
+// the deck, and neither is a way into anything else.
+func (h *DeckHandler) GetBySlug(w http.ResponseWriter, r *http.Request) {
+	deck, err := h.uc.GetBySlug(r.Context(), chi.URLParam(r, "slug"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toDeckResponse(deck))
+}
+
 // Update handles PUT /decks/{id}.
 func (h *DeckHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUIDParam(r, "id")
@@ -199,6 +216,7 @@ func (h *DeckHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	in := usecase.UpdateDeckInput{
 		Title:       req.Title,
+		Slug:        req.Slug,
 		Subtitle:    req.Subtitle,
 		Author:      req.Author,
 		Year:        req.Year,

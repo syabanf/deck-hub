@@ -2503,3 +2503,126 @@ func TestPhotoDeck(t *testing.T) {
 		requireStatus(t, http.StatusNotFound, status, raw)
 	})
 }
+
+// A share link people can read, and — the part that actually matters — a
+// rename that does not break the link already sitting in a client's inbox.
+func TestDeckSlug(t *testing.T) {
+	admin := adminToken(t)
+
+	body := newDeckBody("E2E Slug Deck")
+	body["slug"] = "  E2E Company Profile 2026!  "
+
+	status, raw := do(t, http.MethodPost, "/decks", admin, body)
+	requireStatus(t, http.StatusCreated, status, raw)
+
+	var created struct {
+		ID   string `json:"id"`
+		Slug string `json:"slug"`
+	}
+	decode(t, raw, &created)
+	t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+created.ID, admin, nil) })
+
+	// Cleaned rather than refused: what the person typed becomes a link.
+	if created.Slug != "e2e-company-profile-2026" {
+		t.Fatalf("slug = %q, want it cleaned to e2e-company-profile-2026", created.Slug)
+	}
+
+	t.Run("the readable link opens the deck, with no sign-in", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks/by-slug/e2e-company-profile-2026", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var got struct{ ID string }
+		decode(t, raw, &got)
+		if got.ID != created.ID {
+			t.Fatalf("slug resolved to %s, want %s", got.ID, created.ID)
+		}
+	})
+
+	t.Run("a name another deck holds is refused, not silently taken", func(t *testing.T) {
+		other := newDeckBody("E2E Slug Rival")
+		other["slug"] = "e2e-company-profile-2026"
+
+		status, raw := do(t, http.MethodPost, "/decks", admin, other)
+		requireStatus(t, http.StatusConflict, status, raw)
+
+		// And the rejected deck must not be in the catalog. It was inserted
+		// before the name could be claimed, so a create that answers 409 has
+		// to have taken it back out again.
+		status, raw = do(t, http.MethodGet, "/decks?search=E2E%20Slug%20Rival", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		var list []struct{ ID string }
+		decode(t, raw, &list)
+		if len(list) != 0 {
+			t.Fatalf("the refused deck was left in the catalog: %+v", list)
+		}
+	})
+
+	t.Run("renaming keeps the old link alive", func(t *testing.T) {
+		status, raw := do(t, http.MethodPut, "/decks/"+created.ID, admin,
+			map[string]any{"slug": "e2e-profil-baru"})
+		requireStatus(t, http.StatusOK, status, raw)
+
+		var renamed struct{ Slug string }
+		decode(t, raw, &renamed)
+		if renamed.Slug != "e2e-profil-baru" {
+			t.Fatalf("slug after rename = %q", renamed.Slug)
+		}
+
+		// The new name works.
+		status, raw = do(t, http.MethodGet, "/decks/by-slug/e2e-profil-baru", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+
+		// And so does the one already sent to somebody. This is the whole
+		// reason a slug is not simply a column that gets overwritten.
+		status, raw = do(t, http.MethodGet, "/decks/by-slug/e2e-company-profile-2026", "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+		var old struct{ ID string }
+		decode(t, raw, &old)
+		if old.ID != created.ID {
+			t.Fatalf("the old link resolved to %s, want %s", old.ID, created.ID)
+		}
+	})
+
+	t.Run("a retired name cannot be handed to a different deck", func(t *testing.T) {
+		other := newDeckBody("E2E Slug Scavenger")
+		other["slug"] = "e2e-company-profile-2026"
+
+		status, raw := do(t, http.MethodPost, "/decks", admin, other)
+		requireStatus(t, http.StatusConflict, status, raw)
+	})
+
+	t.Run("the id keeps working, slug or no slug", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks/"+created.ID, "", nil)
+		requireStatus(t, http.StatusOK, status, raw)
+	})
+
+	t.Run("a name nothing has ever been called is a 404, not an empty deck", func(t *testing.T) {
+		status, raw := do(t, http.MethodGet, "/decks/by-slug/e2e-nothing-here-at-all", "", nil)
+		requireStatus(t, http.StatusNotFound, status, raw)
+	})
+
+	t.Run("a deck may have no slug at all", func(t *testing.T) {
+		plain := newDeckBody("E2E Slugless Deck")
+		status, raw := do(t, http.MethodPost, "/decks", admin, plain)
+		requireStatus(t, http.StatusCreated, status, raw)
+
+		var got struct {
+			ID   string `json:"id"`
+			Slug string `json:"slug"`
+		}
+		decode(t, raw, &got)
+		t.Cleanup(func() { do(t, http.MethodDelete, "/decks/"+got.ID, admin, nil) })
+
+		if got.Slug != "" {
+			t.Fatalf("an unnamed deck came back with slug %q", got.Slug)
+		}
+	})
+
+	t.Run("a name the site itself answers to is refused", func(t *testing.T) {
+		reserved := newDeckBody("E2E Reserved Slug")
+		reserved["slug"] = "Settings"
+
+		status, raw := do(t, http.MethodPost, "/decks", admin, reserved)
+		requireStatus(t, http.StatusBadRequest, status, raw)
+	})
+}

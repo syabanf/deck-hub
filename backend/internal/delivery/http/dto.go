@@ -83,8 +83,13 @@ type deckSourceDTO struct {
 }
 
 type deckResponse struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+
+	// The readable share link, when the deck has one. Omitted rather than
+	// empty so a client can tell "no slug" from "" without a special case.
+	Slug string `json:"slug,omitempty"`
+
 	Subtitle    string        `json:"subtitle"`
 	Author      string        `json:"author"`
 	Year        int           `json:"year"`
@@ -145,6 +150,7 @@ func toDeckResponse(d *domain.Deck) deckResponse {
 	return deckResponse{
 		ID:          d.ID.String(),
 		Title:       d.Title,
+		Slug:        d.Slug,
 		Subtitle:    d.Subtitle,
 		Author:      d.Author,
 		Year:        d.Year,
@@ -172,6 +178,7 @@ func toDeckResponses(decks []*domain.Deck) []deckResponse {
 
 type createDeckRequest struct {
 	Title       string              `json:"title"`
+	Slug        string              `json:"slug"`
 	Subtitle    string              `json:"subtitle"`
 	Author      string              `json:"author"`
 	Year        int                 `json:"year"`
@@ -188,6 +195,7 @@ type createDeckRequest struct {
 // updateDeckRequest uses pointers for partial updates.
 type updateDeckRequest struct {
 	Title       *string              `json:"title"`
+	Slug        *string              `json:"slug"`
 	Subtitle    *string              `json:"subtitle"`
 	Author      *string              `json:"author"`
 	Year        *int                 `json:"year"`

@@ -377,6 +377,7 @@ paths:
         "400": { $ref: "#/components/responses/InvalidInput" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/SlugTaken" }
 
   /decks/stats:
     get:
@@ -416,6 +417,31 @@ paths:
                       frontend.
                     example: { AI: 9, "Design Systems": 4 }
 
+  /decks/by-slug/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string, example: company-profile-2026 }
+    get:
+      tags: [Decks]
+      summary: Fetch one deck by its readable share link
+      security: []
+      description: |
+        Resolves `/d/<slug>` — the link people actually send. Public, exactly
+        like fetching by id: the link *is* the access, and it opens one deck
+        and nothing else.
+
+        A slug a deck has been renamed away from still resolves to that deck,
+        so a link sent to a client months ago keeps working.
+      responses:
+        "200":
+          description: The deck
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deck" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /decks/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -453,6 +479,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/SlugTaken" }
     delete:
       tags: [Decks]
       summary: Delete a deck
@@ -1675,6 +1702,11 @@ components:
       properties:
         id:          { type: string, format: uuid }
         title:       { type: string }
+        slug:
+          type: string
+          description: |
+            The deck's readable share link — `/d/<slug>`. Absent when the deck
+            has none, in which case it is addressed by id.
         subtitle:    { type: string }
         author:      { type: string }
         year:        { type: integer }
@@ -1717,6 +1749,13 @@ components:
       required: [title, source]
       properties:
         title:       { type: string }
+        slug:
+          type: string
+          description: |
+            Optional readable name for the share link. Cleaned before it is
+            stored: lowercased, spaces and punctuation collapsed to hyphens,
+            so `Profil WIT 2026!` is stored as `profil-wit-2026`. A name any
+            deck has ever held is taken — 409 if it belongs to another deck.
         subtitle:    { type: string }
         author:      { type: string }
         year:        { type: integer }
@@ -1756,6 +1795,12 @@ components:
       description: All fields optional; omitted fields are left unchanged.
       properties:
         title:       { type: string }
+        slug:
+          type: string
+          description: |
+            Renames the share link. Omit to keep the current name; send `""`
+            to remove it and fall back to the id. The previous name keeps
+            resolving to this deck, so links already sent do not break.
         subtitle:    { type: string }
         author:      { type: string }
         year:        { type: integer }
@@ -1806,6 +1851,15 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: No such resource
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    SlugTaken:
+      description: |
+        The requested `slug` already belongs to another deck — now, or before
+        it was renamed. A retired name stays claimed so the links already sent
+        under it keep working, which means it cannot be handed to a different
+        deck either.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

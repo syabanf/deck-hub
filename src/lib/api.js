@@ -231,6 +231,11 @@ export const api = {
     return request(`/decks?ids=${ids.join(',')}&limit=200`, { meta: true })
   },
 
+  // Resolve a readable share link. Public, like fetching by id — the link is
+  // the access. A slug the deck has since been renamed away from still
+  // resolves, so a link sent months ago keeps opening.
+  getDeckBySlug: (slug) => request(`/decks/by-slug/${encodeURIComponent(slug)}`),
+
   deckStats: () => request('/decks/stats'),
   createDeck: (deck) => request('/decks', { method: 'POST', body: deck, auth: true }),
   updateDeck: (id, patch) => request(`/decks/${id}`, { method: 'PUT', body: patch, auth: true }),
@@ -423,6 +428,9 @@ export const normalizeDecks = (list) => (Array.isArray(list) ? list.map(normaliz
 // backend doesn't store them; they're re-derived on read.
 export const toCreateRequest = (deck) => ({
   title: deck.title || '',
+  // The readable share link. Sent even when empty, so the server does the
+  // cleaning in one place rather than the form guessing at the rules.
+  slug: deck.slug || '',
   subtitle: deck.subtitle || '',
   author: deck.author || '',
   year: Number(deck.year) || new Date().getFullYear(),
@@ -450,6 +458,10 @@ export const toCreateRequest = (deck) => ({
 export const toUpdateRequest = (patch) => {
   const body = {}
   if (patch.title !== undefined) body.title = patch.title
+  // '' is a real value: it removes the readable link and hands the deck back
+  // to its id. The names it has held stay claimed either way, so the links
+  // already sent keep working.
+  if (patch.slug !== undefined) body.slug = patch.slug
   if (patch.subtitle !== undefined) body.subtitle = patch.subtitle
   if (patch.author !== undefined) body.author = patch.author
   if (patch.year !== undefined) body.year = Number(patch.year) || new Date().getFullYear()

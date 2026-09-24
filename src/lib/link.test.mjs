@@ -12,7 +12,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { safeHref } from './link.js'
+import { linkLabel, safeHref } from './link.js'
 
 test('our own uploads are left alone', () => {
   assert.equal(safeHref('/uploads/9f3c.pdf'), '/uploads/9f3c.pdf')
@@ -50,4 +50,31 @@ test('nothing usable comes back as nothing, not as a broken link', () => {
   assert.equal(safeHref(null), '')
   assert.equal(safeHref(undefined), '')
   assert.equal(safeHref('not a url'), '')
+})
+
+// linkLabel is the other half: safeHref decides where a link goes, linkLabel
+// decides what the panel prints. It never invents a destination — it only ever
+// shortens the real one.
+test('a share URL is shown as the host it points at', () => {
+  assert.equal(
+    linkLabel('https://www.canva.com/design/DAF6Xbw/KqT/view?utm_campaign=designshare'),
+    'canva.com',
+  )
+  assert.equal(linkLabel('https://docs.google.com/presentation/d/abc/edit'), 'docs.google.com')
+  assert.equal(linkLabel('http://103.10.20.30:8080/x'), '103.10.20.30:8080')
+})
+
+test('a bare host is labelled even though it had no scheme', () => {
+  assert.equal(linkLabel('dashboard.example.com/app?x=1'), 'dashboard.example.com')
+})
+
+test('our own uploads have no host, so the filename stands in', () => {
+  assert.equal(linkLabel('/uploads/company-profile.pdf'), 'company-profile.pdf')
+  assert.equal(linkLabel('/uploads/a%20b.png'), 'a b.png')
+})
+
+test('nothing safe to link to is nothing to label', () => {
+  assert.equal(linkLabel('javascript:alert(1)'), '')
+  assert.equal(linkLabel(''), '')
+  assert.equal(linkLabel(null), '')
 })
