@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "preview", "--", "--port", "4173"],
       "port": 4173
+    },
+    {
+      "name": "wit-api",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "cd backend && PATH=/opt/homebrew/bin:$PATH exec go run ./cmd/api"],
+      "port": 8080
     }
   ]
 }
