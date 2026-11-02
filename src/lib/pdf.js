@@ -13,8 +13,14 @@ export const loadPdfJs = () => {
   return pdfjsPromise
 }
 
-export const renderPdfPageToCanvas = async (pdfDoc, pageNumber, canvas, targetWidth) => {
+// pdf.js refuses to start a render on a canvas another render still holds, so
+// paging faster than a page draws failed with "Cannot use the same canvas
+// during multiple render() operations". Aborting `signal` cancels the render in
+// flight, which frees the canvas at once; the cancelled call resolves quietly
+// rather than surfacing as an error.
+export const renderPdfPageToCanvas = async (pdfDoc, pageNumber, canvas, targetWidth, signal) => {
   const page = await pdfDoc.getPage(pageNumber)
+  if (signal?.aborted) return
   const baseViewport = page.getViewport({ scale: 1 })
   const scale = (targetWidth / baseViewport.width) * (window.devicePixelRatio || 1)
   const viewport = page.getViewport({ scale })
@@ -23,7 +29,16 @@ export const renderPdfPageToCanvas = async (pdfDoc, pageNumber, canvas, targetWi
   canvas.height = viewport.height
   canvas.style.width = `${viewport.width / (window.devicePixelRatio || 1)}px`
   canvas.style.height = `${viewport.height / (window.devicePixelRatio || 1)}px`
-  await page.render({ canvasContext: ctx, viewport }).promise
+  const task = page.render({ canvasContext: ctx, viewport })
+  const cancel = () => task.cancel()
+  signal?.addEventListener('abort', cancel)
+  try {
+    await task.promise
+  } catch (e) {
+    if (e?.name !== 'RenderingCancelledException') throw e
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+  }
 }
 
 export const loadPdfDocument = async (data) => {

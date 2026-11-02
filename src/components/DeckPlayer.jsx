@@ -59,19 +59,17 @@ const PdfSlideStage = ({ deck, index }) => {
 
   useEffect(() => {
     if (!doc || !canvasRef.current || !containerRef.current) return
-    let cancelled = false
+    const controller = new AbortController()
     const renderPage = async () => {
       const targetWidth = containerRef.current.clientWidth
       try {
-        await renderPdfPageToCanvas(doc, index + 1, canvasRef.current, targetWidth)
+        await renderPdfPageToCanvas(doc, index + 1, canvasRef.current, targetWidth, controller.signal)
       } catch (e) {
-        if (!cancelled) setError(e.message)
+        if (!controller.signal.aborted) setError(e.message)
       }
     }
     renderPage()
-    return () => {
-      cancelled = true
-    }
+    return () => controller.abort()
   }, [doc, index])
 
   return (
