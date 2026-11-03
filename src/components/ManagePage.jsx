@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTaxonomy } from '../lib/taxonomy.jsx'
 import { TrashIcon, PlusIcon, StarIcon, PencilIcon } from '../lib/icons.jsx'
+import { formatDateTime } from '../lib/when.js'
 import LoadMore from './LoadMore.jsx'
 
 const SOURCE_LABELS = {
@@ -181,13 +182,14 @@ export default function ManagePage({
               <th className="text-left px-3 py-2 font-bold">Source</th>
               <th className="text-left px-3 py-2 font-bold hidden md:table-cell">Year</th>
               <th className="text-left px-3 py-2 font-bold hidden lg:table-cell">Views</th>
+              <th className="text-left px-3 py-2 font-bold hidden xl:table-cell">Added</th>
               <th className="text-right px-3 py-2 font-bold">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-deck-border">
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-10 text-center text-deck-muted">
+                <td colSpan={9} className="px-3 py-10 text-center text-deck-muted">
                   No decks match these filters.
                 </td>
               </tr>
@@ -231,6 +233,11 @@ export default function ManagePage({
                   <td className="px-3 py-2 text-xs hidden md:table-cell">{deck.year}</td>
                   <td className="px-3 py-2 text-xs text-deck-muted tabular-nums hidden lg:table-cell">
                     {(deck.viewCount || 0).toLocaleString()}
+                  </td>
+                  {/* When it went into the catalog — not Year, which is when
+                      the deck itself was made and is typed in by hand. */}
+                  <td className="px-3 py-2 text-xs text-deck-muted tabular-nums whitespace-nowrap hidden xl:table-cell">
+                    {formatDateTime(deck.createdAt) || '—'}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
