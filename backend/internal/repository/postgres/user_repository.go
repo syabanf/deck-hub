@@ -31,13 +31,14 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 // Ensure interface compliance at compile time.
 var _ domain.UserRepository = (*UserRepository)(nil)
 
-const userColumns = `id, name, email, role, status, password_hash, email_verified_at, created_at, updated_at`
+const userColumns = `id, name, email, role, status, password_hash, email_verified_at,
+	last_login_at, last_seen_at, created_at, updated_at`
 
 func scanUser(row pgx.Row) (*domain.User, error) {
 	var u domain.User
 	if err := row.Scan(
 		&u.ID, &u.Name, &u.Email, &u.Role, &u.Status, &u.PasswordHash, &u.EmailVerifiedAt,
-		&u.CreatedAt, &u.UpdatedAt,
+		&u.LastLoginAt, &u.LastSeenAt, &u.CreatedAt, &u.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -184,6 +185,26 @@ func (r *UserRepository) MarkEmailVerified(ctx context.Context, id uuid.UUID, at
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: user %s", domain.ErrNotFound, id)
+	}
+	return nil
+}
+
+// TouchLogin records a successful sign-in. A sign-in is also a visit, so
+// last_seen_at moves with it.
+func (r *UserRepository) TouchLogin(ctx context.Context, id uuid.UUID, at time.Time) error {
+	const q = `UPDATE users SET last_login_at = $2, last_seen_at = $2 WHERE id = $1`
+	if _, err := r.pool.Exec(ctx, q, id, at); err != nil {
+		return fmt.Errorf("touch last login: %w", err)
+	}
+	return nil
+}
+
+// TouchSeen records that the account was used. The caller decides when it is
+// worth writing; see domain.SeenInterval.
+func (r *UserRepository) TouchSeen(ctx context.Context, id uuid.UUID, at time.Time) error {
+	const q = `UPDATE users SET last_seen_at = $2 WHERE id = $1`
+	if _, err := r.pool.Exec(ctx, q, id, at); err != nil {
+		return fmt.Errorf("touch last seen: %w", err)
 	}
 	return nil
 }

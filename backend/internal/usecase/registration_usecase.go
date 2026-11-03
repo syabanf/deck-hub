@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -158,6 +159,10 @@ func (uc *RegistrationUsecase) Verify(ctx context.Context, plaintext string) (*d
 	// tokens valid, and any of them would otherwise still redeem later.
 	if err := uc.tokens.DeleteForUser(ctx, u.ID); err != nil {
 		return nil, fmt.Errorf("clear tokens: %w", err)
+	}
+	// Verifying signs the account straight in, so it is its first sign-in.
+	if err := uc.users.TouchLogin(ctx, u.ID, uc.now()); err != nil {
+		log.Printf("verify: %v", err)
 	}
 
 	return uc.users.GetByID(ctx, u.ID)

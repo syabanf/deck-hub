@@ -1565,6 +1565,20 @@ components:
             an admin suspending an account must not also destroy its
             verification. Admin-created users are verified on creation — an
             admin provisioning an account *is* the check.
+        lastLoginAt:
+          type: string
+          format: date-time
+          description: |
+            The most recent successful sign-in, by password or by following a
+            verification link. Absent until there has been one. Every sign-in,
+            not only the last, is in `GET /audit?entity=auth&actorId=<id>`.
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: |
+            When the account last made an authenticated request, to within
+            five minutes. Moves without a sign-in: a token lasts a day, so
+            someone can use the site daily and sign in rarely.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

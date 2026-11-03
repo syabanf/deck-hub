@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { ROLES, USER_STATUSES } from '../lib/storage.js'
-import { PlusIcon, TrashIcon, UserIcon, CloseIcon } from '../lib/icons.jsx'
+import { PlusIcon, TrashIcon, UserIcon, CloseIcon, ClockIcon } from '../lib/icons.jsx'
+import { formatDateTime, timeAgo } from '../lib/when.js'
 import ManagePage from './ManagePage.jsx'
 import ActivityLog from './ActivityLog.jsx'
+import LoginHistory from './LoginHistory.jsx'
 import ProfilePage from './ProfilePage.jsx'
 import TaxonomyManager from './TaxonomyManager.jsx'
 
@@ -139,6 +141,7 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
   // false without displaying anything — so the delete button quietly stopped
   // working, which is exactly what was reported from production.
   const [confirmingId, setConfirmingId] = useState(null)
+  const [historyFor, setHistoryFor] = useState(null)
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -299,6 +302,7 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
               <th className="text-left px-3 py-2 font-bold hidden md:table-cell">Email</th>
               <th className="text-left px-3 py-2 font-bold">Role</th>
               <th className="text-left px-3 py-2 font-bold">Status</th>
+              <th className="text-left px-3 py-2 font-bold hidden sm:table-cell">Last sign-in</th>
               <th className="text-left px-3 py-2 font-bold hidden lg:table-cell">Joined</th>
               <th className="text-right px-3 py-2 font-bold">Actions</th>
             </tr>
@@ -306,7 +310,7 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
           <tbody className="divide-y divide-deck-border">
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-10 text-center text-deck-muted">
+                <td colSpan={7} className="px-3 py-10 text-center text-deck-muted">
                   No users match these filters.
                 </td>
               </tr>
@@ -366,6 +370,23 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
                       ))}
                     </select>
                   </td>
+                  <td className="px-3 py-2 text-xs hidden sm:table-cell">
+                    {/* Last active sits under it because the two drift apart:
+                        a token outlives a day of use, so someone can be here
+                        every morning and sign in once a week. */}
+                    {u.lastLoginAt ? (
+                      <div className="tabular-nums" title={formatDateTime(u.lastLoginAt)}>
+                        {timeAgo(u.lastLoginAt)}
+                      </div>
+                    ) : (
+                      <div className="text-white/40">Never</div>
+                    )}
+                    {u.lastSeenAt && (
+                      <div className="text-[11px] text-deck-muted tabular-nums" title={formatDateTime(u.lastSeenAt)}>
+                        active {timeAgo(u.lastSeenAt)}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-xs text-deck-muted hidden lg:table-cell tabular-nums">
                     {u.createdAt || '—'}
                   </td>
@@ -390,6 +411,17 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
                         </button>
                       </span>
                     ) : (
+                      <span className="inline-flex items-center gap-1">
+                      {canManage && (
+                        <button
+                          onClick={() => setHistoryFor(u)}
+                          className="w-7 h-7 rounded inline-flex items-center justify-center bg-white/5 hover:bg-white/20 text-white/70 hover:text-white"
+                          title="Sign-in history"
+                          aria-label={`Sign-in history for ${u.name}`}
+                        >
+                          <ClockIcon size={13} />
+                        </button>
+                      )}
                       <button
                         disabled={isSelf || !canManage}
                         onClick={() => setConfirmingId(u.id)}
@@ -398,6 +430,7 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
                       >
                         <TrashIcon size={13} />
                       </button>
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -407,6 +440,10 @@ function UsersManager({ users, currentEmail, canManage, onAdd, onUpdate, onRemov
         </table>
         </div>
       </div>
+
+      {historyFor && (
+        <LoginHistory user={historyFor} onClose={() => setHistoryFor(null)} />
+      )}
 
       <div className="mt-4 text-xs text-deck-muted flex items-center gap-2">
         <UserIcon size={13} />

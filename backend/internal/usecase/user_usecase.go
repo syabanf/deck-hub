@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -226,7 +227,31 @@ func (uc *UserUsecase) Authenticate(ctx context.Context, email, password string)
 	if u.EmailVerifiedAt == nil {
 		return nil, fmt.Errorf("%w: email not verified", domain.ErrEmailNotVerified)
 	}
+
+	// Only now, with the sign-in proven: a wrong password is not a sign-in.
+	// A failure to record it must not refuse somebody who got the password
+	// right, so it is logged and the sign-in goes ahead.
+	now := time.Now().UTC()
+	if err := uc.repo.TouchLogin(ctx, u.ID, now); err != nil {
+		log.Printf("authenticate: %v", err)
+	} else {
+		u.LastLoginAt, u.LastSeenAt = &now, &now
+	}
 	return u, nil
+}
+
+// NoteSeen moves an account's last-seen time forward, at most once per
+// domain.SeenInterval. Called with the account every authenticated request
+// already loads, so the common case — seen a minute ago — costs nothing.
+// Never fails the request it is called from.
+func (uc *UserUsecase) NoteSeen(ctx context.Context, u *domain.User) {
+	now := time.Now().UTC()
+	if u.LastSeenAt != nil && now.Sub(*u.LastSeenAt) < domain.SeenInterval {
+		return
+	}
+	if err := uc.repo.TouchSeen(ctx, u.ID, now); err != nil {
+		log.Printf("note seen: %v", err)
+	}
 }
 
 // EnsureBootstrapAdmin sets the bootstrap admin's password from configuration.

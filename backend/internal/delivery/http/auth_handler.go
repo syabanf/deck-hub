@@ -50,6 +50,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The request carried no token, so nothing upstream knew who it was and
+	// the audit entry for it came out anonymous — a list of sign-ins that
+	// could not say whose they were. The account is known now.
+	noteActor(r.Context(), user.ID.String(), string(user.Role))
+
 	writeJSON(w, http.StatusOK, loginResponse{
 		Token: token,
 		User:  toUserResponse(user),

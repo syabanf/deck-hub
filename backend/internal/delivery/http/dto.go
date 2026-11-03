@@ -20,8 +20,11 @@ type userResponse struct {
 	// Absent while an address is unproven. Lets the admin list show who is
 	// still pending without a second request.
 	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	// Absent until the account first signs in, or is first used.
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
+	LastSeenAt  *time.Time `json:"lastSeenAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 func toUserResponse(u *domain.User) userResponse {
@@ -32,6 +35,8 @@ func toUserResponse(u *domain.User) userResponse {
 		Role:            string(u.Role),
 		Status:          string(u.Status),
 		EmailVerifiedAt: u.EmailVerifiedAt,
+		LastLoginAt:     u.LastLoginAt,
+		LastSeenAt:      u.LastSeenAt,
 		CreatedAt:       u.CreatedAt,
 		UpdatedAt:       u.UpdatedAt,
 	}

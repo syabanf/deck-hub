@@ -94,6 +94,9 @@ func (h *RegistrationHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A sign-in like Login's, and recorded against the account the same way.
+	noteActor(r.Context(), user.ID.String(), string(user.Role))
+
 	writeJSON(w, http.StatusOK, loginResponse{
 		Token: token,
 		User:  toUserResponse(user),

@@ -54,9 +54,19 @@ type User struct {
 	// Nil until the address is proven. Kept separate from Status, which is
 	// admin-managed — suspending an account must not undo its verification.
 	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	// Nil until the first sign-in, and until first use, after migration 000023.
+	// LastSeenAt moves at most once per SeenInterval; see TouchSeen.
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
+	LastSeenAt  *time.Time `json:"lastSeenAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
+
+// SeenInterval is how stale LastSeenAt may get before a request moves it.
+// Every authenticated request already reads the account; writing it back on
+// every one of them as well would turn a page load into a dozen UPDATEs for a
+// number nobody reads to the second.
+const SeenInterval = 5 * time.Minute
 
 // UserFilter narrows a List query. Zero values mean "no filter".
 type UserFilter struct {
@@ -76,6 +86,10 @@ type UserRepository interface {
 	List(ctx context.Context, f UserFilter) ([]*User, error)
 	Update(ctx context.Context, u *User) error
 	MarkEmailVerified(ctx context.Context, id uuid.UUID, at time.Time) error
+	// TouchLogin and TouchSeen stamp the activity columns and nothing else —
+	// not updated_at, which is when an admin last changed the account.
+	TouchLogin(ctx context.Context, id uuid.UUID, at time.Time) error
+	TouchSeen(ctx context.Context, id uuid.UUID, at time.Time) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	// CountByRole returns how many accounts hold each role. One query
 	// rather than a listing the caller counts, so nothing has to load

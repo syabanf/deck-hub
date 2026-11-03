@@ -141,6 +141,9 @@ func run() error {
 		if u.Status == domain.StatusSuspended {
 			return "", false
 		}
+		// The account is in hand already, so "last seen" costs nothing on
+		// the requests where it has not gone stale.
+		userUC.NoteSeen(ctx, u)
 		return string(u.Role), true
 	})
 

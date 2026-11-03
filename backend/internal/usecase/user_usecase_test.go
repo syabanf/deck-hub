@@ -21,6 +21,8 @@ type fakeUserRepo struct {
 	byID      map[uuid.UUID]*domain.User
 	byEmail   map[string]*domain.User
 	createErr error
+	// How many times TouchSeen was asked to write.
+	seenWrites int
 }
 
 // MarkEmailVerified mirrors the real repository: idempotent, first stamp wins.
@@ -33,6 +35,25 @@ func (f *fakeUserRepo) MarkEmailVerified(_ context.Context, id uuid.UUID, at tim
 	}
 	if u.EmailVerifiedAt == nil {
 		u.EmailVerifiedAt = &at
+	}
+	return nil
+}
+
+func (f *fakeUserRepo) TouchLogin(_ context.Context, id uuid.UUID, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if u, ok := f.byID[id]; ok {
+		u.LastLoginAt, u.LastSeenAt = &at, &at
+	}
+	return nil
+}
+
+func (f *fakeUserRepo) TouchSeen(_ context.Context, id uuid.UUID, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seenWrites++
+	if u, ok := f.byID[id]; ok {
+		u.LastSeenAt = &at
 	}
 	return nil
 }
@@ -302,4 +323,74 @@ func (f *fakeUserRepo) CountByRole(_ context.Context) (map[domain.Role]int, erro
 		out[u.Role]++
 	}
 	return out, nil
+}
+
+func TestUserUsecase_Authenticate_RecordsLogin(t *testing.T) {
+	repo := newFakeUserRepo()
+	uc := NewUserUsecase(repo)
+
+	created, err := uc.Create(context.Background(), CreateUserInput{
+		Name:     "Ada",
+		Email:    "ada@example.com",
+		Password: "analytical",
+	})
+	if err != nil {
+		t.Fatalf("seed create failed: %v", err)
+	}
+
+	// A wrong password is not a sign-in and must not move the clock.
+	if _, err := uc.Authenticate(context.Background(), "ada@example.com", "wrong-one"); err == nil {
+		t.Fatal("expected wrong password to fail")
+	}
+	if u, _ := repo.GetByID(context.Background(), created.ID); u.LastLoginAt != nil {
+		t.Fatalf("failed sign-in recorded a login at %v", u.LastLoginAt)
+	}
+
+	u, err := uc.Authenticate(context.Background(), "ada@example.com", "analytical")
+	if err != nil {
+		t.Fatalf("sign-in failed: %v", err)
+	}
+	if u.LastLoginAt == nil || u.LastSeenAt == nil {
+		t.Fatal("returned user carries no login time")
+	}
+	stored, _ := repo.GetByID(context.Background(), created.ID)
+	if stored.LastLoginAt == nil || !stored.LastLoginAt.Equal(*u.LastLoginAt) {
+		t.Fatalf("stored login time %v, returned %v", stored.LastLoginAt, u.LastLoginAt)
+	}
+}
+
+func TestUserUsecase_NoteSeen_Throttled(t *testing.T) {
+	repo := newFakeUserRepo()
+	uc := NewUserUsecase(repo)
+
+	created, err := uc.Create(context.Background(), CreateUserInput{
+		Name:     "Linus",
+		Email:    "linus@example.com",
+		Password: "penguinpenguin",
+	})
+	if err != nil {
+		t.Fatalf("seed create failed: %v", err)
+	}
+
+	// Never seen: written.
+	u, _ := repo.GetByID(context.Background(), created.ID)
+	uc.NoteSeen(context.Background(), u)
+	if repo.seenWrites != 1 {
+		t.Fatalf("first visit: %d writes, want 1", repo.seenWrites)
+	}
+
+	// Seen a moment ago: left alone.
+	u, _ = repo.GetByID(context.Background(), created.ID)
+	uc.NoteSeen(context.Background(), u)
+	if repo.seenWrites != 1 {
+		t.Fatalf("second visit inside the interval: %d writes, want 1", repo.seenWrites)
+	}
+
+	// Seen longer ago than the interval: written again.
+	stale := time.Now().UTC().Add(-domain.SeenInterval - time.Second)
+	u.LastSeenAt = &stale
+	uc.NoteSeen(context.Background(), u)
+	if repo.seenWrites != 2 {
+		t.Fatalf("visit after the interval: %d writes, want 2", repo.seenWrites)
+	}
 }
