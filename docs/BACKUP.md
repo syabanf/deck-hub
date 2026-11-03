@@ -20,16 +20,31 @@ copy somewhere a person can reach without the server.
 
 ## Where the volumes actually are
 
+On `paparan.reddie.id` the compose project lives in
+**`/home/wit/.openclaw/workspace/deck-hub`** — not `/opt/deck-hub`, which does
+not exist there (read it off a running container's
+`com.docker.compose.project.working_dir` label if in doubt). Every `cd` below
+means that directory.
+
 Compose prefixes volume names with the project, which is the directory name
-unless you set one. From `/opt/deck-hub` that makes them
+unless you set one. From a directory called `deck-hub` that makes them
 `deck-hub_postgres_data` and `deck-hub_uploads_data`. Confirm rather than
 assume:
 
 ```bash
-cd /opt/deck-hub
+cd /home/wit/.openclaw/workspace/deck-hub
 docker compose -f docker-compose.ghcr.yml config --volumes   # postgres_data, uploads_data
 docker volume ls | grep deck-hub
 ```
+
+### Database user and name
+
+The commands here never spell out the database user or name. They read
+`$POSTGRES_USER` and `$POSTGRES_DB` inside the `db` container, which compose
+sets from `DB_USER` and `DB_NAME` in `.env` — so they are right on any host.
+On this one they are `deck` and `deck_hub`, not the `wit`/`wit` defaults;
+a script that hard-codes `-U wit -d wit` fails there with `role "wit" does not
+exist`.
 
 ---
 
@@ -42,24 +57,30 @@ rewritten.
 
 ```bash
 #!/usr/bin/env bash
-# /opt/deck-hub/backup.sh — database + uploads, one timestamped pair.
+# backup.sh, kept next to docker-compose.ghcr.yml — database + uploads, one
+# timestamped pair.
 set -euo pipefail
 
-cd /opt/deck-hub
-DEST=/var/backups/deck-hub
+cd "$(dirname "$0")"
+# The deploy user cannot write /var/backups (root's), so the default is under
+# its own home. Override with BACKUP_DIR.
+DEST="${BACKUP_DIR:-$HOME/backups/deck-hub}"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$DEST"
 
 # Database. Custom format (-Fc): compressed, and restorable selectively.
+# User and name come from the container's own env — see above.
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  pg_dump -U wit -d wit -Fc > "$DEST/db-$STAMP.dump"
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$DEST/db-$STAMP.dump"
 
 # Uploads. Read straight off the volume through a throwaway container, so
-# nothing depends on the backend being up.
+# nothing depends on the backend being up. The container runs as root, so the
+# archive is handed back to whoever ran the script.
 docker run --rm \
   -v deck-hub_uploads_data:/data:ro \
   -v "$DEST":/backup \
-  alpine:3.21 tar czf "/backup/uploads-$STAMP.tar.gz" -C /data .
+  alpine:3.21 sh -c "tar czf /backup/uploads-$STAMP.tar.gz -C /data . \
+    && chown $(id -u):$(id -g) /backup/uploads-$STAMP.tar.gz"
 
 # A dump that cannot be read is not a backup. Fail loudly, now, not in six
 # months when it is needed.
@@ -70,22 +91,22 @@ echo "$STAMP ok  $(du -sh "$DEST/db-$STAMP.dump" "$DEST/uploads-$STAMP.tar.gz" |
 ```
 
 ```bash
-chmod 700 /opt/deck-hub/backup.sh
+chmod 700 /home/wit/.openclaw/workspace/deck-hub/backup.sh
 ```
 
 The dump contains every demo credential in clear — that is the whole point of
 the Demo Center — so the backup directory is as sensitive as the database:
 
 ```bash
-chmod 700 /var/backups/deck-hub
+chmod 700 /home/wit/backups/deck-hub
 ```
 
 ### On a schedule
 
 ```cron
 # Daily at 02:15 UTC, keeping 30 days.
-15 2 * * * /opt/deck-hub/backup.sh >> /var/log/deck-hub-backup.log 2>&1
-30 3 * * * find /var/backups/deck-hub -type f -mtime +30 -delete
+15 2 * * * /home/wit/.openclaw/workspace/deck-hub/backup.sh >> /home/wit/backups/deck-hub/backup.log 2>&1
+30 3 * * * find /home/wit/backups/deck-hub -type f -name '*-*Z.*' -mtime +30 -delete
 ```
 
 **Copy them off the host.** A backup on the same disk as the thing it backs up
@@ -103,18 +124,19 @@ This replaces the live data. Stop the application first so nothing writes
 while the restore is in progress.
 
 ```bash
-cd /opt/deck-hub
+cd /home/wit/.openclaw/workspace/deck-hub
 
 # 1. Stop everything that talks to the database, but leave the database up.
 docker compose -f docker-compose.ghcr.yml stop frontend backend
 
 # 2. Drop and recreate the schema, then load the dump into it.
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  psql -U wit -d postgres -c 'DROP DATABASE wit WITH (FORCE)'
+  sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE $POSTGRES_DB WITH (FORCE)"'
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  psql -U wit -d postgres -c 'CREATE DATABASE wit OWNER wit'
+  sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER"'
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  pg_restore -U wit -d wit --no-owner < /var/backups/deck-hub/db-<STAMP>.dump
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' \
+  < /home/wit/backups/deck-hub/db-<STAMP>.dump
 
 # 3. Start again. `migrate` re-runs and applies anything the dump predates.
 docker compose -f docker-compose.ghcr.yml up -d
@@ -131,7 +153,7 @@ docker compose -f docker-compose.ghcr.yml stop backend
 
 docker run --rm \
   -v deck-hub_uploads_data:/data \
-  -v /var/backups/deck-hub:/backup:ro \
+  -v /home/wit/backups/deck-hub:/backup:ro \
   alpine:3.21 sh -c 'rm -rf /data/* && tar xzf /backup/uploads-<STAMP>.tar.gz -C /data'
 
 docker compose -f docker-compose.ghcr.yml start backend
@@ -162,15 +184,17 @@ and confirm the row counts look right:
 
 ```bash
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  psql -U wit -d postgres -c 'CREATE DATABASE wit_restore_test OWNER wit'
+  sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE restore_test OWNER $POSTGRES_USER"'
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  pg_restore -U wit -d wit_restore_test --no-owner < /var/backups/deck-hub/db-<STAMP>.dump
-docker compose -f docker-compose.ghcr.yml exec -T db psql -U wit -d wit_restore_test -c \
-  'select (select count(*) from decks) decks,
-          (select count(*) from users) users,
-          (select count(*) from demos) demos'
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d restore_test --no-owner' \
+  < /home/wit/backups/deck-hub/db-<STAMP>.dump
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  psql -U wit -d postgres -c 'DROP DATABASE wit_restore_test'
+  sh -c 'psql -U "$POSTGRES_USER" -d restore_test -c "
+    select (select count(*) from decks) decks,
+           (select count(*) from users) users,
+           (select count(*) from demos) demos"'
+docker compose -f docker-compose.ghcr.yml exec -T db \
+  sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "DROP DATABASE restore_test"'
 ```
 
 ---

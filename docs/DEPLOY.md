@@ -390,8 +390,13 @@ Keep both backups for at least a week after a successful upgrade.
 
 ## Updating to a new version
 
+On `paparan.reddie.id` the deploy directory is
+**`/home/wit/.openclaw/workspace/deck-hub`**. `/opt/deck-hub` in
+[First deploy](#first-deploy) is for a fresh host and does not exist on this
+one.
+
 ```bash
-cd /opt/deck-hub
+cd /home/wit/.openclaw/workspace/deck-hub
 
 # 1. Point at the new tag. Pin a version; never leave IMAGE_TAG=latest.
 $EDITOR .env          # IMAGE_TAG=0.2.0   — no "v"; see the note below
@@ -443,7 +448,7 @@ To see where the schema stands:
 
 ```bash
 docker compose -f docker-compose.ghcr.yml exec -T db \
-  psql -U wit -d wit -c 'select * from schema_migrations'
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select * from schema_migrations"'
 ```
 
 A `dirty` of `t` means a migration failed partway. Do not run `up` again on top
@@ -451,9 +456,12 @@ of it — find out what failed first (`docker compose … logs migrate`), fix th
 cause, then force the version back to the last good one and re-run:
 
 ```bash
+# DB_USER, DB_PASSWORD and DB_NAME as in .env — `deck` and `deck_hub` on
+# paparan.reddie.id, not `wit`. Set them in this shell first; they are not
+# exported by compose.
 docker compose -f docker-compose.ghcr.yml run --rm --entrypoint /usr/local/bin/migrate \
   backend -path=/app/migrations \
-  -database="postgres://wit:$DB_PASSWORD@db:5432/wit?sslmode=disable" force <last-good-version>
+  -database="postgres://$DB_USER:$DB_PASSWORD@db:5432/$DB_NAME?sslmode=disable" force <last-good-version>
 ```
 
 ---
